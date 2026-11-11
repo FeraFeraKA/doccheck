@@ -1,0 +1,40 @@
+{
+  "materials": {
+    "synthetic": true,
+    "page": 1,
+    "page_size_points": [
+      480,
+      640
+    ],
+    "preview_size_pixels": [
+      960,
+      1280
+    ],
+    "bbox": [
+      0.735274,
+      0.470229,
+      0.910417,
+      0.507729
+    ],
+    "text": "123 500,00"
+  },
+  "services": {
+    "synthetic": true,
+    "page": 1,
+    "page_size_points": [
+      480,
+      640
+    ],
+    "preview_size_pixels": [
+      960,
+      1280
+    ],
+    "bbox": [
+      0.751495,
+      0.470229,
+      0.910417,
+      0.507729
+    ],
+    "text": "48 000,00"
+  }
+}
