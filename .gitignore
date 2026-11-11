@@ -1,0 +1,45 @@
+# Local settings and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Original documents, independent evaluation and runtime output
+/data/
+/private/
+/evaluation/
+/holdout/
+/uploads/
+/storage/
+/artifacts/
+/models/
+/logs/
+*.log
+*.sqlite*
+*.db
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+*.egg-info/
+
+# JavaScript and builds
+node_modules/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
