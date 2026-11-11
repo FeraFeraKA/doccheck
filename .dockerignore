@@ -1,0 +1,46 @@
+# Source-control metadata and local settings
+.git
+**/.git
+.env
+.env.*
+**/.env
+**/.env.*
+!.env.example
+**/*.pem
+**/*.key
+
+# Original documents, ground truth, runtime output and database files
+data
+private
+evaluation
+holdout
+uploads
+storage
+artifacts
+models
+logs
+pgdata
+secrets
+**/*.log
+**/*.sqlite*
+**/*.db
+
+# Local dependencies, caches and editor state
+**/.venv
+**/venv
+**/node_modules
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/*.egg-info
+**/.coverage
+**/coverage
+**/htmlcov
+**/dist
+**/build
+**/.idea
+**/.vscode
+**/.DS_Store
+**/Thumbs.db
