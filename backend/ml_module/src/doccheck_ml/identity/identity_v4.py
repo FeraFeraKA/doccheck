@@ -192,7 +192,12 @@ def review_queue(records: list[dict]) -> dict:
         for ids in ([pending] if clique else [[k] for k in pending]):
             cards.append({'document_ids': ids, 'comparison_ids': sorted(component) if clique else ids,
                           'kind': 'number_review', 'correction_propagates': False, 'is_duplicate_group': False})
+    fact_flagged = sorted(r['id'] for r in records if r.get('fact_conflicts'))
+    fact_cards = [{'document_ids': [ident], 'kind': 'fact_review',
+                   'fields': sorted(by_id[ident]['fact_conflicts']),
+                   'correction_propagates': False} for ident in fact_flagged]
     return {'number_review_document_ids': sorted(flagged), 'number_cards': cards,
+            'fact_review_document_ids': fact_flagged, 'fact_cards': fact_cards,
             'identity_review_pairs': pairs, 'number_review_documents': len(flagged),
             'number_review_cards': len(cards), 'identity_review_pair_count': len(pairs),
             'actual_human_actions_measured': False, 'all_unverified_numbers_are_visible': True}

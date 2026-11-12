@@ -86,7 +86,9 @@ def source_corrections(
                             'rule': 'remove_typographic_double_quotes_only',
                             'role_evidence': issuer.get('evidence'), 'tax_id': issuer['tax_id'],
                             'tax_id_evidence': issuer.get('tax_id_evidence')}
-    if source_observation is None:
+    # One later crop and a model answer cannot resolve contradictory original
+    # totals. Preserve the conflict until the complete source is reviewed.
+    if source_observation is None or record.get('fact_conflicts', {}).get('amount'):
         return result
     lines = deepcopy(source_observation['lines'])
     candidates = total_candidates(lines)

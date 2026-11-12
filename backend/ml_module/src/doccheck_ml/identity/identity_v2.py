@@ -24,6 +24,11 @@ CONTRACT_NOUN = r"(?:договор|контракт)(?:ами|ам|ах|ом|о
 # A readable prefix of a damaged amount is not an explicit source amount.
 AMOUNT_TOKEN = (r"([0-9](?:[0-9\s.,]*[0-9])?)"
                 r"(?=$|\s|₽|руб(?:лей)?\b|rub\b)(?!\s*[0-9.,?])")
+TOTAL_FIELD = r"(?:итого(?:\s+к\s+(?:учету|учёту|оплате))?|итоговая\s+сумма|к\s+оплате(?:\s+по\s+документу)?|сумма\s+по\s+акту)"
+AMOUNT_LABEL = re.compile(
+    r"^(?P<label>" + TOTAL_FIELD + r"|сумма|стоимость)(?!\w)"
+    r"\s*(?:,?\s*руб\.?)?\s*[:：]?\s*", re.I,
+)
 FIELD_START = re.compile(r"^(?:дата|договор|контракт|проект|период|сумма|итого|исполнитель|поставщик|заказчик|получатель|содержание|назначение|артикул|код\s+контрагента|бланк|форма|инн|кпп|номер\s+договора)\b", re.I)
 TYPE_PATTERNS = [
     ("invoice_act", r"сч[её]т\s*[-–]\s*акт"),
@@ -181,6 +186,9 @@ def extract_number_candidates(lines: list[dict]) -> list[dict]:
             if FIELD_START.match(value):
                 continue
             used.append(evidence(nxt))
+        # The explicit field label and the printed number sign are distinct;
+        # strip only №, never a genuine ASCII N/No prefix in the identifier.
+        value = re.sub(r"^№\s*", "", value).strip()
         # The current marker may be the document's own number followed by a
         # separately labelled contract reference on the same source line.
         value = re.split(
@@ -232,8 +240,11 @@ def extract_issuer(lines: list[dict]) -> dict:
         value = m.group(1).strip()
         proof = [evidence(line)]
         if not value and i + 1 < len(lines):
-            value = clean_line(lines[i + 1]["text"])
-            proof.append(evidence(lines[i + 1]))
+            following = lines[i + 1]
+            if not _adjacent_source_lines(line, following):
+                continue
+            value = clean_line(following["text"])
+            proof.append(evidence(following))
         if norm(value) and not FIELD_START.match(value):
             candidates.append({"value": re.sub(r"\s+", " ", value).strip(), "evidence": proof})
     values = {norm(x["value"]): x for x in candidates}
@@ -244,7 +255,60 @@ def extract_issuer(lines: list[dict]) -> dict:
     return {"value": None, "status": "missing" if not values else "conflicting_source_roles", "candidates": candidates} | tax_info
 
 
-def extract_source_facts(lines: list[dict]) -> tuple[dict, dict]:
+def _source_amount(lines: list[dict]) -> tuple[dict, list[dict], dict]:
+    """Choose by field role, preserving contradictory totals and their sources."""
+    candidates = []
+    for index, line in enumerate(lines):
+        match = AMOUNT_LABEL.match(clean_line(line["text"]))
+        if not match:
+            continue
+        text = clean_line(line["text"])
+        tail = text[match.end():].strip()
+        role = ("document_total" if re.fullmatch(TOTAL_FIELD, match["label"], re.I)
+                else "amount")
+        used = [evidence(line)]
+        if not tail and index + 1 < len(lines) and _adjacent_source_lines(line, lines[index + 1]):
+            following = clean_line(lines[index + 1]["text"])
+            # An unrelated next field does not fill a visibly empty total.
+            if re.match(AMOUNT_TOKEN, following, re.I) or re.match(r"[0-9?—-]", following):
+                tail = following
+                used.append(evidence(lines[index + 1]))
+        token = re.match(AMOUNT_TOKEN, tail, re.I)
+        amount = parse_amount(token[1]) if token else None
+        if amount is None:
+            # Unrecognised qualifiers such as 'Итого по разделу' and 'Сумма
+            # НДС' do not describe a whole-document total. A visibly missing
+            # or damaged total, however, cannot promote a generic subtotal.
+            unreadable = (not tail or not norm(tail) or re.search(r"[:：]", text[:match.end()])
+                          or tail.startswith(("?", "—", "-"))
+                          or bool(re.match(r"[0-9]", tail)))
+            if role != "document_total" or not unreadable:
+                continue
+        candidates.append({"value": str(amount) if amount is not None else None,
+                           "role": role, "evidence": used})
+    totals = [candidate for candidate in candidates if candidate["role"] == "document_total"]
+    chosen = totals or candidates
+    observed = [parse_amount(candidate["value"]) for candidate in chosen
+                if candidate["value"] is not None]
+    if not observed:
+        return {}, [], {}
+    proof = []
+    for candidate in chosen:
+        for source in candidate["evidence"]:
+            if source not in proof:
+                proof.append(source)
+    incomplete = len(observed) != len(chosen)
+    if incomplete or len(set(observed)) > 1:
+        reason = ("incomplete_source_totals" if incomplete else
+                  "conflicting_source_totals" if totals else "conflicting_source_amounts")
+        return {"amount": None}, proof, {"amount": {"reason": reason, "candidates": chosen}}
+    # Equivalent representations are one value. Preserve the most precise
+    # printed decimal scale so changing row order cannot change the result.
+    value = min(observed, key=lambda amount: amount.as_tuple().exponent)
+    return {"amount": str(value)}, proof, {}
+
+
+def _extract_source_details(lines: list[dict]) -> tuple[dict, dict, dict]:
     result, proof = {}, {}
     for i, line in enumerate(lines):
         text = clean_line(line["text"])
@@ -257,7 +321,6 @@ def extract_source_facts(lines: list[dict]) -> tuple[dict, dict]:
             for field, pattern in [
                 ("contract_number", r"^(?:договор|контракт|проект)\s*[:№Nn]*\s*([A-Za-zА-Яа-я0-9?]+(?:[-/][A-Za-zА-Яа-я0-9?]+)+)"),
                 ("date", r"^дата(?:\s+документа)?\s*:?\s*(" + DATE_PATTERN + r")"),
-                ("amount", r"^(?:итого(?:\s+к\s+(?:учету|оплате))?|сумма(?:\s+по\s+акту)?|итоговая\s+сумма|к\s+оплате(?:\s+по\s+документу)?|стоимость)\s*(?:,?\s*руб\.?)?\s*:?\s*" + AMOUNT_TOKEN),
             ]:
                 m = re.match(pattern, joined, re.I)
                 if m and field not in result:
@@ -265,9 +328,6 @@ def extract_source_facts(lines: list[dict]) -> tuple[dict, dict]:
                     if field == "date":
                         parsed = parse_date(value)
                         value = parsed.isoformat() if parsed else None
-                    elif field == "amount":
-                        parsed = parse_amount(value)
-                        value = str(parsed) if parsed is not None else None
                     if value is not None and "?" not in value:
                         result[field] = value
                         proof[field] = [evidence(used) for used in used_lines]
@@ -277,6 +337,16 @@ def extract_source_facts(lines: list[dict]) -> tuple[dict, dict]:
             if parsed:
                 result["date"] = parsed.isoformat()
                 proof["date"] = [evidence(line)]
+    amount, amount_proof, conflicts = _source_amount(lines)
+    result.update(amount)
+    if amount_proof:
+        proof["amount"] = amount_proof
+    return result, proof, conflicts
+
+
+def extract_source_facts(lines: list[dict]) -> tuple[dict, dict]:
+    """Preserve the low-level two-value interface; conflicts expose a null amount."""
+    result, proof, _ = _extract_source_details(lines)
     return result, proof
 
 
@@ -317,7 +387,7 @@ def resolve_document(
     issues = number_issues(value, acquisition)
     unusable_status = status in {"model_only", "missing", "source_model_conflict", "multiple_source_numbers", "alphabet_ambiguous", "ocr_source_only"}
     usable = value if not issues and not unusable_status else None
-    source_facts, fact_proof = extract_source_facts(lines)
+    source_facts, fact_proof, fact_conflicts = _extract_source_details(lines)
     facts = {k: prediction.get(k) for k in ("contract_number", "date", "period_start", "period_end", "amount", "category")}
     facts.update(source_facts)
     kind, issuer = extract_type(lines), extract_issuer(lines)
@@ -329,6 +399,7 @@ def resolve_document(
                    "candidates": candidates, "evidence": candidates[0]["evidence"] if len(candidates) == 1 else []},
         "doc_type": kind, "issuer": issuer, "facts": facts,
         "source_facts": source_facts, "fact_evidence": fact_proof,
+        "fact_conflicts": fact_conflicts,
         "content_fingerprint": content_fingerprint, "content_complete": bool(content_complete),
         "package_fingerprint": package_fingerprint,
         "limitations": ["OCR and model agreement are correlated, not proof.", "No issuer inferred from customer or unlabelled company name."]}
@@ -364,13 +435,17 @@ def compare_documents(a: dict, b: dict) -> dict:
     ai, bi = norm(a["issuer"].get("value")), norm(b["issuer"].get("value"))
     ax, bx = a["issuer"].get("tax_id"), b["issuer"].get("tax_id")
     at, bt = a["doc_type"].get("value"), b["doc_type"].get("value")
-    aa, ba = parse_amount(a["facts"].get("amount")), parse_amount(b["facts"].get("amount"))
+    amount_conflict = any(x.get("fact_conflicts", {}).get("amount") for x in (a, b))
+    aa = None if a.get("fact_conflicts", {}).get("amount") else parse_amount(a["facts"].get("amount"))
+    ba = None if b.get("fact_conflicts", {}).get("amount") else parse_amount(b["facts"].get("amount"))
     same_context = bool(ac and ac == bc and ad and ad == bd and aa is not None and aa == ba)
     conflicts = [name for name, x, y in [("issuer", ai, bi), ("issuer_tax_id", ax, bx), ("document_type", at, bt), ("contract", ac, bc)] if x and y and x != y]
     if conflicts:
         return decision("related" if same_context else "distinct", "different_" + ",".join(conflicts), "never_merge_different_identity_roles")
     strict_identity = bool(ai and ai == bi and ax == bx and at and at == bt and ac and ac == bc and ad and ad == bd and an and an == bn and "?" not in an and not any(x["issuer"].get("tax_id_conflict") for x in (a, b)))
     if strict_identity:
+        if amount_conflict:
+            return decision("candidate", "conflicting_source_amount_requires_review")
         if aa is not None and ba is not None and aa != ba:
             return decision("conflict", "same_identity_different_amount")
         native_complete = all(x["acquisition"] == "native" and x.get("content_complete") and x.get("content_fingerprint") for x in (a, b))
