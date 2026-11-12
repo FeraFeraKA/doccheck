@@ -15,7 +15,7 @@
 
 ## Установка и запуск
 
-Требуется Node.js версии `^22.22.2`, `^24.15.0` или `>=26.0.0` и pnpm 12.14.0. Из папки `frontend`:
+Поддерживаемые версии Node.js указаны в `package.json`; для разработки и CI закреплена версия из `.node-version` — 26.12.1. Версия pnpm задаётся полем `packageManager` в `package.json` — 12.14.0. Из папки `frontend`:
 
 ```sh
 pnpm install --frozen-lockfile
