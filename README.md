@@ -49,6 +49,9 @@ Frontend: React, TypeScript, Vite, React Router, Zustand, Tailwind CSS и соб
 
 ## Документы
 
+- [Как запустить координатора и двух ночных агентов](docs/nightly/README.md) — инструкция для людей, участвующих в запуске.
+- [Первый человек: координатор и worker-a](docs/nightly/first-person.md)
+- [Второй человек: worker-b на macOS](docs/nightly/second-person.md)
 - [Работа с ветками и проверка изменений](CONTRIBUTING.md)
 - [Границы модулей](docs/architecture.md)
 - [Формулировка кейса](docs/case/Case_Track_5.docx)
