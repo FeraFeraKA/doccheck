@@ -194,6 +194,15 @@ def group_documents(records: list[dict]) -> dict:
             "candidate_edges_used_for_clustering": False, "new_auto_edges_from_rereading": False}
 
 
+def fact_review_queue(records: list[dict]) -> dict:
+    """Keep source fact conflicts visible even without a number or pair review."""
+    flagged = sorted((r for r in records if r.get("fact_conflicts")), key=lambda r: r["id"])
+    cards = [{"document_ids": [r["id"]], "kind": "fact_review",
+              "fields": sorted(r["fact_conflicts"]), "correction_propagates": False}
+             for r in flagged]
+    return {"fact_review_document_ids": [r["id"] for r in flagged], "fact_cards": cards}
+
+
 def review_queue(records: list[dict]) -> dict:
     """UI cards are not duplicate groups or measured human decisions.
 
@@ -236,6 +245,7 @@ def review_queue(records: list[dict]) -> dict:
                           "kind": "number_review", "correction_propagates": False,
                           "is_duplicate_group": False})
     return {"number_review_document_ids": sorted(flagged), "number_cards": cards,
+            **fact_review_queue(records),
             "identity_review_pairs": review_pairs,
             "number_review_documents": len(flagged), "number_review_cards": len(cards),
             "identity_review_pair_count": len(review_pairs),

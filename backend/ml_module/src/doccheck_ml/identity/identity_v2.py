@@ -24,7 +24,11 @@ CONTRACT_NOUN = r"(?:договор|контракт)(?:ами|ам|ах|ом|о
 # A readable prefix of a damaged amount is not an explicit source amount.
 AMOUNT_TOKEN = (r"([0-9](?:[0-9\s.,]*[0-9])?)"
                 r"(?=$|\s|₽|руб(?:лей)?\b|rub\b)(?!\s*[0-9.,?])")
-TOTAL_FIELD = r"(?:итого(?:\s+к\s+(?:учету|учёту|оплате))?|итоговая\s+сумма|к\s+оплате(?:\s+по\s+документу)?|сумма\s+по\s+акту)"
+TOTAL_FIELD = (
+    r"(?:итого(?:\s+к\s+(?:учету|учёту|оплате))?(?:\s+по\s+документу)?"
+    r"|итоговая\s+сумма|к\s+оплате(?:\s+по\s+документу)?|сумма\s+по\s+акту)"
+    r"(?:\s*\((?:с|без)\s+НДС\))?"
+)
 AMOUNT_LABEL = re.compile(
     r"^(?P<label>" + TOTAL_FIELD + r"|сумма|стоимость)(?!\w)"
     r"\s*(?:,?\s*руб\.?)?\s*[:：]?\s*", re.I,
@@ -177,6 +181,9 @@ def extract_number_candidates(lines: list[dict]) -> list[dict]:
                         break
         if value is None:
             continue
+        # Strip the printed sign before testing for a value on the next line;
+        # a genuine ASCII N/No prefix belongs to the identifier and stays.
+        value = re.sub(r"^№\s*", "", value.strip()).strip()
         used = [evidence(line)]
         if not value.strip() and index + 1 < len(lines):
             nxt = lines[index + 1]
@@ -186,8 +193,7 @@ def extract_number_candidates(lines: list[dict]) -> list[dict]:
             if FIELD_START.match(value):
                 continue
             used.append(evidence(nxt))
-        # The explicit field label and the printed number sign are distinct;
-        # strip only №, never a genuine ASCII N/No prefix in the identifier.
+        # A split value may itself start with the printed sign.
         value = re.sub(r"^№\s*", "", value).strip()
         # The current marker may be the document's own number followed by a
         # separately labelled contract reference on the same source line.
@@ -276,13 +282,10 @@ def _source_amount(lines: list[dict]) -> tuple[dict, list[dict], dict]:
         token = re.match(AMOUNT_TOKEN, tail, re.I)
         amount = parse_amount(token[1]) if token else None
         if amount is None:
-            # Unrecognised qualifiers such as 'Итого по разделу' and 'Сумма
-            # НДС' do not describe a whole-document total. A visibly missing
-            # or damaged total, however, cannot promote a generic subtotal.
-            unreadable = (not tail or not norm(tail) or re.search(r"[:：]", text[:match.end()])
-                          or tail.startswith(("?", "—", "-"))
-                          or bool(re.match(r"[0-9]", tail)))
-            if role != "document_total" or not unreadable:
+            # Explicit subtotals are separate roles. An unrecognised total
+            # format stays unknown instead of promoting a generic subtotal.
+            subtotal = re.match(r"(?:по\s+(?:разделу|строке|позиции|странице)|НДС)\b", tail, re.I)
+            if role != "document_total" or subtotal:
                 continue
         candidates.append({"value": str(amount) if amount is not None else None,
                            "role": role, "evidence": used})

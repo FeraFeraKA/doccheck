@@ -8,7 +8,7 @@ from tempfile import TemporaryDirectory
 import unittest
 
 from doccheck_ml import DocumentInput, process_documents
-from doccheck_ml.identity import identity_v2, identity_v4_source
+from doccheck_ml.identity import identity_v2, identity_v3, identity_v4_source
 
 
 class SourceRoleRegressionTests(unittest.TestCase):
@@ -62,6 +62,57 @@ class SourceRoleRegressionTests(unittest.TestCase):
                 self.assertEqual(record["fact_evidence"]["amount"],
                                  [line for line in lines if line["text"] == "Итого: 200,00"])
 
+    def test_qualified_document_totals_take_priority_in_either_order(self):
+        for label in ("Итого (с НДС)", "Итого (без НДС)", "Итого по документу",
+                      "Итого к оплате по документу"):
+            for texts in (("Сумма: 100,00", f"{label}: 200,00"),
+                          (f"{label}: 200,00", "Сумма: 100,00")):
+                with self.subTest(label=label, texts=texts):
+                    lines = self.lines(*texts)
+                    record = self.process(lines, {"amount": "100.00"})
+                    self.assertEqual(record["facts"]["amount"], "200.00")
+                    self.assertEqual(record["source_facts"]["amount"], "200.00")
+                    self.assertEqual(record["fact_evidence"]["amount"],
+                                     [line for line in lines if line["text"].startswith(label)])
+
+    def test_qualified_document_totals_preserve_conflicts_in_either_order(self):
+        for label in ("Итого (с НДС)", "Итого (без НДС)", "Итого по документу",
+                      "Итого к оплате по документу"):
+            for texts in (("Итого: 200,00", f"{label}: 300,00"),
+                          (f"{label}: 300,00", "Итого: 200,00")):
+                with self.subTest(label=label, texts=texts):
+                    lines = self.lines(*texts)
+                    record = self.process(lines, {"amount": "200.00"})
+                    self.assertIsNone(record["facts"]["amount"])
+                    self.assertIsNone(record["source_facts"]["amount"])
+                    conflict = record["fact_conflicts"]["amount"]
+                    self.assertEqual(conflict["reason"], "conflicting_source_totals")
+                    self.assertEqual({candidate["value"] for candidate in conflict["candidates"]},
+                                     {"200.00", "300.00"})
+                    self.assertEqual(record["fact_evidence"]["amount"], lines)
+
+    def test_unknown_total_qualifier_does_not_promote_a_generic_amount(self):
+        for texts in (("Сумма: 100,00", "Итого окончательно: 200,00"),
+                      ("Итого окончательно: 200,00", "Сумма: 100,00")):
+            with self.subTest(texts=texts):
+                record = self.process(self.lines(*texts), {"amount": "77.00"})
+                self.assertNotIn("amount", record["source_facts"])
+                self.assertEqual(record["facts"]["amount"], "77.00")
+
+    def test_valid_and_unknown_qualified_totals_remain_ambiguous(self):
+        for texts in (("Итого: 200,00", "Итого окончательно: 300,00"),
+                      ("Итого окончательно: 300,00", "Итого: 200,00")):
+            with self.subTest(texts=texts):
+                lines = self.lines(*texts)
+                record = self.process(lines, {"amount": "200.00"})
+                self.assertIsNone(record["facts"]["amount"])
+                self.assertIsNone(record["source_facts"]["amount"])
+                conflict = record["fact_conflicts"]["amount"]
+                self.assertEqual(conflict["reason"], "incomplete_source_totals")
+                self.assertEqual({candidate["value"] for candidate in conflict["candidates"]},
+                                 {"200.00", None})
+                self.assertEqual(record["fact_evidence"]["amount"], lines)
+
     def test_conflicting_totals_do_not_choose_by_order_or_model(self):
         for texts in (("Итого: 200,00", "Итого: 300,00"),
                       ("Итого: 300,00", "Итого: 200,00")):
@@ -98,6 +149,13 @@ class SourceRoleRegressionTests(unittest.TestCase):
         self.assertEqual(result["review_queue"]["number_review_document_ids"], [])
         self.assertEqual(result["review_queue"]["fact_review_document_ids"], ["synthetic"])
         self.assertEqual(len(result["review_queue"]["fact_cards"]), 1)
+
+    def test_v3_standalone_amount_conflict_is_visible_without_number_review(self):
+        record = self.process(self.lines("Акт № SYN-017", "Итого: 200,00", "Итого: 300,00"))
+        queue = identity_v3.review_queue([record])
+        self.assertEqual(queue["number_review_document_ids"], [])
+        self.assertEqual(queue["fact_review_document_ids"], ["synthetic"])
+        self.assertEqual(len(queue["fact_cards"]), 1)
 
     def test_valid_and_unreadable_totals_cannot_silently_select_the_valid_one(self):
         lines = self.lines("Итого: 200,00", "Итого: 0?")
@@ -249,6 +307,29 @@ class SourceRoleRegressionTests(unittest.TestCase):
                 number = self.process(lines)["number"]
                 self.assertEqual(number["usable_value"], "SYN-017")
                 self.assertEqual(number["evidence"], lines)
+
+    def test_split_explicit_label_with_trailing_marker_accepts_adjacent_value(self):
+        for label in ("Номер документа: №", "Номер акта №"):
+            lines = self.lines(label, "SYN-017")
+            with self.subTest(label=label):
+                number = self.process(lines)["number"]
+                self.assertEqual(number["usable_value"], "SYN-017")
+                self.assertFalse(number["manual_review_required"])
+                self.assertEqual(number["evidence"], lines)
+
+    def test_split_trailing_number_sign_cannot_bypass_source_boundary(self):
+        for label in ("Номер документа: №", "Номер акта №"):
+            for lines in (
+                [{"text": label}, {"text": "SYN-017"}],
+                [{"text": label, "page": 1, "line": 1},
+                 {"text": "SYN-017", "page": 2, "line": 2}],
+                [{"text": label, "sheet": "A", "cell": "A1"},
+                 {"text": "SYN-017", "sheet": "B", "cell": "A2"}],
+            ):
+                with self.subTest(label=label, lines=lines):
+                    number = self.process(lines)["number"]
+                    self.assertIsNone(number["usable_value"])
+                    self.assertTrue(number["manual_review_required"])
 
     def test_split_number_sign_cannot_bypass_source_boundary(self):
         for lines in (
