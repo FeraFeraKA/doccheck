@@ -1,0 +1,189 @@
+{
+  "synthetic": true,
+  "files": [
+    {
+      "id": "01_kfz",
+      "file": "inputs/01_kfz.pdf",
+      "role": "report",
+      "format": "pdf",
+      "acquisition": "scan",
+      "sha256": "6aed30d62b1336b9965be3f1f5a7c7fdad04304c0090a09b8532f9e685a508b8"
+    },
+    {
+      "id": "02_payroll_06",
+      "file": "inputs/02_payroll_06.xlsx",
+      "role": "supporting",
+      "format": "xlsx",
+      "acquisition": "native",
+      "sha256": "2ffc21244c1b52d9c081bc533959480182a5fd46e8f31818c5b90c82901341ff"
+    },
+    {
+      "id": "03_insurance_06",
+      "file": "inputs/03_insurance_06.xlsx",
+      "role": "supporting",
+      "format": "xlsx",
+      "acquisition": "native",
+      "sha256": "567d57850d76a3a19246cde310195c2b16f766052a4bc46633162fb3e4725643"
+    },
+    {
+      "id": "02_payroll_07",
+      "file": "inputs/02_payroll_07.xlsx",
+      "role": "supporting",
+      "format": "xlsx",
+      "acquisition": "native",
+      "sha256": "ce28859a09fc6032ebe826158aa4ddc2a3f026e5138d47779e1b38d40ecc6c39"
+    },
+    {
+      "id": "03_insurance_07",
+      "file": "inputs/03_insurance_07.xlsx",
+      "role": "supporting",
+      "format": "xlsx",
+      "acquisition": "native",
+      "sha256": "d96a3c11efa46f139cff94069fb6f36cdde12d82d4a5c0d30fb7b603543765ae"
+    },
+    {
+      "id": "02_payroll_08",
+      "file": "inputs/02_payroll_08.xlsx",
+      "role": "supporting",
+      "format": "xlsx",
+      "acquisition": "native",
+      "sha256": "316426c268b544a808a04f9f7ec5affa8aac0c7d20425d64fabf0fcec3014aeb"
+    },
+    {
+      "id": "03_insurance_08",
+      "file": "inputs/03_insurance_08.xlsx",
+      "role": "supporting",
+      "format": "xlsx",
+      "acquisition": "native",
+      "sha256": "eb84a3871ddfcd3f846e60e14e94eca9698cbbbfef739b48ef45f9fc6e48687f"
+    },
+    {
+      "id": "02_payroll_09",
+      "file": "inputs/02_payroll_09.xlsx",
+      "role": "supporting",
+      "format": "xlsx",
+      "acquisition": "native",
+      "sha256": "5b0c719b474c7b83f8ba10a1707deabbe31ca7f4540f292cbbb8eb9329cf8155"
+    },
+    {
+      "id": "03_insurance_09",
+      "file": "inputs/03_insurance_09.xlsx",
+      "role": "supporting",
+      "format": "xlsx",
+      "acquisition": "native",
+      "sha256": "80b624fbba12b7445cc0402de7deb6c5d445d8abbb585f933cadb2a411aadb1a"
+    },
+    {
+      "id": "02_payroll_10",
+      "file": "inputs/02_payroll_10.xlsx",
+      "role": "supporting",
+      "format": "xlsx",
+      "acquisition": "native",
+      "sha256": "6b93e86930d17708d1397c0b4dd9739ea903bba957ae5b787d405724db96ba0e"
+    },
+    {
+      "id": "03_insurance_10",
+      "file": "inputs/03_insurance_10.xlsx",
+      "role": "supporting",
+      "format": "xlsx",
+      "acquisition": "native",
+      "sha256": "be437d8fd5a4e4db87d5cd6e8f20dde969696e2ab0a2a436c30b3092b1ab1b12"
+    },
+    {
+      "id": "04_act",
+      "file": "inputs/04_act.pdf",
+      "role": "supporting",
+      "format": "pdf",
+      "acquisition": "native",
+      "sha256": "2943df320c80ddcc7f8ab57b93cc92547dc384e8a12b00f8dff37e0129965d5d"
+    },
+    {
+      "id": "05_invoice_act",
+      "file": "inputs/05_invoice_act.pdf",
+      "role": "supporting",
+      "format": "pdf",
+      "acquisition": "scan",
+      "sha256": "ae71b6fd93a5e71f02c237391df238f35bc2a8d9c0cc79fd6bd12d3e66d6cb56"
+    },
+    {
+      "id": "06_memo",
+      "file": "inputs/06_memo.docx",
+      "role": "supporting",
+      "format": "docx",
+      "acquisition": "native",
+      "sha256": "c7e6c294c710e2edfda9f625f00a9bf77067031b0670f4a9e960771c32eac3e4"
+    },
+    {
+      "id": "07_transfer",
+      "file": "inputs/07_transfer.pdf",
+      "role": "supporting",
+      "format": "pdf",
+      "acquisition": "native",
+      "sha256": "a507a8a31528be29c831865f5290e76e618e4a06233e869fe077b8ab5496c5ae"
+    },
+    {
+      "id": "08_admin_act",
+      "file": "inputs/08_admin_act.pdf",
+      "role": "supporting",
+      "format": "pdf",
+      "acquisition": "native",
+      "sha256": "2a342be6f5863968ac182996ae3c4bc5ec7d13c63714183498bf965f4f1f8638"
+    },
+    {
+      "id": "09_admin_act",
+      "file": "inputs/09_admin_act.pdf",
+      "role": "supporting",
+      "format": "pdf",
+      "acquisition": "scan",
+      "sha256": "574a347f48533f899a22d00dd4c422835b3d068ddfd1f4047bace9478bf58c85"
+    },
+    {
+      "id": "10_admin_copy",
+      "file": "inputs/10_admin_copy.pdf",
+      "role": "supporting",
+      "format": "pdf",
+      "acquisition": "scan",
+      "sha256": "574a347f48533f899a22d00dd4c422835b3d068ddfd1f4047bace9478bf58c85"
+    },
+    {
+      "id": "11_calculation",
+      "file": "inputs/11_calculation.docx",
+      "role": "supporting",
+      "format": "docx",
+      "acquisition": "native",
+      "sha256": "5c88b8fdcebfd14704e518513f876d51737337bf88a1eb977c0a3d625ea4df83"
+    },
+    {
+      "id": "12_communication",
+      "file": "inputs/12_communication.png",
+      "role": "supporting",
+      "format": "png",
+      "acquisition": "scan",
+      "sha256": "b4ce4666bd074393aa13a5babc25f314a8038ce37f420d48ea3daadd5e7b70b9"
+    },
+    {
+      "id": "13_transfer",
+      "file": "inputs/13_transfer.pdf",
+      "role": "supporting",
+      "format": "pdf",
+      "acquisition": "native",
+      "sha256": "e5df7b0cf8b81603a939f90284d8c92bd4532a07361d8456c32b1cef5569a5c8"
+    },
+    {
+      "id": "14_admin_act",
+      "file": "inputs/14_admin_act.pdf",
+      "role": "supporting",
+      "format": "pdf",
+      "acquisition": "native",
+      "sha256": "5e6afadc0b4d1ad14f675e32b0d7a55618126e48e0309466acce74b5ad515b0a"
+    },
+    {
+      "id": "15_admin_act",
+      "file": "inputs/15_admin_act.pdf",
+      "role": "supporting",
+      "format": "pdf",
+      "acquisition": "native",
+      "sha256": "d5d464c359343ab26198118bf05735cc094dd0147733c9b513fb0696defc2d77"
+    }
+  ]
+}
