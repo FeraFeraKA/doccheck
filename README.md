@@ -23,7 +23,7 @@ data/                Локальные оригиналы, превью и ре
 ## Начало работы
 
 ```sh
-git clone https://github.com/FeraFeraKA/doccheck.git
+git clone https://github.com/VCyberPunk2077/doccheck.git
 cd doccheck
 ```
 
