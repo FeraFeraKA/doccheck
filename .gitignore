@@ -16,7 +16,6 @@
 /models/
 /logs/
 *.log
-*.sqlite*
 *.db
 
 # Python
