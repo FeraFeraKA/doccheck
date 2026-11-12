@@ -40,7 +40,10 @@ class NumberTests(unittest.TestCase):
 
     def test_bare_marker_requires_title_or_date_context(self):
         self.assertEqual(extract_number_candidates([{"text": "№ 17"}]), [])
-        self.assertEqual(extract_number_candidates([{"text": "Акт"}, {"text": "N17"}])[0]["value"], "17")
+        self.assertEqual(extract_number_candidates([
+            {"text": "Акт", "page": 1, "line": 1},
+            {"text": "N17", "page": 1, "line": 2},
+        ])[0]["value"], "17")
 
     def test_split_number_label_cannot_cross_pages(self):
         self.assertEqual(extract_number_candidates([{"text": "Документ №", "page": 1},

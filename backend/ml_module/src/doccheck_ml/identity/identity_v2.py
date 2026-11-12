@@ -57,6 +57,52 @@ def evidence(line: dict) -> dict:
     return {k: line[k] for k in ("text", "page", "line", "cell", "sheet", "bbox", "score", "image") if k in line}
 
 
+def _cell_position(value: object) -> tuple[int, int] | None:
+    if not isinstance(value, str):
+        return None
+    match = re.fullmatch(r"\$?([A-Za-z]{1,3})\$?([1-9][0-9]*)", value)
+    if not match:
+        return None
+    column = 0
+    for letter in match[1].upper():
+        column = column * 26 + ord(letter) - ord("A") + 1
+    return column, int(match[2])
+
+
+def _adjacent_source_lines(first: dict, second: dict) -> bool:
+    """Require a shared location and reject gaps in supplied line/cell addresses."""
+    page, sheet = first.get("page"), first.get("sheet")
+    if not ((type(page) is int and page > 0)
+            or (isinstance(sheet, str) and sheet.strip())):
+        return False
+    if any(first.get(key) != second.get(key) for key in ("page", "sheet")):
+        return False
+    if "line" in first or "line" in second:
+        if (type(first.get("line")) is not int or type(second.get("line")) is not int
+                or second["line"] != first["line"] + 1):
+            return False
+    if "cell" in first or "cell" in second:
+        left, right = _cell_position(first.get("cell")), _cell_position(second.get("cell"))
+        if not first.get("sheet") or left is None or right is None:
+            return False
+        if right not in ((left[0] + 1, left[1]), (left[0], left[1] + 1)):
+            return False
+    return True
+
+
+def _contract_marker(text: str, position: int) -> bool:
+    """A title elsewhere on the line cannot authorize a contract's number marker."""
+    prefix = text[:position]
+    references = list(re.finditer(r"\b(?:договор|контракт)[а-яё]*\b", prefix, re.I))
+    if not references:
+        return False
+    documents = list(re.finditer(
+        r"\b(?:акт(?:а|у|ом|е)?|документ(?:а|у|ом|е)?|сч[её]т(?:а|у|ом|е)?|упд|"
+        r"ведомост(?:ь|и|ью)|справк(?:а|и|у|ой|е)|записк(?:а|и|у|ой|е))\b", prefix, re.I,
+    ))
+    return not documents or references[-1].end() > documents[-1].end()
+
+
 def number_token(value: object) -> str | None:
     s = unicodedata.normalize("NFC", str(value)).translate(DASHES).strip(" \t:;.,«»\"")
     s = re.sub(r"\s+(?:[oоOО][тtTТ]|от)\s+.*$", "", s).strip()
@@ -96,21 +142,24 @@ def extract_number_candidates(lines: list[dict]) -> list[dict]:
         if explicit:
             value, anchor = explicit.group(1), "explicit_document_number"
         else:
-            marker = re.search(NUMBER_MARK + r"\s*(.*)$", text, re.I)
+            marker = next((match for match in re.finditer(NUMBER_MARK, text, re.I)
+                           if not _contract_marker(text, match.start())), None)
             near_title = False
+            following = line
             for previous in reversed(lines[max(0, index - 2):index]):
                 previous_text = clean_line(previous["text"])
-                if FIELD_START.match(previous_text) or previous.get("page") != line.get("page"):
+                if FIELD_START.match(previous_text) or not _adjacent_source_lines(previous, following):
                     break
                 if any(re.search(p, previous_text, re.I) for _, p in TYPE_PATTERNS):
                     near_title = True
                     break
+                following = previous
             dated_header = bool(re.search(r"\s+[oоOО][тtTТ]\s+" + DATE_PATTERN, text))
             inline_title = any(re.search(p, text, re.I) for _, p in TYPE_PATTERNS)
             # A table row labelled N2 and footer OCR words beginning with N are
             # not document numbers. Bare markers need local header context.
             if marker and (inline_title or (marker.start() == 0 and (near_title or dated_header))):
-                value, anchor = marker.group(1), "document_header_number_marker"
+                value, anchor = text[marker.end():].strip(), "document_header_number_marker"
             else:
                 for pattern in [r"^служебн\w*\s+записка\s+(.+)$", r"^универсальн\w*\s+передаточн\w*\s+документ\s+(.+)$", r"^справка\s+о\s+расходах\s+(.+)$"]:
                     m = re.match(pattern, text, re.I)
@@ -122,12 +171,18 @@ def extract_number_candidates(lines: list[dict]) -> list[dict]:
         used = [evidence(line)]
         if not value.strip() and index + 1 < len(lines):
             nxt = lines[index + 1]
-            if nxt.get("page") != line.get("page"):
+            if not _adjacent_source_lines(line, nxt):
                 continue
             value = clean_line(nxt["text"])
             if FIELD_START.match(value):
                 continue
             used.append(evidence(nxt))
+        # The current marker may be the document's own number followed by a
+        # separately labelled contract reference on the same source line.
+        value = re.split(
+            r"\s+(?:(?:по|к|для|согласно|на\s+основании)\s+)?(?:договор|контракт)[а-яё]*\b",
+            value, maxsplit=1, flags=re.I,
+        )[0]
         token = number_token(value)
         if token:
             found.append({"value": token, "normalized": norm(token), "anchor": anchor, "evidence": used})
@@ -192,23 +247,13 @@ def extract_source_facts(lines: list[dict]) -> tuple[dict, dict]:
         candidates = [(text, [line])]
         if i + 1 < len(lines):
             following = lines[i + 1]
-            # A label at the end of one page/sheet must not acquire a value
-            # from another. Missing location cannot establish this adjacency.
-            same_location = (
-                any(line.get(key) is not None for key in ("page", "sheet"))
-                and all(line.get(key) == following.get(key) for key in ("page", "sheet"))
-            )
-            consecutive = (
-                "line" not in line or "line" not in following
-                or following["line"] == line["line"] + 1
-            )
-            if same_location and consecutive:
+            if _adjacent_source_lines(line, following):
                 candidates.append((text + " " + clean_line(following["text"]), [line, following]))
         for joined, used_lines in candidates:
             for field, pattern in [
                 ("contract_number", r"^(?:договор|контракт|проект)\s*[:№Nn]*\s*([A-Za-zА-Яа-я0-9?]+(?:[-/][A-Za-zА-Яа-я0-9?]+)+)"),
                 ("date", r"^дата(?:\s+документа)?\s*:?\s*(" + DATE_PATTERN + r")"),
-                ("amount", r"^(?:итого(?:\s+к\s+(?:учету|оплате))?|сумма(?:\s+по\s+акту)?|итоговая\s+сумма|к\s+оплате(?:\s+по\s+документу)?|стоимость)\s*(?:,?\s*руб\.?)?\s*:?\s*([0-9][0-9\s.,]*[0-9])"),
+                ("amount", r"^(?:итого(?:\s+к\s+(?:учету|оплате))?|сумма(?:\s+по\s+акту)?|итоговая\s+сумма|к\s+оплате(?:\s+по\s+документу)?|стоимость)\s*(?:,?\s*руб\.?)?\s*:?\s*([0-9](?:[0-9\s.,]*[0-9])?)"),
             ]:
                 m = re.match(pattern, joined, re.I)
                 if m and field not in result:
