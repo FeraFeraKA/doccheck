@@ -20,6 +20,10 @@ MISSING_VALUES = {"не указан", "не указана", "не указан
 GLYPHS = str.maketrans(dict(zip("АВЕКМНОРСТХ", "ABEKMHOPCTX")))
 NUMBER_MARK = r"(?:№|N(?:[oоº°])?\.?(?=\s|\d|$))"
 DATE_PATTERN = r"(?:\d{4}-\d{2}-\d{2}|\d{1,2}\.\d{1,2}\.\d{4})"
+CONTRACT_NOUN = r"(?:договор|контракт)(?:ами|ам|ах|ом|ов|а|у|е|ы)?"
+# A readable prefix of a damaged amount is not an explicit source amount.
+AMOUNT_TOKEN = (r"([0-9](?:[0-9\s.,]*[0-9])?)"
+                r"(?=$|\s|₽|руб(?:лей)?\b|rub\b)(?!\s*[0-9.,?])")
 FIELD_START = re.compile(r"^(?:дата|договор|контракт|проект|период|сумма|итого|исполнитель|поставщик|заказчик|получатель|содержание|назначение|артикул|код\s+контрагента|бланк|форма|инн|кпп|номер\s+договора)\b", re.I)
 TYPE_PATTERNS = [
     ("invoice_act", r"сч[её]т\s*[-–]\s*акт"),
@@ -93,7 +97,7 @@ def _adjacent_source_lines(first: dict, second: dict) -> bool:
 def _contract_marker(text: str, position: int) -> bool:
     """A title elsewhere on the line cannot authorize a contract's number marker."""
     prefix = text[:position]
-    references = list(re.finditer(r"\b(?:договор|контракт)[а-яё]*\b", prefix, re.I))
+    references = list(re.finditer(r"\b" + CONTRACT_NOUN + r"\b", prefix, re.I))
     if not references:
         return False
     documents = list(re.finditer(
@@ -180,7 +184,7 @@ def extract_number_candidates(lines: list[dict]) -> list[dict]:
         # The current marker may be the document's own number followed by a
         # separately labelled contract reference on the same source line.
         value = re.split(
-            r"\s+(?:(?:по|к|для|согласно|на\s+основании)\s+)?(?:договор|контракт)[а-яё]*\b",
+            r"\s+(?:(?:по|к|для|согласно|на\s+основании)\s+)?" + CONTRACT_NOUN + r"\b",
             value, maxsplit=1, flags=re.I,
         )[0]
         token = number_token(value)
@@ -253,7 +257,7 @@ def extract_source_facts(lines: list[dict]) -> tuple[dict, dict]:
             for field, pattern in [
                 ("contract_number", r"^(?:договор|контракт|проект)\s*[:№Nn]*\s*([A-Za-zА-Яа-я0-9?]+(?:[-/][A-Za-zА-Яа-я0-9?]+)+)"),
                 ("date", r"^дата(?:\s+документа)?\s*:?\s*(" + DATE_PATTERN + r")"),
-                ("amount", r"^(?:итого(?:\s+к\s+(?:учету|оплате))?|сумма(?:\s+по\s+акту)?|итоговая\s+сумма|к\s+оплате(?:\s+по\s+документу)?|стоимость)\s*(?:,?\s*руб\.?)?\s*:?\s*([0-9](?:[0-9\s.,]*[0-9])?)"),
+                ("amount", r"^(?:итого(?:\s+к\s+(?:учету|оплате))?|сумма(?:\s+по\s+акту)?|итоговая\s+сумма|к\s+оплате(?:\s+по\s+документу)?|стоимость)\s*(?:,?\s*руб\.?)?\s*:?\s*" + AMOUNT_TOKEN),
             ]:
                 m = re.match(pattern, joined, re.I)
                 if m and field not in result:

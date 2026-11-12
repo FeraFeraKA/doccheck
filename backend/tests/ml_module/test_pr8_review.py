@@ -142,9 +142,21 @@ class ReviewRegressionTests(unittest.TestCase):
         self.assertNotIn("amount", record["source_facts"])
         self.assertNotIn("amount", record["fact_evidence"])
 
+    def test_damaged_amount_is_not_shortened_to_its_readable_prefix(self):
+        for text in ("0?", "1,?", "9?0", "0,?5", "1 , ?", "2e3", "3x"):
+            with self.subTest(text=text):
+                record = self.process(
+                    [{"text": f"Итого: {text}", "page": 1, "line": 1}],
+                    {"amount": "99.99"},
+                )["records"][0]
+                self.assertNotIn("amount", record["source_facts"])
+                self.assertNotIn("amount", record["fact_evidence"])
+                self.assertEqual(record["facts"]["amount"], "99.99")
+
     def test_existing_integer_and_decimal_amounts_keep_precision(self):
         for text, expected in (("17", "17"), ("0,00", "0.00"),
-                               ("7,25", "7.25"), ("1 234,56", "1234.56")):
+                               ("7,25", "7.25"), ("1 234,56", "1234.56"),
+                               ("0руб.", "0"), ("1 ₽", "1"), ("9 рублей", "9")):
             with self.subTest(text=text):
                 line = {"text": f"Итого: {text}", "page": 1, "line": 1}
                 record = self.process([line])["records"][0]
@@ -162,6 +174,18 @@ class ReviewRegressionTests(unittest.TestCase):
                 "page": 1, "line": 1}
         result = self.process([line], {"doc_number": "CN-2047"})
         self.assert_number_needs_review(result)
+
+    def test_contract_adjectives_do_not_hide_the_document_number(self):
+        for title in (
+            "Акт согласования договорной стоимости",
+            "Акт о выполнении договорных обязательств",
+            "Справка о выполнении договорных обязательств",
+            "Акт согласования контрактной стоимости",
+        ):
+            with self.subTest(title=title):
+                number = self.process([{"text": f"{title} № SYN-017"}])["records"][0]["number"]
+                self.assertEqual(number["usable_value"], "SYN-017")
+                self.assertFalse(number["manual_review_required"])
 
     def test_explicit_document_number_survives_separate_contract_reference(self):
         for texts in (
