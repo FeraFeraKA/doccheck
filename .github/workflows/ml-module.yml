@@ -1,0 +1,27 @@
+name: ML module checks
+
+on:
+  push:
+    paths: ['backend/ml_module/**', 'backend/tests/ml_module/**', '.github/workflows/ml-module.yml']
+  pull_request:
+    paths: ['backend/ml_module/**', 'backend/tests/ml_module/**', '.github/workflows/ml-module.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cpu-contract:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install module without model dependencies
+        run: python -m pip install ./backend/ml_module
+      - name: Test identity logic and reader boundary with synthetic inputs
+        run: python -m unittest discover -s backend/tests/ml_module -v
+      - name: Run explicit synthetic example
+        run: doccheck-ml demo > /tmp/doccheck-ml-demo.json
