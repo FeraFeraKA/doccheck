@@ -92,6 +92,28 @@ def _hash_json(value: object) -> str:
                              separators=(",", ":")).encode()).hexdigest()
 
 
+def _validate_weight_layout(model_dir: Path) -> None:
+    """Restrict the loader to the single weight file recorded in provenance.
+
+    MLX-VLM 0.7.12 follows an index when present, otherwise globs safetensors.
+    Validate both routes before importing the runtime; it must never load a
+    second shard or an indexed path that has no corresponding recorded digest.
+    """
+    if {path.name for path in model_dir.glob("*.safetensors")} != {"model.safetensors"}:
+        raise QwenUnavailableError("Only the single model.safetensors base layout is supported")
+    index_path = model_dir / "model.safetensors.index.json"
+    if not index_path.exists():
+        return
+    try:
+        index = json.loads(index_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raise QwenUnavailableError("The local model weight index is invalid") from None
+    weight_map = index.get("weight_map") if isinstance(index, dict) else None
+    if (not isinstance(weight_map, dict) or not weight_map
+            or any(name != "model.safetensors" for name in weight_map.values())):
+        raise QwenUnavailableError("The weight index must reference only model.safetensors")
+
+
 def _parse_prediction(raw: object, finish_reason: object) -> dict[str, str | None]:
     if finish_reason == "length":
         raise QwenPredictionError("Generation reached the token limit")
@@ -155,6 +177,7 @@ class QwenReader:
         model_dir = Path(self.config.model_dir).expanduser().resolve()
         if not model_dir.is_dir() or any(not (model_dir / name).is_file() for name in MODEL_FILES):
             raise QwenUnavailableError("A complete local Qwen MLX base directory is required")
+        _validate_weight_layout(model_dir)
         adapter = self.config.adapter_path
         adapter = Path(adapter).expanduser().resolve() if adapter is not None else None
         if adapter is not None and adapter.is_dir():

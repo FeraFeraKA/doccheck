@@ -70,6 +70,33 @@ class BoundaryTests(unittest.TestCase):
         self.assertIsNone(record["number"]["value"])
         self.assertIsNone(record["facts"]["amount"])
 
+    def test_field_value_cannot_cross_pages_or_sheets(self):
+        cases = [
+            [{"text": "Итого", "page": 1}, {"text": "999.00", "page": 2}],
+            [{"text": "Итого", "sheet": "One"}, {"text": "999.00", "sheet": "Two"}],
+            [{"text": "Итого"}, {"text": "999.00"}],
+            [{"text": "Итого", "page": 1, "line": 1},
+             {"text": "999.00", "page": 1, "line": 9}],
+        ]
+        for lines in cases:
+            with self.subTest(lines=lines):
+                record = process_documents([replace(self.document, lines=lines)])["records"][0]
+                self.assertIsNone(record["facts"]["amount"])
+                self.assertNotIn("amount", record["fact_evidence"])
+
+    def test_multiline_field_preserves_all_source_evidence(self):
+        lines = [{"text": "Дата", "page": 1, "line": 8},
+                 {"text": "12.11.2026", "page": 1, "line": 9}]
+        record = process_documents([replace(self.document, lines=lines)])["records"][0]
+        self.assertEqual(record["source_facts"]["date"], "2026-11-12")
+        self.assertEqual(record["fact_evidence"]["date"], lines)
+
+    def test_same_line_fact_evidence_is_also_an_addressable_list(self):
+        line = {"text": "Итого: 12,34", "page": 1, "line": 1}
+        record = process_documents([replace(self.document, lines=[line])])["records"][0]
+        self.assertEqual(record["facts"]["amount"], "12.34")
+        self.assertEqual(record["fact_evidence"]["amount"], [line])
+
     def test_inputs_are_not_mutated(self):
         before = json.dumps(self.document.lines, sort_keys=True)
         process_documents([self.document])

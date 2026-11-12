@@ -189,10 +189,22 @@ def extract_source_facts(lines: list[dict]) -> tuple[dict, dict]:
     result, proof = {}, {}
     for i, line in enumerate(lines):
         text = clean_line(line["text"])
-        candidates = [text]
+        candidates = [(text, [line])]
         if i + 1 < len(lines):
-            candidates.append(text + " " + clean_line(lines[i + 1]["text"]))
-        for joined in candidates:
+            following = lines[i + 1]
+            # A label at the end of one page/sheet must not acquire a value
+            # from another. Missing location cannot establish this adjacency.
+            same_location = (
+                any(line.get(key) is not None for key in ("page", "sheet"))
+                and all(line.get(key) == following.get(key) for key in ("page", "sheet"))
+            )
+            consecutive = (
+                "line" not in line or "line" not in following
+                or following["line"] == line["line"] + 1
+            )
+            if same_location and consecutive:
+                candidates.append((text + " " + clean_line(following["text"]), [line, following]))
+        for joined, used_lines in candidates:
             for field, pattern in [
                 ("contract_number", r"^(?:договор|контракт|проект)\s*[:№Nn]*\s*([A-Za-zА-Яа-я0-9?]+(?:[-/][A-Za-zА-Яа-я0-9?]+)+)"),
                 ("date", r"^дата(?:\s+документа)?\s*:?\s*(" + DATE_PATTERN + r")"),
@@ -208,12 +220,14 @@ def extract_source_facts(lines: list[dict]) -> tuple[dict, dict]:
                         parsed = parse_amount(value)
                         value = str(parsed) if parsed is not None else None
                     if value is not None and "?" not in value:
-                        result[field], proof[field] = value, evidence(line)
+                        result[field] = value
+                        proof[field] = [evidence(used) for used in used_lines]
         if "date" not in result and (re.match(NUMBER_MARK, text, re.I) or any(re.search(p, text, re.I) for _, p in TYPE_PATTERNS)):
             m = re.search(r"\s+[oоOО][тtTТ]\s+(" + DATE_PATTERN + r")", text)
             parsed = parse_date(m.group(1)) if m else None
             if parsed:
-                result["date"], proof["date"] = parsed.isoformat(), evidence(line)
+                result["date"] = parsed.isoformat()
+                proof["date"] = [evidence(line)]
     return result, proof
 
 

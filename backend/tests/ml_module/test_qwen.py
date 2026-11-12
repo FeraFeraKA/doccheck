@@ -93,6 +93,52 @@ class ReaderTests(unittest.TestCase):
             self.reader().read(self.image)
         self.runtime_factory.assert_not_called()
 
+    def test_extra_weights_are_rejected_before_runtime_with_or_without_index(self):
+        for indexed in (False, True):
+            if indexed:
+                (self.model_dir / "model.safetensors.index.json").write_text(json.dumps({
+                    "weight_map": {"layer.weight": "model.safetensors"},
+                }))
+            for name in ("extra.safetensors", "consolidated.safetensors"):
+                extra = self.model_dir / name
+                extra.write_bytes(b"synthetic extra weights")
+                with self.subTest(indexed=indexed, name=name):
+                    with self.assertRaisesRegex(qwen.QwenUnavailableError, "single"):
+                        self.reader().read(self.image)
+                extra.unlink()
+        self.runtime_factory.assert_not_called()
+        self.runtime.load.assert_not_called()
+
+    def test_index_cannot_load_other_shards_or_paths(self):
+        index = self.model_dir / "model.safetensors.index.json"
+        for target in ("other.safetensors", "../outside.safetensors",
+                       "/tmp/outside.safetensors", "nested/model.safetensors",
+                       "./model.safetensors", None, ["model.safetensors"]):
+            index.write_text(json.dumps({"weight_map": {
+                "first.weight": "model.safetensors", "second.weight": target,
+            }}))
+            with self.subTest(target=target), self.assertRaises(qwen.QwenUnavailableError):
+                self.reader().read(self.image)
+        self.runtime_factory.assert_not_called()
+        self.runtime.load.assert_not_called()
+
+    def test_invalid_index_is_rejected_instead_of_using_loader_fallback(self):
+        index = self.model_dir / "model.safetensors.index.json"
+        for content in ("invalid JSON", "[]", "{}", '{"weight_map":{}}'):
+            index.write_text(content)
+            with self.subTest(content=content), self.assertRaises(qwen.QwenUnavailableError):
+                self.reader().read(self.image)
+        self.runtime_factory.assert_not_called()
+
+    def test_single_file_index_is_accepted_and_recorded_in_provenance(self):
+        index = self.model_dir / "model.safetensors.index.json"
+        index.write_text(json.dumps({"weight_map": {
+            "first.weight": "model.safetensors", "second.weight": "model.safetensors",
+        }}))
+        result = self.reader().read(self.image)
+        self.assertEqual(result["model_files_sha256"][index.name], qwen._hash_file(index))
+        self.runtime.load.assert_called_once()
+
     def test_missing_adapter_never_silently_uses_base(self):
         with self.assertRaisesRegex(qwen.QwenUnavailableError, "requested LoRA"):
             self.reader(self.root / "missing.safetensors").read(self.image)
