@@ -308,17 +308,16 @@ def _contains_complete_reading(field: str, value: str | None, text: str) -> bool
         return False
 
 
-def _has_document_number_context(source: SourceObservation, prepared: _Prepared) -> bool:
-    if _DOCUMENT_HEADER.match(source.text):
-        return True
-    if not re.match(r"^\s*(?:№|N(?:[oоº°])?\.?)", source.text, re.I):
-        # This can be the value half of an addressed, compound reading.
-        return True
-    return any(
-        _DOCUMENT_HEADER.match(previous.text) and _adjacent(previous, source)
+def _document_number_context(
+    source: SourceObservation, prepared: _Prepared
+) -> SourceObservation | None:
+    matches = [
+        previous
         for candidates in prepared.sources.values()
         for previous in candidates
-    )
+        if _DOCUMENT_HEADER.match(previous.text) and _adjacent(previous, source)
+    ]
+    return matches[0] if len(matches) == 1 else None
 
 
 def _evidence_sources(
@@ -345,9 +344,24 @@ def _evidence_sources(
             ambiguous = True
     provenance = tuple(sources)
     if field == "doc_number":
-        trusted = [source for source in sources if _has_document_number_context(source, prepared)]
-        ambiguous = ambiguous or len(trusted) != len(sources)
-        sources = trusted
+        contexts = {}
+        for index, source in enumerate(sources):
+            if re.match(r"^\s*(?:№|N(?:[oоº°])?\.?)", source.text, re.I):
+                contexts[index] = _document_number_context(source, prepared)
+        if any(context is None for context in contexts.values()):
+            return (), provenance, True
+        if contexts and not ambiguous and len(sources) <= 2:
+            index, context = next(iter(contexts.items()))
+            # A uniquely adjacent header may be omitted by the public response.
+            # Preserve its actual address as support, leaving module provenance intact.
+            if (
+                context is not None
+                and len(contexts) == 1
+                and (len(sources) == 1 or (index == 1 and sources[0] == context))
+            ):
+                return (context, sources[index]), provenance, False
+        if contexts:
+            return (), provenance, True
     if len(evidence) < 2:
         return tuple(sources), provenance, ambiguous
 

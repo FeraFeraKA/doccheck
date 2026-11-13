@@ -184,7 +184,24 @@ def test_bare_number_needs_an_adjacent_header_address(module_path, tmp_path):
         [replace(supplied, observations=adjacent)], synthetic=True
     ).documents
     number = next(item for item in record.candidates if item.field == "doc_number")
-    assert number.value == "412" and number.sources == adjacent[1:] and not number.source_ambiguous
+    assert number.value == "412" and number.sources == adjacent and not number.source_ambiguous
+    assert number.provenance == adjacent[1:]
+    assert not record.number_requires_review
+
+
+def test_explicit_number_label_and_value_keep_both_module_sources(module_path, tmp_path):
+    document = _document(tmp_path)
+    observations = (
+        SourceObservation("Номер акта:", PageLocator(kind="page", page=1, line=3), "native"),
+        SourceObservation("№ 412", PageLocator(kind="page", page=1, line=4), "native"),
+    )
+    (record,) = identify_documents(
+        [replace(document, observations=observations)], synthetic=True
+    ).documents
+    (number,) = tuple(item for item in record.candidates if item.field == "doc_number")
+    assert number.value == "412"
+    assert number.sources == observations and number.provenance == observations
+    assert not number.source_ambiguous and not record.number_requires_review
 
 
 def test_unambiguous_issuer_response_can_omit_candidate_list(module_path, tmp_path):
