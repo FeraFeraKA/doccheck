@@ -141,6 +141,7 @@ function document(value: unknown): ReviewResult['documents'][number] {
   return {
     id: text(item.id),
     name: text(item.name),
+    format: item.format === null ? null : choice(item.format, ['pdf', 'png', 'xlsx', 'docx']),
     role: choice(item.role, ['report', 'support']),
     decision: {
       state: choice(decision.state, ['include', 'exclude', 'needs_review', 'parse_error']),
