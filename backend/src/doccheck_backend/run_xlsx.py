@@ -93,6 +93,7 @@ def export_check_result(result: CheckResult) -> bytes:
             len(result.evidence) + 1,
             len(result.documents) + 1,
             len(summary.primary_issues) + 1,
+            sum(len(row.calculation.components) for row in result.rows) + 1,
         )
         > 1_048_576
     ):
@@ -156,6 +157,37 @@ def export_check_result(result: CheckResult) -> bytes:
             row.root_issue_id,
         )
     _finish(sheet, headers, (24, 42, 16, 12, 24, 24, 29, 22, 20, 17, 44, 44, 20, 40, 24, 28, 24))
+
+    components = workbook.create_sheet("Слагаемые")
+    _append(
+        components,
+        "ID строки",
+        "Номер слагаемого",
+        "Сумма",
+        "Единица",
+        "Основание связи",
+        "ID доказательств суммы",
+        "ID доказательств договора",
+        "ID доказательств периода",
+        "ID доказательств статьи",
+        "ID доказательств идентичности",
+    )
+    for row in result.rows:
+        for number, component in enumerate(row.calculation.components, 1):
+            _append(
+                components,
+                row.id,
+                number,
+                component.amount,
+                row.unit,
+                component.relation_reason,
+                "\n".join(component.amount_refs),
+                "\n".join(component.contract_refs),
+                "\n".join(component.period_refs),
+                "\n".join(component.article_refs),
+                "\n".join(component.identity_refs) or None,
+            )
+    _finish(components, 1, (24, 22, 24, 12, 58, 29, 29, 29, 29, 35))
 
     sources = workbook.create_sheet("Источники")
     _append(sources, "ID источника", "ID документа", "Документ", "Адрес", "Тип свидетельства")

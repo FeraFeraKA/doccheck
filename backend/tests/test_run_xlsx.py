@@ -39,7 +39,13 @@ def test_workbook_preserves_amounts_and_keeps_all_untrusted_cells_literal():
     assert job.result is not None
 
     workbook = load_workbook(BytesIO(export_check_result(job.result)))
-    assert workbook.sheetnames == ["Сверка", "Источники", "Документы", "Первичные замечания"]
+    assert workbook.sheetnames == [
+        "Сверка",
+        "Слагаемые",
+        "Источники",
+        "Документы",
+        "Первичные замечания",
+    ]
     reconciliation = workbook["Сверка"]
     rows = {row[0].value: row for row in reconciliation if row[0].value in ("row-a", "row-b")}
     first, second = rows["row-a"], rows["row-b"]
@@ -81,6 +87,63 @@ def test_workbook_preserves_amounts_and_keeps_all_untrusted_cells_literal():
         for row in sheet
         for cell in row
     )
+
+
+def test_components_preserve_individual_relations_and_typed_references():
+    payload = fixture_payload()
+    result = payload["result"]
+    items = result["rows"][0]["calculation"]["components"]
+    items[0]["relation_reason"] = '=HYPERLINK("https://example.test/")'
+    items[1]["relation_reason"] = "#N/A"
+    identity = "=identity"
+    items[0]["identity_refs"] = [identity]
+    result["evidence"].append(
+        {
+            "id": identity,
+            "document_id": "ledger",
+            "kind": "document_identity",
+            "raw_value": "Синтетический ID",
+            "normalized_value": "SYNTHETIC-ID",
+            "unit": None,
+            "method": "native",
+            "locator": {"kind": "sheet", "sheet": "Синтетика", "range": "A5"},
+        }
+    )
+    job = CheckJob.model_validate(payload)
+    assert job.result is not None
+
+    workbook = load_workbook(BytesIO(export_check_result(job.result)))
+    first, second = list(workbook["Слагаемые"].iter_rows(min_row=2))
+    assert [cell.value for cell in first] == [
+        "row-a",
+        1,
+        "60.25",
+        "RUB",
+        items[0]["relation_reason"],
+        "amount-1",
+        "contract",
+        "period",
+        "article",
+        identity,
+    ]
+    assert [cell.value for cell in second] == [
+        "row-a",
+        2,
+        "60.25",
+        "RUB",
+        "#N/A",
+        "amount-2",
+        "contract",
+        "period",
+        "article",
+        None,
+    ]
+    for cell in (first[2], first[4], first[9], second[2], second[4]):
+        assert cell.data_type == "s" and cell.hyperlink is None
+    sources = {item[0]: item for item in workbook["Источники"].values}
+    assert sources[first[5].value][3] == "Лист «Синтетика», C6"
+    assert sources[second[5].value][3] == "Лист «Синтетика», C7"
+    assert sources[identity][3] == "Лист «Синтетика», A5"
 
 
 def set_saved_result(client, run_id: str, *, status: str) -> None:
