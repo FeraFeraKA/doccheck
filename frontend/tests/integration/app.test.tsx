@@ -7,7 +7,7 @@ import { jobId, syntheticJob } from '../fixtures/syntheticJob';
 afterEach(() => vi.unstubAllGlobals());
 
 function renderApp() {
-  return render(<MemoryRouter initialEntries={['/']}><App /></MemoryRouter>);
+  return render(<MemoryRouter initialEntries={['/system-status']}><App /></MemoryRouter>);
 }
 
 const health = () => Response.json({ status: 'ok', database: 'ok' });

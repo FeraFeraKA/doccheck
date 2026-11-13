@@ -7,13 +7,17 @@ test('the accountant opens the synthetic reconciliation and sees discrepancies a
     if (new URL(request.url()).pathname.startsWith('/api/')) apiRequests.push(request.url());
   });
 
-  await page.goto('/checks/new');
+  await page.goto('/');
   await expect(page.getByRole('group', { name: 'Роль интерфейса' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Аспирант' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Бухгалтер' })).toHaveCount(0);
-  await expect(page.getByLabel('Выберите КФЗ')).toBeVisible();
-  await expect(page.getByText(/собирает сводные значения из первичных документов/)).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Далее' })).toBeDisabled();
+  await expect(page.getByRole('heading', { name: 'Новая проверка' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Выбрать файл' })).toBeVisible();
+  await expect(page.getByRole('navigation', { name: 'Основная навигация' })
+    .getByRole('link', { name: 'Новая проверка' })).toHaveAttribute('aria-current', 'page');
+  await expect(page.getByRole('link', { name: 'Журнал действий' })).toHaveCount(0);
+  await expect(page.getByText('Добавьте отчёт и подтверждающие документы для сверки.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Первичные документы', exact: true })).toBeDisabled();
   await page.getByRole('link', { name: 'Открыть готовый синтетический результат' }).click();
 
   const discrepancy = page.getByRole('row').filter({ hasText: 'Синтетическая статья A' });
@@ -45,7 +49,7 @@ for (const width of [320, 390]) {
     await page.setViewportSize({ width, height: 844 });
     await page.route('**/api/v0/runs', (route) => route.fulfill({ json: { items: [], next_cursor: null } }));
     await page.goto('/checks');
-    await page.getByRole('link', { name: 'Синтетическая сверка' }).click();
+    await page.getByRole('link', { name: 'Синтетическая сверка', exact: true }).click();
 
     await expect(page.getByText('Расхождения: 1', { exact: true })).toBeInViewport({ ratio: 1 });
     await expect(page.getByRole('heading', { name: 'Показатели' })).toBeVisible();
@@ -65,7 +69,7 @@ test('the upload wizard selects files without secure-context APIs', async ({ pag
     buffer: Buffer.from('%PDF-1.4 synthetic example'),
   });
   await expect(page.getByText('example.pdf', { exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Далее' })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Первичные документы', exact: true })).toBeEnabled();
 });
 
 test('the accountant distinguishes missing files, invalid selection and unknown checks', async ({ page }) => {
@@ -75,28 +79,28 @@ test('the accountant distinguishes missing files, invalid selection and unknown 
     next_cursor: null,
   } }));
   await page.goto('/checks/new');
-  await expect(page.getByText('КФЗ пока не выбрана.')).toBeVisible();
+  await expect(page.getByText('Перетащите отчёт сюда')).toBeVisible();
   await page.getByLabel('Выберите КФЗ').setInputFiles({
     name: 'empty.pdf',
     mimeType: 'application/pdf',
     buffer: Buffer.alloc(0),
   });
   await expect(page.getByRole('alert')).toHaveText('Добавьте непустые PDF, DOCX, XLSX или PNG.');
-  await expect(page.getByRole('button', { name: 'Далее' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Первичные документы', exact: true })).toBeDisabled();
 
   await page.getByLabel('Выберите КФЗ').setInputFiles({
     name: 'report.pdf',
     mimeType: 'application/pdf',
     buffer: Buffer.from('%PDF-1.4 synthetic report'),
   });
-  await page.getByRole('button', { name: 'Далее' }).click();
+  await page.getByRole('button', { name: 'Первичные документы', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Отправить на проверку' })).toBeDisabled();
-  await expect(page.getByText('Первичные документы пока не выбраны.')).toBeVisible();
+  await expect(page.getByText('Перетащите документы сюда')).toBeVisible();
 
   await page.goto('/checks/unknown/conclusion');
   await expect(page.getByRole('heading', { name: 'Проверка не найдена' })).toBeVisible();
   await page.getByRole('link', { name: 'Все проверки' }).click();
-  await expect(page.getByRole('link', { name: 'Синтетическая сверка' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Синтетическая сверка', exact: true })).toBeVisible();
   await page.getByRole('searchbox', { name: 'Поиск на странице' }).fill('нет совпадений');
   await expect(page.getByText('Проверки не найдены.')).toBeVisible();
 });
@@ -121,12 +125,12 @@ test('saved run and history cursor are recovered from the URL', async ({ page })
     json: { code: 'result_pending', message: 'Результат пока недоступен' },
   }));
   await page.goto('/checks');
-  await expect(page.getByRole('link', { name: 'Синтетическая сверка' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Синтетическая сверка', exact: true })).toBeVisible();
   await page.getByRole('link', { name: 'Более ранние проверки' }).click();
   await page.reload();
-  await expect(page.getByRole('link', { name: 'Проверка older-run' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Проверка older-run', exact: true })).toBeVisible();
   await page.getByRole('link', { name: 'К новым проверкам' }).click();
-  await page.getByRole('link', { name: 'Проверка saved-run' }).click();
+  await page.getByRole('link', { name: 'Проверка saved-run', exact: true }).click();
   await page.reload();
   await expect(page.getByRole('heading', { name: 'Проверка saved-run' })).toBeVisible();
   await expect(page.getByText('Обработано документов: 2 из 2')).toBeVisible();
@@ -136,7 +140,7 @@ test('saved run and history cursor are recovered from the URL', async ({ page })
 test('the synthetic conclusion shows XLSX export as unavailable', async ({ page }) => {
   await page.route('**/api/v0/runs', (route) => route.fulfill({ json: { items: [], next_cursor: null } }));
   await page.goto('/checks');
-  await page.getByRole('link', { name: 'Синтетическая сверка' }).click();
+  await page.getByRole('link', { name: 'Синтетическая сверка', exact: true }).click();
   await page.getByRole('link', { name: 'Заключение' }).click();
 
   const download = page.getByRole('button', { name: 'Скачать XLSX' });
@@ -349,4 +353,17 @@ test('the selected stored evidence opens its own original and address', async ({
     '/api/v0/runs/run-with-source/documents/ledger',
     '/api/v0/runs/run-with-source/documents/ledger/fragments?evidence_id=amount-1',
   ]));
+});
+
+test('the wizard keeps the example link inside the tablet viewport', async ({ page }) => {
+  for (const width of [701, 768]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto('/');
+
+    const example = page.getByRole('link', { name: 'Открыть готовый синтетический результат' });
+    await expect(example).toBeInViewport({ ratio: 1 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(width);
+  }
+  await page.getByRole('link', { name: 'Открыть готовый синтетический результат' }).click();
+  await expect(page.getByRole('heading', { name: 'Синтетическая сверка' })).toBeVisible();
 });

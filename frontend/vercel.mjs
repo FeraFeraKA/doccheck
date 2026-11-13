@@ -16,6 +16,7 @@ export const config = {
     { source: '/api/:path*', destination: `${api.origin}/api/:path*` },
     { source: '/checks', destination: '/index.html' },
     { source: '/checks/:path*', destination: '/index.html' },
+    { source: '/system-status', destination: '/index.html' },
     { source: '/log', destination: '/index.html' },
   ],
   headers: [
