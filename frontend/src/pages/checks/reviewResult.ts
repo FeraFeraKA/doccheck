@@ -4,9 +4,11 @@ type FixtureResult = typeof fixture.result;
 
 interface PageAddress {
   page: number;
-  table_row?: number;
-  table_column?: number;
+  table_row?: number | null;
+  table_column?: number | null;
   bbox?: number[] | null;
+  line?: number | null;
+  fragment_id?: string | null;
 }
 
 interface SheetAddress {
@@ -14,7 +16,19 @@ interface SheetAddress {
   range: string;
 }
 
-type SourceAddress = PageAddress | SheetAddress;
+interface ParagraphAddress {
+  kind: 'paragraph';
+  paragraph: number;
+}
+
+interface TableCellAddress {
+  kind: 'table_cell';
+  table: number;
+  row: number;
+  cell: number;
+}
+
+type SourceAddress = PageAddress | SheetAddress | ParagraphAddress | TableCellAddress;
 
 type SourceEvidence = Pick<FixtureResult['evidence'][number], 'id' | 'document_id'> & {
   locator: SourceAddress;
@@ -54,9 +68,15 @@ export function formatMoney(value: string | null) {
 }
 
 export function formatLocation(locator: SourceAddress) {
-  if ('sheet' in locator) return 'Лист «' + locator.sheet + '», ' + locator.range;
-  if (locator.table_row !== undefined) {
-    return 'Страница ' + locator.page + ', строка ' + locator.table_row + ', столбец ' + locator.table_column;
+  if ('sheet' in locator) return `Лист «${locator.sheet}», ${locator.range}`;
+  if ('paragraph' in locator) return `Абзац ${locator.paragraph}`;
+  if ('table' in locator) return `Таблица ${locator.table}, строка ${locator.row}, ячейка ${locator.cell}`;
+
+  const page = `Страница ${locator.page}`;
+  if (locator.table_row != null && locator.table_column != null) {
+    return `${page}, строка ${locator.table_row}, столбец ${locator.table_column}`;
   }
-  return 'Страница ' + locator.page;
+  if (locator.line != null) return `${page}, строка ${locator.line}`;
+  if (locator.fragment_id != null) return `${page}, фрагмент ${locator.fragment_id}`;
+  return page;
 }

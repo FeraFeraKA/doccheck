@@ -1,7 +1,8 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { Link, MemoryRouter, Route, Routes } from 'react-router';
 import { expect, it, vi } from 'vitest';
 import { CheckDetail, ChecksOverview } from '../../src/pages/checks';
+import { loadDemoRun } from '../../src/pages/checks/checkData';
 import type { RunDetails } from '../../src/pages/checks/checkData';
 
 it('различает загрузку истории, ошибку и пустой список после повтора', async () => {
@@ -71,4 +72,65 @@ it.each([
 
   expect(await screen.findByText(message)).toBeVisible();
   expect(screen.queryByRole('table')).not.toBeInTheDocument();
+});
+
+it('показывает абзац и ячейку таблицы DOCX в списке доказательств и панели источника', async () => {
+  const loadRun = async (): Promise<RunDetails | null> => {
+    const demo = await loadDemoRun('synthetic-example');
+    if (!demo?.result) throw new Error('Не найден синтетический результат');
+    const document = {
+      id: 'synthetic-docx',
+      name: 'synthetic.docx',
+      role: 'supporting',
+      decision: {
+        state: 'include',
+        reason_code: 'synthetic_source',
+        message: 'Синтетический документ',
+        evidence_refs: [],
+      },
+      errors: [],
+    };
+    const [first, ...otherRows] = demo.result.rows;
+
+    return {
+      ...demo,
+      result: {
+        ...demo.result,
+        documents: [...demo.result.documents, document],
+        rows: [{
+          ...first,
+          reasons: [...first.reasons, {
+            code: 'synthetic_docx',
+            message: 'Адреса в синтетическом DOCX',
+            evidence_refs: ['docx-paragraph', 'docx-cell'],
+          }],
+        }, ...otherRows],
+        evidence: [...demo.result.evidence, {
+          id: 'docx-paragraph',
+          document_id: document.id,
+          raw_value: 'Синтетический абзац',
+          locator: { kind: 'paragraph', paragraph: 3 },
+        }, {
+          id: 'docx-cell',
+          document_id: document.id,
+          raw_value: 'Синтетическая ячейка',
+          locator: { kind: 'table_cell', table: 1, row: 2, cell: 4 },
+        }],
+      },
+    };
+  };
+
+  render(<MemoryRouter initialEntries={['/checks/docx-test']}>
+    <Routes><Route path="/checks/:id" element={<CheckDetail view="table" loadRun={loadRun} />} /></Routes>
+  </MemoryRouter>);
+
+  const select = await screen.findByRole('combobox', { name: 'Доказательство' });
+  for (const [id, location] of [
+    ['docx-paragraph', 'Абзац 3'],
+    ['docx-cell', 'Таблица 1, строка 2, ячейка 4'],
+  ]) {
+    expect(within(select).getByRole('option', { name: 'synthetic.docx · ' + location })).toBeVisible();
+    fireEvent.change(select, { target: { value: id } });
+    expect(screen.getByText(location, { selector: 'dd' })).toBeVisible();
+  }
 });
