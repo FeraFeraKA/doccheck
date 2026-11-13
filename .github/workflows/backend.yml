@@ -33,14 +33,13 @@ jobs:
       DOCCHECK_TEST_DATABASE_URL: postgresql+psycopg://doccheck_test:synthetic-ci-password@127.0.0.1:5432/doccheck_test
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
-        with:
-          python-version-file: backend/.python-version
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           version: '0.9.17'
+      - name: Install pinned Python
+        run: uv python install
       - name: Install locked dependencies
-        run: uv sync --frozen
+        run: uv sync --frozen --managed-python
       - name: Check formatting and lint
         run: |
           uv run --frozen ruff check src migrations tests
