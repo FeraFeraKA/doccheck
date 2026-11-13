@@ -1,7 +1,7 @@
 """Pydantic source of the doccheck-check-result/1 contract."""
 
 import re
-from collections import Counter
+from collections import Counter, defaultdict
 from decimal import Decimal
 from typing import Annotated, Literal, Self
 
@@ -23,7 +23,9 @@ DecimalText = Annotated[str, StringConstraints(strict=True, pattern=_DECIMAL_PAT
 _RUB_SCHEMA = {"type": "string", "pattern": _RUB_PATTERN.pattern}
 _DECIMAL_FIELDS = ("reported_value", "expected_value", "observed_evidence_sum", "delta")
 _COMPLETED_JOB_STATES = ("completed", "completed_with_issues")
-AmountReadings = dict[tuple[str, AddressKey], set[tuple[str | None, Decimal]]]
+PageLine = tuple[str, int, int]
+ReadingKind = Literal["numeric", "document_identity"]
+Reading = tuple[str | None, Decimal | str]
 Digest = Annotated[
     str, StringConstraints(strict=True, pattern=re.compile(r"^[0-9a-f]{64}(?![\s\S])"))
 ]
@@ -188,6 +190,68 @@ class Evidence(ContractModel):
             if self.unit == "RUB" and not _RUB_PATTERN.fullmatch(value):
                 raise ValueError("RUB evidence requires a decimal string in kopecks")
         return self
+
+
+class _EvidenceIndex:
+    def __init__(self, evidence: list[Evidence]) -> None:
+        parents = {item.id: item.id for item in evidence}
+        addresses: dict[tuple[str, AddressKey], str] = {}
+
+        def representative(evidence_id: str) -> str:
+            while parents[evidence_id] != evidence_id:
+                parents[evidence_id] = parents[parents[evidence_id]]
+                evidence_id = parents[evidence_id]
+            return evidence_id
+
+        for item in evidence:
+            for key in item.locator.address_keys():
+                previous = addresses.setdefault((item.document_id, key), item.id)
+                parents[representative(item.id)] = representative(previous)
+        self.groups = {item.id: representative(item.id) for item in evidence}
+
+        # Line-only addresses are coarse. Fine addresses on a line stay distinct.
+        self.lines: dict[str, set[PageLine]] = defaultdict(set)
+        self.line_only: dict[str, set[PageLine]] = defaultdict(set)
+        for item in evidence:
+            locator = item.locator
+            if isinstance(locator, PageLocator) and locator.line is not None:
+                group = self.groups[item.id]
+                line = (item.document_id, locator.page, locator.line)
+                self.lines[group].add(line)
+                if ("line", locator.page, locator.line) in locator.address_keys():
+                    self.line_only[group].add(line)
+
+        self.readings: dict[tuple[ReadingKind, str], set[Reading]] = defaultdict(set)
+        for item in evidence:
+            value = item.normalized_value
+            if not isinstance(value, str):
+                continue
+            group = self.groups[item.id]
+            if item.kind in ("amount", "reported_value"):
+                self.readings["numeric", group].add((item.unit, Decimal(value)))
+            elif item.kind == "document_identity":
+                self.readings["document_identity", group].add((None, value))
+
+        self.line_readings: dict[tuple[ReadingKind, PageLine], set[Reading]] = defaultdict(set)
+        self.line_only_readings: dict[tuple[ReadingKind, PageLine], set[Reading]] = defaultdict(set)
+        for (kind, group), readings in self.readings.items():
+            for line in self.lines[group]:
+                self.line_readings[kind, line].update(readings)
+            for line in self.line_only[group]:
+                self.line_only_readings[kind, line].update(readings)
+
+    def agrees(self, evidence_id: str, kind: ReadingKind, reading: Reading) -> bool:
+        group = self.groups[evidence_id]
+        expected = {reading}
+        if self.readings[kind, group] != expected:
+            return False
+        for line in self.lines[group]:
+            readings = (
+                self.line_readings if line in self.line_only[group] else self.line_only_readings
+            )
+            if readings.get((kind, line), expected) != expected:
+                return False
+        return True
 
 
 class Completeness(ContractModel):
@@ -430,9 +494,9 @@ class CheckResult(ContractModel):
                 or original.duplicate_of is not None
             ):
                 raise ValueError("a byte copy must reference a representative with the same digest")
-        readings = _index_readings(self.evidence)
+        addresses = _EvidenceIndex(self.evidence)
         for row in self.rows:
-            self._check_row_refs(row, report, documents, evidence, readings)
+            self._check_row_refs(row, report, documents, evidence, addresses)
             if row.root_issue_id is not None and row.root_issue_id not in primary:
                 raise ValueError("row root issue must refer to a primary issue in this result")
         for issue in self.summary.primary_issues:
@@ -451,7 +515,7 @@ class CheckResult(ContractModel):
         report: SourceDocument,
         documents: dict[str, SourceDocument],
         evidence: dict[str, Evidence],
-        readings: AmountReadings,
+        addresses: _EvidenceIndex,
     ) -> None:
         observed = _require_refs(row.reported_evidence_refs, evidence, "reported_value")
         if any(item.document_id != report.id for item in observed):
@@ -459,7 +523,7 @@ class CheckResult(ContractModel):
         if observed and not _is_admitted(report):
             raise ValueError("reported evidence requires an admitted report")
         if row.reported_value is not None:
-            _check_amount_readings(observed, row.unit, row.reported_value, readings, "reported")
+            _check_amount_readings(observed, row.unit, row.reported_value, addresses, "reported")
         if row.completeness.basis == "dataset_fixture" and not self.synthetic:
             raise ValueError("dataset fixture coverage requires a synthetic result")
         coverage = _require_refs(row.completeness.evidence_refs, evidence)
@@ -469,31 +533,23 @@ class CheckResult(ContractModel):
             raise ValueError("complete coverage cannot rely on an inadmissible document")
         for reason in row.reasons:
             _require_refs(reason.evidence_refs, evidence)
-        used_addresses: set[tuple[str, AddressKey]] = set()
-        used_lines: set[tuple[str, int, int]] = set()
-        used_line_only: set[tuple[str, int, int]] = set()
+        used_groups: set[str] = set()
+        used_lines: set[PageLine] = set()
+        used_line_only: set[PageLine] = set()
         for component in row.calculation.components:
             amounts = _require_refs(component.amount_refs, evidence, "amount")
-            _check_amount_readings(amounts, row.unit, component.amount, readings, "component")
-            addresses: set[tuple[str, AddressKey]] = set()
-            lines: set[tuple[str, int, int]] = set()
-            line_only: set[tuple[str, int, int]] = set()
+            _check_amount_readings(amounts, row.unit, component.amount, addresses, "component")
             for item in amounts:
                 document = documents[item.document_id]
                 if document.role != "support" or not _is_admitted(document):
                     raise ValueError("components require admitted supporting documents")
-                locator = item.locator
-                keys = locator.address_keys()
-                addresses.update((document.id, key) for key in keys)
-                if isinstance(locator, PageLocator) and locator.line is not None:
-                    line = (document.id, locator.page, locator.line)
-                    lines.add(line)
-                    if ("line", locator.page, locator.line) in keys:
-                        line_only.add(line)
-            self._check_component_scope(component, row, amounts, documents, evidence)
-            if used_addresses & addresses or used_line_only & lines or line_only & used_lines:
+            self._check_component_scope(component, row, amounts, documents, evidence, addresses)
+            groups = {addresses.groups[item.id] for item in amounts}
+            lines = {line for group in groups for line in addresses.lines[group]}
+            line_only = {line for group in groups for line in addresses.line_only[group]}
+            if used_groups & groups or used_line_only & lines or line_only & used_lines:
                 raise ValueError("an amount evidence address must not be counted twice in a row")
-            used_addresses.update(addresses)
+            used_groups.update(groups)
             used_lines.update(lines)
             used_line_only.update(line_only)
 
@@ -504,6 +560,7 @@ class CheckResult(ContractModel):
         amounts: list[Evidence],
         documents: dict[str, SourceDocument],
         evidence: dict[str, Evidence],
+        addresses: _EvidenceIndex,
     ) -> None:
         contracts = _require_refs(component.contract_refs, evidence, "contract")
         periods = _require_refs(component.period_refs, evidence, "period")
@@ -523,6 +580,12 @@ class CheckResult(ContractModel):
         identities: dict[str, set[str]] = {}
         for item in identity:
             if isinstance(item.normalized_value, str):
+                if not addresses.agrees(
+                    item.id, "document_identity", (None, item.normalized_value)
+                ):
+                    raise ValueError(
+                        "document identity evidence must agree at its canonical address"
+                    )
                 identities.setdefault(item.document_id, set()).add(item.normalized_value)
         common_identity = (
             set.intersection(*(identities.get(source, set()) for source in sources))
@@ -559,50 +622,16 @@ def _is_admitted(document: SourceDocument) -> bool:
     return document.decision.state == "include" and document.parse_status in ("parsed", "partial")
 
 
-def _reading_keys(item: Evidence) -> set[tuple[str, AddressKey]]:
-    return {(item.document_id, key) for key in item.locator.address_keys()}
-
-
-def _index_readings(evidence: list[Evidence]) -> AmountReadings:
-    readings: AmountReadings = {}
-    for item in evidence:
-        if item.kind in ("amount", "reported_value") and isinstance(item.normalized_value, str):
-            value = (item.unit, Decimal(item.normalized_value))
-            for key in _reading_keys(item):
-                readings.setdefault(key, set()).add(value)
-            locator = item.locator
-            if isinstance(locator, PageLocator) and locator.line is not None:
-                line = (item.document_id, ("page_line", locator.page, locator.line))
-                readings.setdefault(line, set()).add(value)
-    return readings
-
-
 def _check_amount_readings(
     evidence: list[Evidence],
     unit: str,
     amount: str,
-    readings: AmountReadings,
+    addresses: _EvidenceIndex,
     role: Literal["reported", "component"],
 ) -> None:
-    expected = {(unit, Decimal(amount))}
-    message = f"{role} evidence must agree on value and unit at its canonical address"
-    if not evidence:
-        raise ValueError(message)
-    for item in evidence:
-        keys = _reading_keys(item)
-        if any(readings.get(key) != expected for key in keys):
-            raise ValueError(message)
-        locator = item.locator
-        if isinstance(locator, PageLocator) and locator.line is not None:
-            line = (item.document_id, ("line", locator.page, locator.line))
-            # Line-only evidence must agree with all readings for that line.
-            key = (
-                (item.document_id, ("page_line", locator.page, locator.line))
-                if line in keys
-                else line
-            )
-            if key in readings and readings[key] != expected:
-                raise ValueError(message)
+    expected = (unit, Decimal(amount))
+    if not evidence or any(not addresses.agrees(item.id, "numeric", expected) for item in evidence):
+        raise ValueError(f"{role} evidence must agree on value and unit at its canonical address")
 
 
 def _check_locator(format_: FileFormat | None, locator: Locator) -> None:

@@ -169,6 +169,54 @@ def test_pdf_fragment_identity_ignores_additional_metadata(payload: dict, addres
     assert CheckJob.model_validate(payload).result is not None
 
 
+def test_transitive_pdf_aliases_share_readings_and_cannot_be_counted_twice(payload: dict) -> None:
+    result = payload["result"]
+    row = result["rows"][0]
+    result["documents"][1]["format"] = "pdf"
+    first, second = result["evidence"][2:4]
+    for index, item in enumerate(result["evidence"][4:], start=1):
+        item["locator"] = {"kind": "page", "page": 1, "line": index}
+    box = [0.2, 0.3, 0.4, 0.5]
+    first["locator"] = {"kind": "page", "page": 1, "bbox": box, "line": 10}
+    second["locator"] = {"kind": "page", "page": 1, "fragment_id": "another", "line": 10}
+    bridge = {
+        **first,
+        "id": "amount-alias",
+        "locator": {**first["locator"], "fragment_id": "same"},
+    }
+    alias = {
+        **first,
+        "id": "another-reading",
+        "normalized_value": "900.50",
+        "locator": {"kind": "page", "page": 1, "fragment_id": "same"},
+    }
+    result["evidence"].extend([bridge, alias])
+    with pytest.raises(ValidationError, match="component evidence must agree"):
+        CheckJob.model_validate(payload)
+    alias["normalized_value"] = first["normalized_value"]
+    assert CheckJob.model_validate(payload).result is not None
+    row["calculation"]["components"][1]["amount_refs"] = [alias["id"]]
+    with pytest.raises(ValidationError, match="must not be counted twice"):
+        CheckJob.model_validate(payload)
+
+
+def test_transitive_pdf_aliases_are_specific_to_the_document_and_page(payload: dict) -> None:
+    result = payload["result"]
+    reported = result["evidence"][0]
+    reported["locator"]["fragment_id"] = "same"
+    for document, page in (("report", 2), ("unreadable", 1)):
+        result["evidence"].append(
+            {
+                **reported,
+                "id": f"{document}-{page}",
+                "document_id": document,
+                "normalized_value": "900.50",
+                "locator": {**reported["locator"], "page": page},
+            }
+        )
+    assert CheckJob.model_validate(payload).result is not None
+
+
 @pytest.mark.parametrize("index", [4, 5, 6])
 def test_component_scope_cannot_rely_on_unreadable_files(payload: dict, index: int) -> None:
     evidence = payload["result"]["evidence"][index]
@@ -321,6 +369,63 @@ def test_separate_scope_source_requires_matching_addressed_identity(payload: dic
     result["evidence"][-1]["normalized_value"] = "DEMO-ACT-2"
     with pytest.raises(ValidationError, match="shared source identity"):
         CheckJob.model_validate(payload)
+
+
+def test_conflicting_identity_cannot_establish_scope_even_if_unreferenced(payload: dict) -> None:
+    result = payload["result"]
+    row = result["rows"][0]
+    result["documents"].append(
+        {
+            **result["documents"][1],
+            "id": "scope-source",
+            "name": "synthetic-scope.xlsx",
+            "sha256": "4" * 64,
+        }
+    )
+    result["evidence"][4]["document_id"] = "scope-source"
+    identity = {
+        "id": "ledger-identity",
+        "document_id": "ledger",
+        "kind": "document_identity",
+        "raw_value": "DEMO-ACT-1",
+        "normalized_value": "DEMO-ACT-1",
+        "unit": None,
+        "method": "native",
+        "locator": {"kind": "sheet", "sheet": "Синтетика", "range": "A1"},
+    }
+    matched = {**identity, "id": "scope-identity", "document_id": "scope-source"}
+    conflicting = {
+        **matched,
+        "id": "scope-conflict",
+        "raw_value": "DEMO-ACT-2",
+        "normalized_value": "DEMO-ACT-2",
+        "locator": {**matched["locator"], "range": "A1:A1"},
+    }
+    result["evidence"].extend([identity, matched])
+    for component in row["calculation"]["components"]:
+        component["identity_refs"] = ["ledger-identity", "scope-identity"]
+    assert CheckJob.model_validate(payload).result is not None
+    result["evidence"].append(conflicting)
+    with pytest.raises(ValidationError, match="document identity evidence must agree"):
+        CheckJob.model_validate(payload)
+    row["calculation"]["components"] = []
+    row.update(
+        status="unverified",
+        observed_evidence_sum=None,
+        expected_value=None,
+        delta=None,
+        root_issue_id=None,
+    )
+    row["completeness"].update(state="incomplete", evidence_refs=[])
+    row["reasons"] = [
+        {
+            "code": "conflicting_readings",
+            "message": "Неоднозначный реквизит связанного документа",
+            "evidence_refs": ["scope-identity", "scope-conflict"],
+        }
+    ]
+    result["summary"]["counts"].update(discrepancy=0, unverified=2)
+    assert CheckJob.model_validate(payload).result.rows[0].status == "unverified"
 
 
 def test_derived_mismatch_requires_discrepancy(payload: dict) -> None:
