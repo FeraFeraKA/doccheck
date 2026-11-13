@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Link, NavLink, useParams } from 'react-router';
+import { Link, NavLink, useOutletContext, useParams } from 'react-router';
+import type { WorkspaceRole } from './ChecksWorkspace';
 import { demoResult, demoRunPath, formatLocation, formatMoney, statusLabels } from './demoData';
 
 const tabs = [
@@ -9,6 +10,7 @@ const tabs = [
 
 export function CheckDetail({ view }: { view: string }) {
   const { id } = useParams();
+  const role = useOutletContext<WorkspaceRole>();
   const { scope, summary, documents } = demoResult;
 
   if (id !== demoResult.run_id) return <CheckNotFound />;
@@ -19,11 +21,13 @@ export function CheckDetail({ view }: { view: string }) {
       <h1>Синтетическая сверка</h1>
       <p>Договор {scope.contract_number} · {scope.period_start} — {scope.period_end}</p>
       <nav className="checks-tabs" aria-label="Разделы проверки">
-        {tabs.map(([suffix, label]) => <NavLink key={suffix} to={demoRunPath + suffix} end>{label}</NavLink>)}
+        {tabs.filter(([suffix]) => suffix !== '/exceptions' || role === 'Бухгалтер').map(([suffix, label]) => <NavLink key={suffix} to={demoRunPath + suffix} end>{label}</NavLink>)}
       </nav>
       {view === 'table' && <Reconciliation />}
       {view === 'documents' && <Documents documents={documents} />}
-      {view === 'exceptions' && <Documents documents={documents.filter((doc) => doc.decision.state !== 'include')} />}
+      {view === 'exceptions' && (role === 'Бухгалтер'
+        ? <Documents documents={documents.filter((doc) => doc.decision.state !== 'include')} />
+        : <section className="checks-card"><h2>Исключения</h2><p>Откройте этот раздел в представлении бухгалтера.</p></section>)}
       {view === 'conclusion' && <section className="checks-card">
         <h2>Заключение</h2><p>{summary.conclusion}</p>
         <ul>{summary.primary_issues.map((issue) => <li key={issue.id}>{issue.message}</li>)}</ul>

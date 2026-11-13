@@ -24,9 +24,13 @@ test('Lovable workspace uses local examples and links values to their sources', 
   await row.getByRole('button').click();
   await expect(page.getByText('Страница 1, строка 4, столбец 2', { exact: true })).toBeVisible();
 
+  await expect(page.getByRole('link', { name: 'Исключения' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Бухгалтер' }).click();
   await page.getByRole('link', { name: 'Исключения' }).click();
   await expect(page.getByText('Ошибка чтения', { exact: true })).toBeVisible();
   await page.reload();
+  await expect(page.getByText('Откройте этот раздел в представлении бухгалтера.')).toBeVisible();
+  await page.getByRole('button', { name: 'Бухгалтер' }).click();
   await expect(page.getByText('Ошибка чтения', { exact: true })).toBeVisible();
   expect(apiRequests).toEqual([]);
 });
@@ -39,4 +43,18 @@ test('workspace navigation and table fit the mobile viewport', async ({ page }) 
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   await page.getByRole('button', { name: 'Бухгалтер' }).click();
   await expect(page.getByRole('button', { name: 'Бухгалтер' })).toHaveAttribute('aria-pressed', 'true');
+});
+
+test('the upload wizard selects files without secure-context APIs', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(window.crypto, 'randomUUID', { value: undefined });
+  });
+  await page.goto('/checks/new');
+  await page.getByLabel('Выберите отчёт').setInputFiles({
+    name: 'example.pdf',
+    mimeType: 'application/pdf',
+    buffer: Buffer.from('%PDF-1.4 synthetic example'),
+  });
+  await expect(page.getByText('example.pdf', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Далее' })).toBeEnabled();
 });

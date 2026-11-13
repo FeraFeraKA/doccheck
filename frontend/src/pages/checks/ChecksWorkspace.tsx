@@ -2,8 +2,12 @@ import { useState } from 'react';
 import { NavLink, Outlet } from 'react-router';
 import './workspace.css';
 
+export type WorkspaceRole = 'Аспирант' | 'Бухгалтер';
+
+const roles: WorkspaceRole[] = ['Аспирант', 'Бухгалтер'];
+
 export function ChecksWorkspace() {
-  const [role, setRole] = useState('Аспирант');
+  const [role, setRole] = useState<WorkspaceRole>('Аспирант');
 
   return (
     <div className="checks-workspace">
@@ -15,7 +19,7 @@ export function ChecksWorkspace() {
           <NavLink to="/log">Журнал действий</NavLink>
         </nav>
         <div className="checks-role" role="group" aria-label="Роль интерфейса">
-          {['Аспирант', 'Бухгалтер'].map((label) => (
+          {roles.map((label) => (
             <button type="button" key={label} aria-pressed={role === label} onClick={() => setRole(label)}>
               {label}
             </button>
@@ -24,7 +28,7 @@ export function ChecksWorkspace() {
       </aside>
       <main className="checks-content">
         <p className="checks-demo">Синтетический режим · файлы остаются в браузере</p>
-        <Outlet />
+        <Outlet context={role} />
       </main>
     </div>
   );

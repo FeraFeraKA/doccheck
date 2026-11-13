@@ -1,8 +1,5 @@
 import { Route, Routes } from 'react-router';
-import { CheckDetail, CheckLog } from '../pages/checks/CheckDetail';
-import { ChecksOverview } from '../pages/checks/ChecksOverview';
-import { ChecksWorkspace } from '../pages/checks/ChecksWorkspace';
-import { NewCheck } from '../pages/checks/NewCheck';
+import { CheckDetail, CheckLog, ChecksOverview, ChecksWorkspace, NewCheck } from '../pages/checks';
 import { HomePage } from '../pages/home/HomePage';
 
 export function App() {

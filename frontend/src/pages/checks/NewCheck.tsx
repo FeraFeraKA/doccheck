@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { demoFiles, demoRunPath } from './demoData';
 
@@ -11,6 +11,7 @@ interface SelectedFile {
 }
 
 export function NewCheck() {
+  const nextFileId = useRef(0);
   const [step, setStep] = useState(0);
   const [report, setReport] = useState<SelectedFile[]>([]);
   const [documents, setDocuments] = useState<SelectedFile[]>([]);
@@ -31,7 +32,7 @@ export function NewCheck() {
     ));
     setError(accepted.length < selected.length ? 'Добавьте непустые PDF, DOCX, XLSX или PNG.' : '');
     if (accepted.length === 0) return;
-    const items = accepted.map((file) => ({ id: crypto.randomUUID(), name: file.name }));
+    const items = accepted.map((file) => ({ id: 'local-' + nextFileId.current++, name: file.name }));
     setFiles((previous) => isReport ? items.slice(0, 1) : [...previous, ...items]);
   }
 
