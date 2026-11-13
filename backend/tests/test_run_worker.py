@@ -8,7 +8,9 @@ from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import Engine, select
+from sqlalchemy import Engine, event, func, select, text
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 from test_run_upload import DOCUMENT, REPORT, submit
 
@@ -17,7 +19,7 @@ from doccheck_backend.config import Settings
 from doccheck_backend.contracts import RESULT_SCHEMA_VERSION, CheckJob, CheckResult
 from doccheck_backend.database import create_database_engine
 from doccheck_backend.models import Run
-from doccheck_backend.run_worker import StoredRun, run_document_worker
+from doccheck_backend.run_worker import StoredRun, WorkerSessionLost, run_document_worker
 
 
 @pytest.fixture
@@ -146,6 +148,27 @@ def test_processor_failure_records_safe_error(engine, queue, tmp_path, caplog):
     assert "private adapter detail" not in caplog.text
 
 
+def test_partial_outcome_keeps_safe_top_level_indicator(engine, queue, tmp_path):
+    run_id = _enqueue(queue)
+
+    def process(run, directory):
+        return CheckJob.model_validate(
+            {
+                "run_id": str(run.id),
+                "status": "completed_with_issues",
+                "result": _synthetic_result(run),
+                "error": {"code": "private_code", "message": "private adapter detail"},
+            }
+        )
+
+    assert run_document_worker(engine, tmp_path, process, once=True)
+    stored = _read_run(engine, run_id)
+    assert stored.status == "completed_with_issues"
+    assert stored.result is not None
+    assert stored.error["code"] == "processing_completed_with_issues"
+    assert "private" not in repr(stored.error)
+
+
 def test_rejects_result_for_a_different_document_version(engine, queue, tmp_path):
     run_id = _enqueue(queue)
 
@@ -161,7 +184,25 @@ def test_rejects_result_for_a_different_document_version(engine, queue, tmp_path
     assert stored.error["code"] == "processing_failed"
 
 
-def test_live_worker_owns_queue_until_its_processing_finishes(engine, queue, tmp_path):
+def test_rejects_contract_text_that_postgresql_cannot_store(engine, queue, tmp_path):
+    run_id = _enqueue(queue)
+
+    def process(run, directory):
+        result = _synthetic_result(run)
+        result.summary.conclusion = "invalid\x00text"
+        return CheckJob(run_id=str(run.id), status="completed", result=result, error=None)
+
+    assert run_document_worker(engine, tmp_path, process, once=True)
+    stored = _read_run(engine, run_id)
+    assert stored.status == "failed"
+    assert stored.result is None
+    assert stored.error["code"] == "processing_failed"
+
+
+@pytest.mark.parametrize("different_search_path", [False, True])
+def test_live_worker_owns_queue_until_its_processing_finishes(
+    engine, queue, tmp_path, database_url, different_search_path
+):
     active = _enqueue(queue)
     waiting = _enqueue(queue)
     running = Event()
@@ -175,47 +216,126 @@ def test_live_worker_owns_queue_until_its_processing_finishes(engine, queue, tmp
             run_id=str(run.id), status="completed", result=_synthetic_result(run), error=None
         )
 
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        owner = executor.submit(run_document_worker, engine, tmp_path, process, once=True)
-        try:
-            assert running.wait(5)
-            assert run_document_worker(engine, tmp_path, process, once=True) is False
-            assert _read_run(engine, active).status == "processing"
-            assert _read_run(engine, waiting).status == "queued"
-        finally:
-            release.set()
-        assert owner.result(timeout=5) is True
+    contender = engine
+    if different_search_path:
+        empty_schema = f"worker_prefix_{uuid4().hex}"
+        with engine.begin() as connection:
+            connection.execute(text(f"CREATE SCHEMA {empty_schema}"))
+        url = make_url(database_url)
+        options = url.query["options"].replace("search_path=", f"search_path={empty_schema},")
+        contender = create_database_engine(url.update_query_dict({"options": options}))
+        with contender.connect() as connection:
+            assert connection.scalar(text("SELECT current_schema()")) == empty_schema
+
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            owner = executor.submit(run_document_worker, engine, tmp_path, process, once=True)
+            try:
+                assert running.wait(5)
+                assert run_document_worker(contender, tmp_path, process, once=True) is False
+                assert _read_run(engine, active).status == "processing"
+                assert _read_run(engine, waiting).status == "queued"
+            finally:
+                release.set()
+            assert owner.result(timeout=5) is True
+    finally:
+        if different_search_path:
+            contender.dispose()
+            with engine.begin() as connection:
+                connection.execute(text(f"DROP SCHEMA {empty_schema}"))
     assert _read_run(engine, active).status == "completed"
+
+
+def test_invalidated_worker_session_cannot_reconnect_and_write(engine, queue, tmp_path):
+    run_id = _enqueue(queue)
+    worker_connection = None
+
+    def capture(conn, cursor, statement, parameters, context, executemany):
+        nonlocal worker_connection
+        if "pg_try_advisory_lock" in statement:
+            worker_connection = conn
+
+    def process(run, directory):
+        assert worker_connection is not None
+        worker_connection.invalidate()
+        return successful_test_processor(run, directory)
+
+    event.listen(engine, "before_cursor_execute", capture)
+    try:
+        with pytest.raises(WorkerSessionLost):
+            run_document_worker(engine, tmp_path, process, once=True)
+    finally:
+        event.remove(engine, "before_cursor_execute", capture)
+    assert _read_run(engine, run_id).status == "processing"
+    assert run_document_worker(engine, tmp_path, successful_test_processor, once=True)
+    stored = _read_run(engine, run_id)
+    assert stored.status == "failed"
+    assert stored.error["code"] == "worker_interrupted"
+
+
+def test_disconnect_leaves_recovery_to_next_owner(engine, queue, tmp_path):
+    abandoned = _enqueue(queue)
+    waiting = _enqueue(queue)
+    worker_pid = None
+
+    def capture(conn, clause, multiparams, params, execution_options):
+        nonlocal worker_pid
+        if "pg_try_advisory_lock" in str(clause):
+            worker_pid = conn.connection.dbapi_connection.info.backend_pid
+
+    def process(run, directory):
+        assert run.id == abandoned
+        assert worker_pid is not None
+        with engine.begin() as connection:
+            assert connection.scalar(select(func.pg_terminate_backend(worker_pid, 5000)))
+        assert run_document_worker(engine, tmp_path, successful_test_processor, once=True)
+        return successful_test_processor(run, directory)
+
+    event.listen(engine, "before_execute", capture)
+    try:
+        with pytest.raises(DBAPIError):
+            run_document_worker(engine, tmp_path, process, once=True)
+    finally:
+        event.remove(engine, "before_execute", capture)
+    stored = _read_run(engine, abandoned)
+    assert stored.status == "failed"
+    assert stored.result is None
+    assert stored.error["code"] == "worker_interrupted"
+    assert _read_run(engine, waiting).status == "completed"
+
+
+def blocking_test_processor(run, directory):
+    time.sleep(60)
+
+
+def successful_test_processor(run, directory):
+    return CheckJob(
+        run_id=str(run.id), status="completed", result=_synthetic_result(run), error=None
+    )
 
 
 def test_restart_marks_abandoned_claim_failed(engine, queue, tmp_path, database_url):
     abandoned = _enqueue(queue)
     waiting = _enqueue(queue)
-    command = """
-import os
-import time
-from pathlib import Path
-from doccheck_backend.database import create_database_engine
-from doccheck_backend.run_worker import run_document_worker
+    command = [sys.executable, "-m", "doccheck_backend.run_worker", "--once"]
+    environment = {
+        **os.environ,
+        "DATABASE_URL": database_url,
+        "DOCCHECK_UPLOAD_ROOT": str(tmp_path),
+        "PYTHONPATH": os.path.dirname(__file__),
+    }
+    creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+    for flags in ([], ["--processor", "missing_module:process"]):
+        missing = subprocess.run(
+            [*command, *flags], env=environment, creationflags=creationflags, timeout=15
+        )
+        assert missing.returncode != 0
+        assert _read_run(engine, abandoned).status == "queued"
 
-def wait_for_interruption(run, directory):
-    time.sleep(60)
-
-run_document_worker(
-    create_database_engine(os.environ["DATABASE_URL"]),
-    Path(os.environ["DOCCHECK_UPLOAD_ROOT"]),
-    wait_for_interruption,
-    once=True,
-)
-"""
     process = subprocess.Popen(
-        [sys.executable, "-c", command],
-        env={
-            **os.environ,
-            "DATABASE_URL": database_url,
-            "DOCCHECK_UPLOAD_ROOT": str(tmp_path),
-        },
-        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        [*command, "--processor", "test_run_worker:blocking_test_processor"],
+        env=environment,
+        creationflags=creationflags,
     )
     try:
         deadline = time.monotonic() + 15
@@ -228,17 +348,23 @@ run_document_worker(
             process.kill()
         process.wait(timeout=5)
 
-    def finish_waiting(run, directory):
-        assert run.id == waiting
-        return CheckJob(
-            run_id=str(run.id), status="completed", result=_synthetic_result(run), error=None
-        )
-
     # PostgreSQL may still be closing the dead process's socket after wait() returns.
     deadline = time.monotonic() + 5
-    while not run_document_worker(engine, tmp_path, finish_waiting, once=True):
+    while True:
+        restarted = subprocess.run(
+            [*command, "--processor", "test_run_worker:successful_test_processor"],
+            env=environment,
+            creationflags=creationflags,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        if restarted.returncode == 0:
+            break
+        assert "Another document worker owns this queue" in restarted.stderr, restarted.stderr
         assert time.monotonic() < deadline
         time.sleep(0.05)
+
     stored = _read_run(engine, abandoned)
     assert stored.status == "failed"
     assert stored.result is None
