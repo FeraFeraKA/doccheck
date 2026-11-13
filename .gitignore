@@ -5,6 +5,9 @@
 *.pem
 *.key
 
+# Task and review worktrees managed inside the repository
+/.worktrees/
+
 # Original documents, independent evaluation and runtime output
 /data/
 /private/
