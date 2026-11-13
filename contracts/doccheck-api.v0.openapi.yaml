@@ -1,0 +1,353 @@
+openapi: 3.1.1
+info:
+  title: DocCheck Runs API
+  version: 0.1.0
+  description: |
+    Контракт локального рабочего API. Синтетический пример хранится в репозитории
+    для тестов и разработки UI. Рабочий API не раздаёт фикстуры и не подменяет
+    ими отсутствующие результаты. Прототип /api/synthetic-jobs вне этого контракта.
+servers:
+  - url: /
+paths:
+  /api/v0/runs:
+    post:
+      operationId: createRun
+      summary: Принять пакет для фоновой проверки
+      description: |
+        Файлы и метаданные должны быть сохранены до подтверждения. Сервер назначает
+        идентификаторы и ключи хранения. Имена клиента служат только для отображения.
+        Пределы MVP: 50 МиБ на файл, 250 МиБ суммарно по файлам, 1 КФЗ и 1–100
+        первичных документов. Допускаются PDF, PNG, XLSX и DOCX, без архивов.
+        MIME-заголовок части служит подсказкой и может быть application/octet-stream.
+        Формат проверяется на сервере. Пустой файл недопустим. Период включительный, начало не позже конца.
+        Содержимое, которое невозможно разобрать после принятия, отражается в
+        результате как ошибка файла согласно схеме результата.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: |
+            Новый UUID на каждую осознанную отправку. Повтор с тем же ключом и теми же
+            параметрами, именами и байтами файлов в исходном порядке возвращает
+            исходный 202 и Location, даже если состояние задания уже изменилось.
+            Multipart-границы и заголовки частей в сравнении не участвуют.
+            Другой пакет с тем же ключом получает 409. Параллельные повторы не создают
+            дубликаты. Ключ хранится вместе с принятым заданием. После сбоя до
+            сохранения задания тот же запрос можно повторить.
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                [report, documents, contract_number, period_start, period_end, report_row_locator]
+              properties:
+                report:
+                  format: binary
+                  description: Файл КФЗ.
+                documents:
+                  type: array
+                  minItems: 1
+                  maxItems: 100
+                  items: {format: binary}
+                  description: Первичные документы, каждый передаётся отдельной частью documents.
+                contract_number: {type: string, minLength: 1}
+                period_start: {type: string, format: date}
+                period_end: {type: string, format: date}
+                report_row_locator:
+                  type: string
+                  contentMediaType: application/json
+                  contentSchema:
+                    allOf:
+                      - $ref: './check-result.v1.schema.json#/$defs/Scope/properties/report_row_locator'
+                      - type: object
+                  description: |
+                    JSON-объект адреса выбранной строки, переданный в текстовом поле
+                    FormData. Адрес обязателен. Значение null недопустимо.
+                    Сервер проверяет синтаксис JSON, модель Locator и соответствие
+                    типа адреса формату КФЗ. Для повтора сравнивается нормализованный
+                    адрес, включая канонический диапазон XLSX. Порядок ключей и пробелы
+                    в JSON не участвуют в сравнении.
+                  examples: ['{"kind":"page","page":1,"table_row":4,"table_column":2}']
+      responses:
+        '202':
+          description: Пакет сохранён, исходное состояние queued.
+          headers:
+            Location:
+              required: true
+              schema: {type: string, format: uri-reference}
+              description: Относительный URL состояния задания.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [run_id, status]
+                properties:
+                  run_id: {$ref: '#/components/schemas/Id'}
+                  status: {const: queued}
+        '400':
+          description: invalid_request — некорректный multipart или отсутствует ключ повтора.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ApiError'}
+        '409':
+          description: idempotency_conflict — ключ уже связан с другим пакетом.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ApiError'}
+        '413':
+          description: upload_too_large — превышен предел размера.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ApiError'}
+        '415':
+          description: unsupported_media_type — тип тела запроса не multipart/form-data.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ApiError'}
+        '422': {$ref: '#/components/responses/InvalidInput'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+    get:
+      operationId: listRuns
+      summary: Получить историю запусков от новых к старым
+      description: |
+        Порядок по created_at и run_id по убыванию. Курсор указывает на позицию
+        после последней записи. Пустой список возвращается с 200.
+      parameters:
+        - name: limit
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 100, default: 20}
+        - name: cursor
+          in: query
+          schema: {type: string, minLength: 1}
+          description: Непрозрачный next_cursor из предыдущего ответа.
+      responses:
+        '200':
+          description: Страница истории.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items: {$ref: '#/components/schemas/RunSummary'}
+                  next_cursor: {type: [string, 'null']}
+        '422': {$ref: '#/components/responses/InvalidInput'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+  /api/v0/runs/{run_id}:
+    parameters:
+      - $ref: '#/components/parameters/RunId'
+    get:
+      operationId: getRun
+      summary: Получить состояние и техническую ошибку задания
+      responses:
+        '200':
+          description: Состояние сохранённого задания, техническая ошибка и прогресс по файлам.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RunState'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+  /api/v0/runs/{run_id}/findings:
+    parameters:
+      - $ref: '#/components/parameters/RunId'
+    get:
+      operationId: getFindings
+      summary: Получить сохранённый результат сверки
+      responses:
+        '200':
+          description: Результат задания в completed или completed_with_issues.
+          content:
+            application/json:
+              schema: {$ref: './check-result.v1.schema.json#/$defs/CheckResult'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/ResultUnavailable'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+  /api/v0/runs/{run_id}/documents/{document_id}:
+    parameters:
+      - $ref: '#/components/parameters/RunId'
+      - $ref: '#/components/parameters/DocumentId'
+    get:
+      operationId: getDocument
+      summary: Скачать документ по ID из результата
+      description: Сервер ищет документ только среди файлов указанного задания.
+      responses:
+        '200':
+          description: Оригинал из хранилища задания.
+          headers:
+            Content-Disposition:
+              required: true
+              schema: {type: string}
+              description: attachment с безопасным именем для скачивания.
+          content:
+            application/octet-stream: {}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+  /api/v0/runs/{run_id}/documents/{document_id}/fragments/{evidence_id}:
+    parameters:
+      - $ref: '#/components/parameters/RunId'
+      - $ref: '#/components/parameters/DocumentId'
+      - name: evidence_id
+        in: path
+        required: true
+        schema: {$ref: '#/components/schemas/Id'}
+    get:
+      operationId: getFragment
+      summary: Получить адресное доказательство из результата
+      description: |
+        evidence_id — ID записи evidence. Сервер проверяет принадлежность
+        результата заданию, документа заданию и записи указанному документу.
+        Адрес locator относится к скачиваемому оригиналу. API возвращает
+        структурный адрес, отдельное изображение фрагмента не требуется.
+      responses:
+        '200':
+          description: Сохранённое адресное доказательство.
+          content:
+            application/json:
+              schema: {$ref: './check-result.v1.schema.json#/$defs/Evidence'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/ResultUnavailable'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+  /api/v0/runs/{run_id}/exports/xlsx:
+    parameters:
+      - $ref: '#/components/parameters/RunId'
+    get:
+      operationId: exportRunXlsx
+      summary: Скачать XLSX по сохранённому результату
+      description: Реализация относится к NRT-36.
+      responses:
+        '200':
+          description: Отчёт XLSX.
+          headers:
+            Content-Disposition:
+              required: true
+              schema: {type: string}
+              description: attachment с безопасным именем для скачивания.
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet: {}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/ResultUnavailable'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+components:
+  parameters:
+    RunId:
+      name: run_id
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/Id'}
+    DocumentId:
+      name: document_id
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/Id'}
+  responses:
+    InvalidInput:
+      description: |
+        invalid_input — неверные поля, число файлов, пустой файл, ключ,
+        курсор или период. unsupported_file_format — неподдерживаемый формат файла.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ApiError'}
+    NotFound:
+      description: |
+        run_not_found, document_not_found или fragment_not_found. Недоступный
+        оригинал получает document_not_found. ID из другого задания не раскрывается.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ApiError'}
+    ResultUnavailable:
+      description: |
+        result_pending — задание ожидает обработки или выполняется.
+        run_failed — задание завершилось с ошибкой и без результата.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ApiError'}
+    Unavailable:
+      description: service_unavailable — хранилище или сервис временно недоступны.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ApiError'}
+  schemas:
+    Id:
+      type: string
+      pattern: '^[A-Za-z0-9_-]+$'
+      description: Непрозрачный идентификатор, безопасный в сегменте URL.
+    RunSummary:
+      type: object
+      required: [run_id, status, created_at, error]
+      properties:
+        run_id: {$ref: '#/components/schemas/Id'}
+        status: {$ref: './check-result.v1.schema.json#/properties/status'}
+        created_at: {type: string, format: date-time}
+        error:
+          anyOf:
+            - $ref: './check-result.v1.schema.json#/$defs/Issue'
+            - type: 'null'
+    RunState:
+      allOf:
+        - $ref: '#/components/schemas/RunSummary'
+        - type: object
+          required: [progress]
+          properties:
+            progress:
+              description: |
+                Число документов, для которых завершилась обработка. КФЗ входит
+                в total_documents. Обработанные файлы с ошибками и исключённые
+                файлы также считаются завершёнными. У queued счётчик равен 0.
+                Для completed и completed_with_issues оба счётчика равны.
+                При failed возвращается последнее достоверное значение.
+                Если оно недоступно, возвращается null. Во время processing null
+                означает, что можно показать ход работы без числового индикатора.
+                processed_documents не превышает total_documents.
+              type: [object, 'null']
+              required: [processed_documents, total_documents]
+              properties:
+                processed_documents: {type: integer, minimum: 0}
+                total_documents: {type: integer, minimum: 2, maximum: 101}
+          allOf:
+            - if:
+                properties:
+                  status: {const: queued}
+              then:
+                properties:
+                  progress:
+                    type: object
+                    properties:
+                      processed_documents: {const: 0}
+            - if:
+                properties:
+                  status: {enum: [completed, completed_with_issues]}
+              then:
+                properties:
+                  progress: {type: object}
+    ApiError:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          enum:
+            - invalid_request
+            - invalid_input
+            - idempotency_conflict
+            - upload_too_large
+            - unsupported_media_type
+            - unsupported_file_format
+            - run_not_found
+            - document_not_found
+            - fragment_not_found
+            - result_pending
+            - run_failed
+            - service_unavailable
+        message:
+          type: string
+          description: Без путей, содержимого документов и исключений реализации.
+        field: {type: string}
+        file_index:
+          type: integer
+          minimum: 0
+          description: Индекс в поле documents, если ошибка относится к этому файлу.
