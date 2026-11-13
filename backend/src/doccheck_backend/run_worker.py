@@ -42,8 +42,15 @@ class WorkerSessionLost(RuntimeError):
 @dataclass(frozen=True)
 class StoredRun:
     id: UUID
-    scope: dict[str, object]
+    scope: dict[str, object] | None
     documents: list[dict[str, object]]
+
+    @property
+    def report_document_id(self) -> str:
+        reports = [doc["id"] for doc in self.documents if doc["role"] == "report"]
+        if len(reports) != 1 or not isinstance(reports[0], str) or not reports[0]:
+            raise ValueError("stored run must have exactly one report document")
+        return reports[0]
 
 
 RunProcessor = Callable[[StoredRun, Path], CheckJob]
@@ -110,21 +117,23 @@ def _claim(connection: Connection) -> StoredRun | None:
             return None
         run.status = "processing"
         run.started_at = datetime.now(timezone.utc)
-        return StoredRun(run.id, run.scope, run.documents)
+        return StoredRun(run.id, None if run.scope == {} else run.scope, run.documents)
 
 
 def _process(run: StoredRun, upload_root: Path, process: RunProcessor) -> CheckJob:
     run_id = str(run.id)
     try:
         # Snapshot the identity before calling code that owns the processing step.
-        scope = Scope.model_validate(run.scope)
+        scope = None if run.scope is None else Scope.model_validate(run.scope)
+        report_document_id = run.report_document_id
         documents = {doc["id"]: doc["sha256"] for doc in run.documents}
         returned = process(run, upload_root / run_id)
         outcome = CheckJob.model_validate(returned.model_dump(mode="json"))
         if outcome.run_id != run_id or outcome.status in ("queued", "processing"):
             raise ValueError("processor must return a terminal outcome for the claimed run")
         if outcome.result is not None and (
-            outcome.result.scope != scope
+            outcome.result.scope.report_document_id != report_document_id
+            or (scope is not None and outcome.result.scope != scope)
             or {doc.id: doc.sha256 for doc in outcome.result.documents} != documents
         ):
             raise ValueError("result must match the uploaded scope and document IDs")
