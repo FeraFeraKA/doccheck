@@ -35,6 +35,28 @@
       "expected_coverage_effect": "No usable evidence from that worksheet. Complete coverage from the remaining documents would require separate proof."
     },
     {
+      "id": "rotated_png",
+      "source_id": "12_communication",
+      "mutation": "rotate_png_90_ccw",
+      "output_file": "communication_rotated.png",
+      "synthetic_row_id": "general_admin",
+      "expected_stage": "image_decode",
+      "expected_file_outcome": "The PNG decodes with width and height swapped and pixels rotated 90 degrees counterclockwise.",
+      "expected_coverage_effect": "Undetermined until the working pipeline is tested. Rotation alone does not establish a file error or a coverage change."
+    },
+    {
+      "id": "noisy_png",
+      "source_id": "12_communication",
+      "mutation": "salt_and_pepper_png",
+      "output_file": "communication_noisy.png",
+      "noise_seed": 890041,
+      "noise_density_percent": 3,
+      "synthetic_row_id": "general_admin",
+      "expected_stage": "image_decode",
+      "expected_file_outcome": "The PNG decodes with the original dimensions and reproducible light and dark speckles.",
+      "expected_coverage_effect": "Undetermined until the working pipeline is tested. Noise alone does not establish a file error or a coverage change."
+    },
+    {
       "id": "equal_partial_sum",
       "expectations_file": "expectations/manifest.json",
       "synthetic_row_id": "general_admin",
