@@ -6,6 +6,7 @@ from pathlib import Path
 
 from generate import SOURCE, build
 from openpyxl import load_workbook
+from PIL import Image, ImageChops
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
 
@@ -73,3 +74,33 @@ class NegativeFixtureTests(unittest.TestCase):
         self.assertEqual(row["expected_status"], case["expected_status"])
         self.assertEqual(row["expected_amount"], case["expected_amount"])
         self.assertEqual(row["delta"], case["delta"])
+
+    def test_png_rotation_and_noise_are_reproducible(self):
+        repeated = self.output.with_name("repeated")
+        build(repeated)
+        expected_pixel_hashes = {
+            "rotated_png": "9f4ff90f3aa47fd42bb979e3ae257d1846b0c7db0f23a76fec6e88b80b919149",
+            "noisy_png": "beca712ee5dbff1b54cf854b3f5f67ff6e5d6320e909d775a2cc5cea285025f0",
+        }
+        for case_id, pixel_hash in expected_pixel_hashes.items():
+            with self.subTest(case=case_id):
+                case = self.cases[case_id]
+                path = Path("inputs") / case["output_file"]
+                with (
+                    Image.open(SOURCE / case["source_file"]) as original,
+                    Image.open(self.output / path) as variant,
+                    Image.open(repeated / path) as next_variant,
+                ):
+                    self.assertEqual(variant.format, "PNG")
+                    self.assertEqual(variant.size, (case["output_width"], case["output_height"]))
+                    self.assertEqual(variant.mode, case["output_pixel_mode"])
+                    self.assertEqual(variant.tobytes(), next_variant.tobytes())
+                    self.assertEqual(sha256(variant.tobytes()).hexdigest(), pixel_hash)
+                    self.assertEqual(case["output_pixel_sha256"], pixel_hash)
+                    if case_id == "rotated_png":
+                        self.assertEqual(variant.size, (original.height, original.width))
+                        restored = variant.transpose(Image.Transpose.ROTATE_270)
+                        self.assertEqual(restored.tobytes(), original.tobytes())
+                    else:
+                        self.assertEqual(variant.size, original.size)
+                        self.assertIsNotNone(ImageChops.difference(original, variant).getbbox())
