@@ -218,6 +218,29 @@ def test_unambiguous_issuer_response_can_omit_candidate_list(module_path, tmp_pa
     assert candidate.sources == (issuer,)
 
 
+def test_conflicting_issuer_tax_ids_keep_each_reading_without_selection(module_path, tmp_path):
+    document = _document(tmp_path)
+    first = SourceObservation(
+        "ИНН исполнителя: 1234567890", PageLocator(kind="page", page=1, line=3), "native"
+    )
+    second = SourceObservation(
+        "ИНН поставщика: 123456789012", PageLocator(kind="page", page=2, line=2), "native"
+    )
+    buyer = SourceObservation(
+        "ИНН покупателя: 9876543210", PageLocator(kind="page", page=2, line=3), "native"
+    )
+    supplied = replace(document, observations=(*document.observations, first, second, buyer))
+    (record,) = identify_documents([supplied], synthetic=True).documents
+    readings = {item.value: item for item in record.candidates if item.field == "issuer_tax_id"}
+
+    assert record.issuer_tax_id_conflict
+    assert set(readings) == {None, "1234567890", "123456789012"}
+    assert readings[None].source_ambiguous and readings[None].sources == ()
+    assert readings[None].provenance == (first, second)
+    assert readings["1234567890"].sources == readings["1234567890"].provenance == (first,)
+    assert readings["123456789012"].sources == readings["123456789012"].provenance == (second,)
+
+
 def test_module_compound_needs_actual_line_adjacency_for_addresses(module_path, tmp_path):
     document = _document(tmp_path)
     label = SourceObservation(

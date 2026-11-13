@@ -45,6 +45,11 @@ _AMOUNT_ROLE = re.compile(
     r"(?:\s*,?\s*руб\.?)?\s*[:：]\s*",
     re.IGNORECASE,
 )
+_ISSUER_TAX_ID = re.compile(
+    r"\s*(?:[A-Z]{1,3}[0-9]+:\s*)?инн\s+(?:исполнителя|поставщика|продавца)"
+    r"\s*[:：]?\s*([0-9]{10}(?:[0-9]{2})?)\s*",
+    re.IGNORECASE,
+)
 
 
 class ObservationInputError(ValueError):
@@ -418,6 +423,27 @@ def _number_candidates(number: dict[str, object], prepared: _Prepared) -> list[I
     return [selected, *(item for item in alternatives if item != selected)]
 
 
+def _tax_id_candidates(
+    issuer: dict[str, object],
+    conflict: bool,
+    prepared: _Prepared,
+) -> list[IdentityCandidate]:
+    field = "issuer_tax_id"
+    evidence = issuer.get("tax_id_evidence")
+    if not conflict:
+        return [_candidate(field, issuer.get("tax_id"), evidence, prepared)]
+
+    # A null selected value is distinct from the conflicting, addressed readings.
+    _, provenance, _ = _evidence_sources(evidence, prepared, field, None)
+    results = [IdentityCandidate(field, None, (), True, provenance)]
+    for source in provenance:
+        # Restrict the projection to complete INN tokens in the module's own evidence.
+        match = _ISSUER_TAX_ID.fullmatch(source.text)
+        if match is not None:
+            results.append(IdentityCandidate(field, match[1], (source,), False, (source,)))
+    return results
+
+
 def _record(raw: dict[str, object], prepared: _Prepared) -> DocumentIdentity:
     doc = prepared.document
     if (
@@ -453,13 +479,11 @@ def _record(raw: dict[str, object], prepared: _Prepared) -> DocumentIdentity:
         item = _candidate("issuer", candidate.get("value"), candidate.get("evidence"), prepared)
         if item not in candidates:
             candidates.append(item)
-    candidates.append(
-        _candidate("issuer_tax_id", issuer.get("tax_id"), issuer.get("tax_id_evidence"), prepared)
-    )
     manual = number.get("manual_review_required")
     tax_conflict = issuer.get("tax_id_conflict")
     if not isinstance(manual, bool) or not isinstance(tax_conflict, bool):
         raise IdentityResponseError("Invalid document review flag")
+    candidates.extend(_tax_id_candidates(issuer, tax_conflict, prepared))
     return DocumentIdentity(
         doc.id,
         doc.source_sha256,
