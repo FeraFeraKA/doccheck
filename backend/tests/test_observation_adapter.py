@@ -206,6 +206,21 @@ def test_contract_header_does_not_confirm_document_number(module_path, tmp_path)
     assert record.number_requires_review
 
 
+@pytest.mark.parametrize("label", ["№ документа: 412", "Номер акта: 412", "Документ № 412"])
+def test_inline_explicit_document_number_needs_no_adjacent_header(module_path, tmp_path, label):
+    document = _document(tmp_path)
+    source = SourceObservation(label, PageLocator(kind="page", page=1, line=3), "native")
+    (record,) = identify_documents(
+        [replace(document, observations=(source,))], synthetic=True
+    ).documents
+    (number,) = tuple(item for item in record.candidates if item.field == "doc_number")
+
+    assert number.value == "412"
+    assert number.sources == number.provenance == (source,)
+    assert number.diagnostic is None and not number.source_ambiguous
+    assert not record.number_requires_review
+
+
 def test_explicit_number_label_and_value_keep_both_module_sources(module_path, tmp_path):
     document = _document(tmp_path)
     observations = (

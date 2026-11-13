@@ -34,6 +34,12 @@ _PREDICTIONS = {
     "description",
     "evidence_quote",
 }
+_NUMBER_MARKER = r"(?:№|N(?:[oоº°])?\.?)"
+_EXPLICIT_MARKED_DOCUMENT_NUMBER = r"№\s*документа\b"
+_NUMBER_END = (
+    r"(?=\s*(?:$|[,;:]|\bот\b|\||[»\"]|"
+    r"(?:по\s+|к\s+|для\s+)?(?:договор\w*|контракт\w*)\b))"
+)
 _DOCUMENT_HEADER = re.compile(
     r"\s*(?:акт|сч[её]т|упд|ведомость|справка|служебная\s+записка|"
     r"универсальный\s+передаточный\s+документ|"
@@ -279,17 +285,31 @@ def _adjacent(first: SourceObservation, second: SourceObservation) -> bool:
     return False
 
 
+def _explicit_marked_document_number(value: str | None, text: str) -> bool:
+    if value is None:
+        return False
+    return (
+        re.match(
+            rf"^\s*{_EXPLICIT_MARKED_DOCUMENT_NUMBER}\s*[:：]?\s*(?:№\s*)?"
+            rf"{re.escape(value)}{_NUMBER_END}",
+            text,
+            re.IGNORECASE,
+        )
+        is not None
+    )
+
+
 def _contains_complete_reading(field: str, value: str | None, text: str) -> bool:
     if value is None:
         return False
     if field == "doc_number":
+        if _explicit_marked_document_number(value, text):
+            return True
         # The module has already selected this observation as evidence for this role.
         # Require the entire value at a number marker, without accepting a prefix.
         return (
             re.search(
-                rf"(?<!\w)(?:№|N(?:[oоº°])?\.?)\s*{re.escape(value)}"
-                r"(?=\s*(?:$|[,;:]|\bот\b|\||[»\"]|"
-                r"(?:по\s+|к\s+|для\s+)?(?:договор\w*|контракт\w*)\b))",
+                rf"(?<!\w){_NUMBER_MARKER}\s*{re.escape(value)}{_NUMBER_END}",
                 text.strip(),
                 re.IGNORECASE,
             )
@@ -353,8 +373,14 @@ def _evidence_sources(
     if field == "doc_number":
         contexts = {}
         for index, source in enumerate(sources):
-            if re.match(r"^\s*(?:№|N(?:[oоº°])?\.?)", source.text, re.I):
-                contexts[index] = _document_number_context(source, prepared)
+            if re.match(rf"^\s*{_NUMBER_MARKER}", source.text, re.I) and not (
+                _explicit_marked_document_number(reading, source.text)
+            ):
+                contexts[index] = (
+                    _document_number_context(source, prepared)
+                    if _contains_complete_reading(field, reading, source.text)
+                    else None
+                )
         if any(context is None for context in contexts.values()):
             return (), provenance, True
         if contexts and not ambiguous and len(sources) <= 2:
