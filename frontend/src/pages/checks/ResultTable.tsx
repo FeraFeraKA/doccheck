@@ -38,7 +38,6 @@ export function ResultTable({
 }: ResultTableProps) {
   return (
     <section className="reconcile-left result-table-pane">
-      <div className="reconcile-left-header"><h2>Показатели</h2></div>
       <div className="reconcile-filters" role="group" aria-label="Статус показателя">
         {filters.map(([value, label, count]) => (
           <button type="button" key={value} aria-pressed={filter === value} onClick={() => onFilterChange(value)}>

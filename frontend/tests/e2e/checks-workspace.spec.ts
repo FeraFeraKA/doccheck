@@ -53,7 +53,7 @@ for (const width of [320, 390]) {
 
     const summary = page.getByRole('region', { name: 'Заключение по проверке' });
     await expect(summary.getByText('Расхождения: 1', { exact: true })).toBeInViewport({ ratio: 1 });
-    await expect(page.getByRole('heading', { name: 'Показатели' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Показатели отчёта' })).toBeVisible();
     await expect(page.getByRole('link', { name: 'Исключения' })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
   });

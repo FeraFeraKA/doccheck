@@ -308,9 +308,7 @@ function Reconciliation({ result, storedRunId, rowJump }: {
       moveIssue(event.key === 'ArrowDown' ? 1 : -1, true);
     }}>
       <div className="reconcile-commandbar">
-        <div className="reconcile-command-title"><span className="reconcile-icon" aria-hidden="true">▤</span>
-          <strong>Сверка с документами</strong>
-        </div>
+        <h2 className="reconcile-title">Показатели отчёта</h2>
         <div className="issue-navigation">
           <p className="issue-counter">Расхождения: {summary.counts.discrepancy}</p>
           {discrepancies.length > 0 && <p aria-live="polite">
@@ -322,7 +320,7 @@ function Reconciliation({ result, storedRunId, rowJump }: {
             onClick={() => moveIssue(1)}>↓</button>
         </div>
       </div>
-      <div className="reconcile-panes">
+      <div className="reconcile-panes reconcile-panes-stacked">
         <ResultTable
           rows={visible} total={rows.length} filters={filters} filter={filter} query={query}
           selectedId={row?.id} selectedEvidenceId={source?.id} expanded={expanded}
@@ -333,7 +331,11 @@ function Reconciliation({ result, storedRunId, rowJump }: {
           onQueryChange={(value) => { setQuery(value); selectRow(); }}
           onReset={() => { setFilter('all'); setQuery(''); selectRow(); }}
           onToggle={toggleRow}
-          onSelectSource={(rowId, id) => { setSelectedId(rowId); selectSource(id); }}
+          onSelectSource={(rowId, id) => {
+            setSelectedId(rowId);
+            selectSource(id);
+            if (storedRunId) setOpenSourceId(id);
+          }}
         />
         <section className="evidence-panel">
           {row ? <div className="evidence-header">
