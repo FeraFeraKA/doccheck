@@ -79,7 +79,9 @@
           "message": "Синтетический источник статьи B не прочитан",
           "evidence_refs": []
         },
-        "errors": [{"code": "unreadable_source", "message": "Ошибка чтения файла"}]
+        "errors": [
+          {"id": "scan-read-error", "code": "unreadable_source", "message": "Ошибка чтения файла"}
+        ]
       }
     ],
     "evidence": [
@@ -235,7 +237,7 @@
             "evidence_refs": []
           }
         ],
-        "root_issue_id": null,
+        "root_issue_id": "issue-b",
         "derived_mismatch": false
       }
     ],
@@ -247,6 +249,13 @@
           "code": "amount_mismatch",
           "message": "В статье A подтверждено расхождение",
           "evidence_refs": ["report-a", "amount-1", "amount-2"]
+        },
+        {
+          "id": "issue-b",
+          "code": "unreadable_source",
+          "message": "Источник статьи B не прочитан",
+          "evidence_refs": [],
+          "file_error_refs": ["scan-read-error"]
         }
       ],
       "conclusion": "По статье A обнаружено расхождение. Статья B остаётся непроверенной."

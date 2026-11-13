@@ -35,6 +35,10 @@ def test_checked_in_schema_matches_models_and_example_round_trips(payload: dict)
     assert discrepancy.observed_evidence_sum == "120.50"
     assert incomplete.reported_value == "0.00"
     assert incomplete.expected_value is None and incomplete.observed_evidence_sum is None
+    issue = next(
+        item for item in job.result.summary.primary_issues if item.id == incomplete.root_issue_id
+    )
+    assert issue.file_error_refs == [job.result.documents[3].errors[0].id]
     assert CheckJob.model_validate_json(job.model_dump_json()) == CheckJob.model_validate(payload)
 
 
@@ -110,6 +114,7 @@ def test_amount_cannot_substitute_for_contract_evidence(payload: dict) -> None:
 
 def test_copy_cannot_supply_a_second_amount(payload: dict) -> None:
     payload["result"]["evidence"][3]["document_id"] = "ledger-copy"
+    payload["result"]["rows"][0]["completeness"]["evidence_refs"] = ["amount-1"]
     with pytest.raises(ValidationError, match="admitted supporting documents"):
         CheckJob.model_validate(payload)
 
@@ -123,8 +128,93 @@ def test_amount_cannot_be_counted_twice_under_different_ids(payload: dict, addre
 
 
 def test_unreadable_support_cannot_provide_an_admitted_amount(payload: dict) -> None:
-    payload["result"]["documents"][1]["parse_status"] = "error"
+    document = payload["result"]["documents"][1]
+    document["parse_status"] = "error"
+    document["decision"]["state"] = "parse_error"
+    document["errors"] = [{"id": "failed-ledger", "code": "read_error", "message": "Failed"}]
+    payload["result"]["rows"][0]["completeness"]["evidence_refs"] = []
+    for index, item in enumerate(payload["result"]["evidence"][4:], start=1):
+        item.update(document_id="report", locator={"kind": "page", "page": 1, "line": index})
     with pytest.raises(ValidationError, match="admitted supporting documents"):
+        CheckJob.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    "address",
+    [
+        {"bbox": [0.2, 0.3, 0.4, 0.5], "fragment_id": "amount", "line": 2},
+        {"bbox": [0.2, 0.3, 0.4, 0.5]},
+        {"fragment_id": "amount"},
+        {"line": 1},
+    ],
+)
+def test_pdf_fragment_identity_ignores_additional_metadata(payload: dict, address: dict) -> None:
+    result = payload["result"]
+    for document in result["documents"][1:3]:
+        document["format"] = "pdf"
+    for index, evidence in enumerate(result["evidence"][2:], start=1):
+        evidence["locator"] = {"kind": "page", "page": 1, "line": index}
+    result["evidence"][2]["locator"].update(bbox=[0.2, 0.3, 0.4, 0.5], fragment_id="amount")
+    result["evidence"][3]["locator"] = {"kind": "page", "page": 1, **address}
+    with pytest.raises(ValidationError, match="must not be counted twice"):
+        CheckJob.model_validate(payload)
+    result["evidence"][3]["locator"] = {
+        "kind": "page",
+        "page": 1,
+        "line": 1,
+        "bbox": [0.5, 0.3, 0.7, 0.5],
+    }
+    assert CheckJob.model_validate(payload).result is not None
+
+
+@pytest.mark.parametrize("index", [4, 5, 6])
+def test_component_scope_cannot_rely_on_unreadable_files(payload: dict, index: int) -> None:
+    evidence = payload["result"]["evidence"][index]
+    evidence.update(document_id="unreadable", locator={"kind": "page", "page": 1, "line": index})
+    with pytest.raises(ValidationError, match="scope requires admitted documents"):
+        CheckJob.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("index", "value", "message"),
+    [
+        (4, "OTHER", "contradicts the selected contract"),
+        (5, {"start": "2025-01-01", "end": "2025-01-31"}, "lies outside the selected period"),
+        (6, "DEMO-B", "contradicts the indicator code"),
+    ],
+)
+def test_component_scope_must_match_normalized_evidence(
+    payload: dict, index: int, value: object, message: str
+) -> None:
+    payload["result"]["evidence"][index]["normalized_value"] = value
+    with pytest.raises(ValidationError, match=message):
+        CheckJob.model_validate(payload)
+
+
+def test_unreadable_file_requires_a_recorded_error(payload: dict) -> None:
+    payload["result"]["documents"][3]["errors"] = []
+    with pytest.raises(ValidationError, match="requires a file error"):
+        CheckJob.model_validate(payload)
+
+
+def test_completed_job_cannot_hide_file_errors(payload: dict) -> None:
+    payload["status"] = "completed"
+    with pytest.raises(ValidationError, match="recorded technical errors"):
+        CheckJob.model_validate(payload)
+    payload["error"] = {"code": "worker_failed", "message": "Ошибка задания"}
+    with pytest.raises(ValidationError, match="job error requires"):
+        CheckJob.model_validate(payload)
+
+
+def test_primary_issue_can_only_reference_a_recorded_file_error(payload: dict) -> None:
+    payload["result"]["summary"]["primary_issues"][1]["file_error_refs"] = ["missing-error"]
+    with pytest.raises(ValidationError, match="must refer to file errors"):
+        CheckJob.model_validate(payload)
+
+
+def test_derived_mismatch_requires_discrepancy(payload: dict) -> None:
+    payload["result"]["rows"][1]["derived_mismatch"] = True
+    with pytest.raises(ValidationError, match="requires a discrepancy and a root issue"):
         CheckJob.model_validate(payload)
 
 

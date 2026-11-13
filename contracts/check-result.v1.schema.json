@@ -431,6 +431,33 @@
       "title": "FileDecision",
       "type": "object"
     },
+    "FileError": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "minLength": 1,
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "minLength": 1,
+          "title": "Message",
+          "type": "string"
+        },
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "id"
+      ],
+      "title": "FileError",
+      "type": "object"
+    },
     "Issue": {
       "additionalProperties": false,
       "properties": {
@@ -736,6 +763,14 @@
           "minLength": 1,
           "title": "Id",
           "type": "string"
+        },
+        "file_error_refs": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "File Error Refs",
+          "type": "array"
         }
       },
       "required": [
@@ -931,6 +966,25 @@
                 "required": [
                   "operation"
                 ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "derived_mismatch": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "status": {
+                "const": "discrepancy"
+              },
+              "root_issue_id": {
+                "type": "string"
               }
             }
           }
@@ -1177,6 +1231,70 @@
     },
     "SourceDocument": {
       "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "parse_status": {
+                "enum": [
+                  "partial",
+                  "error"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "errors": {
+                "minItems": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "decision": {
+                "properties": {
+                  "state": {
+                    "const": "parse_error"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "parse_status": {
+                "const": "error"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "decision": {
+                "properties": {
+                  "state": {
+                    "const": "include"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "parse_status": {
+                "enum": [
+                  "parsed",
+                  "partial"
+                ]
+              }
+            }
+          }
+        }
+      ],
       "properties": {
         "id": {
           "minLength": 1,
@@ -1233,7 +1351,7 @@
         },
         "errors": {
           "items": {
-            "$ref": "#/$defs/Issue"
+            "$ref": "#/$defs/FileError"
           },
           "title": "Errors",
           "type": "array"
@@ -1456,6 +1574,91 @@
             "type": "object"
           }
         }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "enum": [
+              "queued",
+              "processing",
+              "completed"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "error": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "completed"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "not": {
+              "properties": {
+                "documents": {
+                  "contains": {
+                    "properties": {
+                      "errors": {
+                        "minItems": 1
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "completed_with_issues"
+          }
+        }
+      },
+      "then": {
+        "anyOf": [
+          {
+            "properties": {
+              "error": {
+                "type": "object"
+              }
+            }
+          },
+          {
+            "properties": {
+              "result": {
+                "properties": {
+                  "documents": {
+                    "contains": {
+                      "properties": {
+                        "errors": {
+                          "minItems": 1
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
       }
     }
   ],

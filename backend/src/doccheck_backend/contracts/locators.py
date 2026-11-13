@@ -17,6 +17,7 @@ Text = Annotated[str, StringConstraints(strict=True, min_length=1)]
 Index = Annotated[int, Field(strict=True, ge=1)]
 Coordinate = Annotated[float, Field(strict=True, ge=0, le=1, allow_inf_nan=False)]
 Box = tuple[Coordinate, Coordinate, Coordinate, Coordinate]
+AddressKey = tuple[str | int | Box, ...]
 IsoDate = Annotated[
     str,
     StringConstraints(strict=True, pattern=re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}(?![\s\S])")),
@@ -95,6 +96,19 @@ class PageLocator(ContractModel):
             raise ValueError("a page number alone does not identify evidence")
         return self
 
+    def address_keys(self) -> set[AddressKey]:
+        keys: set[AddressKey] = set()
+        if self.fragment_id is not None:
+            keys.add(("fragment", self.page, self.fragment_id))
+        if self.bbox is not None:
+            keys.add(("bbox", self.page, self.bbox))
+        if self.table_row is not None and self.table_column is not None:
+            keys.add(("cell", self.page, self.table_row, self.table_column))
+        # A shared line can contain distinct amounts when both have a finer address.
+        if not keys and self.line is not None:
+            keys.add(("line", self.page, self.line))
+        return keys
+
 
 _CELL = r"[A-Z]{1,3}[1-9][0-9]{0,6}"
 _RANGE = re.compile(rf"^{_CELL}(?::{_CELL})?(?![\s\S])")
@@ -124,10 +138,16 @@ class SheetLocator(ContractModel):
             raise ValueError("range must be ordered and within XLSX bounds")
         return first if first == last else value
 
+    def address_keys(self) -> set[AddressKey]:
+        return {("sheet", self.sheet, self.range)}
+
 
 class ParagraphLocator(ContractModel):
     kind: Literal["paragraph"]
     paragraph: Index
+
+    def address_keys(self) -> set[AddressKey]:
+        return {("paragraph", self.paragraph)}
 
 
 class TableCellLocator(ContractModel):
@@ -135,6 +155,9 @@ class TableCellLocator(ContractModel):
     table: Index
     row: Index
     cell: Index
+
+    def address_keys(self) -> set[AddressKey]:
+        return {("table_cell", self.table, self.row, self.cell)}
 
 
 Locator = Annotated[

@@ -7,7 +7,7 @@ from typing import Annotated, Literal, Self
 
 from pydantic import ConfigDict, Field, StrictBool, StringConstraints, model_validator
 
-from .locators import ContractModel, IsoDate, Locator, PageLocator, Text, check_period
+from .locators import AddressKey, ContractModel, IsoDate, Locator, PageLocator, Text, check_period
 
 RESULT_SCHEMA_VERSION = "doccheck-check-result/1"
 JobStatus = Literal["queued", "processing", "completed", "completed_with_issues", "failed"]
@@ -56,6 +56,10 @@ class Issue(ContractModel):
     message: Text
 
 
+class FileError(Issue):
+    id: Text
+
+
 class Reason(Issue):
     evidence_refs: list[Text]
 
@@ -68,6 +72,31 @@ class FileDecision(ContractModel):
 
 
 class SourceDocument(ContractModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "allOf": [
+                {
+                    "if": {"properties": {"parse_status": {"enum": ["partial", "error"]}}},
+                    "then": {"properties": {"errors": {"minItems": 1}}},
+                },
+                {
+                    "if": {
+                        "properties": {
+                            "decision": {"properties": {"state": {"const": "parse_error"}}}
+                        }
+                    },
+                    "then": {"properties": {"parse_status": {"const": "error"}}},
+                },
+                {
+                    "if": {
+                        "properties": {"decision": {"properties": {"state": {"const": "include"}}}}
+                    },
+                    "then": {"properties": {"parse_status": {"enum": ["parsed", "partial"]}}},
+                },
+            ]
+        }
+    )
+
     id: Text
     name: Text
     sha256: Digest
@@ -75,13 +104,19 @@ class SourceDocument(ContractModel):
     role: Literal["report", "support"]
     parse_status: Literal["pending", "parsed", "partial", "error"]
     decision: FileDecision
-    errors: list[Issue]
+    errors: list[FileError]
     duplicate_of: Text | None = None
 
     @model_validator(mode="after")
     def check_decision(self) -> Self:
         if self.duplicate_of is not None and self.decision.state != "exclude":
             raise ValueError("a byte copy must be excluded")
+        if self.decision.state == "parse_error" and self.parse_status != "error":
+            raise ValueError("parse_error requires a failed parse")
+        if self.parse_status in ("partial", "error") and not self.errors:
+            raise ValueError("a partial or failed parse requires a file error")
+        if self.decision.state == "include" and self.parse_status not in ("parsed", "partial"):
+            raise ValueError("an included document requires a usable parse")
         if self.format is None and not any(
             error.code == "unsupported_format" for error in self.errors
         ):
@@ -251,6 +286,15 @@ class ResultRow(ContractModel):
                         }
                     },
                 },
+                {
+                    "if": {"properties": {"derived_mismatch": {"const": True}}},
+                    "then": {
+                        "properties": {
+                            "status": {"const": "discrepancy"},
+                            "root_issue_id": {"type": "string"},
+                        }
+                    },
+                },
             ]
         }
     )
@@ -296,8 +340,8 @@ class ResultRow(ContractModel):
                 raise ValueError("an expected value requires a supported calculation with evidence")
             if Decimal(self.expected_value) != Decimal(self.observed_evidence_sum):
                 raise ValueError("an expected sum must equal the sum of admitted components")
-        if self.derived_mismatch and self.root_issue_id is None:
-            raise ValueError("a derived mismatch requires a root issue")
+        if self.derived_mismatch and (self.status != "discrepancy" or self.root_issue_id is None):
+            raise ValueError("a derived mismatch requires a discrepancy and a root issue")
         if self.status == "unverified":
             if self.delta is not None or not self.reasons:
                 raise ValueError("an unverified row requires a reason and null delta")
@@ -324,6 +368,7 @@ class StatusCounts(ContractModel):
 
 class PrimaryIssue(Reason):
     id: Text
+    file_error_refs: list[Text] = Field(default_factory=list)
 
 
 class Summary(ContractModel):
@@ -352,6 +397,10 @@ class CheckResult(ContractModel):
             raise ValueError("document and evidence IDs must be unique")
         if len(primary) != len(self.summary.primary_issues):
             raise ValueError("primary issue IDs must be unique")
+        file_errors = [error.id for document in self.documents for error in document.errors]
+        error_ids = set(file_errors)
+        if len(error_ids) != len(file_errors):
+            raise ValueError("file error IDs must be unique")
         if len({row.id for row in self.rows}) != len(self.rows):
             raise ValueError("row IDs must be unique")
         report = documents.get(self.scope.report_document_id)
@@ -385,6 +434,8 @@ class CheckResult(ContractModel):
                 raise ValueError("row root issue must refer to a primary issue in this result")
         for issue in self.summary.primary_issues:
             _require_refs(issue.evidence_refs, evidence)
+            if not error_ids.issuperset(issue.file_error_refs):
+                raise ValueError("a primary issue must refer to file errors in this result")
         counts = Counter(row.status for row in self.rows)
         declared_counts = self.summary.counts.model_dump()
         if any(counts[status] != count for status, count in declared_counts.items()):
@@ -409,26 +460,69 @@ class CheckResult(ContractModel):
             raise ValueError("reported evidence must confirm the reported value and unit")
         if row.completeness.basis == "dataset_fixture" and not self.synthetic:
             raise ValueError("dataset fixture coverage requires a synthetic result")
-        _require_refs(row.completeness.evidence_refs, evidence)
+        coverage = _require_refs(row.completeness.evidence_refs, evidence)
+        if row.completeness.state == "complete" and any(
+            not _is_admitted(documents[item.document_id]) for item in coverage
+        ):
+            raise ValueError("complete coverage cannot rely on an inadmissible document")
         for reason in row.reasons:
             _require_refs(reason.evidence_refs, evidence)
-        used_addresses: set[tuple[str, str]] = set()
+        used_addresses: set[tuple[str, AddressKey]] = set()
+        used_lines: set[tuple[str, int, int]] = set()
+        used_line_only: set[tuple[str, int, int]] = set()
         for component in row.calculation.components:
             amounts = _require_refs(component.amount_refs, evidence, "amount")
-            _require_refs(component.contract_refs, evidence, "contract")
-            _require_refs(component.period_refs, evidence, "period")
-            _require_refs(component.article_refs, evidence, "article")
+            self._check_component_scope(component, row, documents, evidence)
             if not any(_matching_amount(item, row.unit, component.amount) for item in amounts):
                 raise ValueError("amount evidence must confirm the component value and unit")
-            addresses = set()
+            addresses: set[tuple[str, AddressKey]] = set()
+            lines: set[tuple[str, int, int]] = set()
+            line_only: set[tuple[str, int, int]] = set()
             for item in amounts:
                 document = documents[item.document_id]
                 if document.role != "support" or not _is_admitted(document):
                     raise ValueError("components require admitted supporting documents")
-                addresses.add((document.id, item.locator.model_dump_json(exclude_none=True)))
-            if used_addresses & addresses:
+                locator = item.locator
+                keys = locator.address_keys()
+                addresses.update((document.id, key) for key in keys)
+                if isinstance(locator, PageLocator) and locator.line is not None:
+                    line = (document.id, locator.page, locator.line)
+                    lines.add(line)
+                    if ("line", locator.page, locator.line) in keys:
+                        line_only.add(line)
+            if used_addresses & addresses or used_line_only & lines or line_only & used_lines:
                 raise ValueError("an amount evidence address must not be counted twice in a row")
             used_addresses.update(addresses)
+            used_lines.update(lines)
+            used_line_only.update(line_only)
+
+    def _check_component_scope(
+        self,
+        component: Component,
+        row: ResultRow,
+        documents: dict[str, SourceDocument],
+        evidence: dict[str, Evidence],
+    ) -> None:
+        contracts = _require_refs(component.contract_refs, evidence, "contract")
+        periods = _require_refs(component.period_refs, evidence, "period")
+        articles = _require_refs(component.article_refs, evidence, "article")
+        if any(
+            not _is_admitted(documents[item.document_id]) for item in contracts + periods + articles
+        ):
+            raise ValueError("component scope requires admitted documents")
+        if any(item.normalized_value != self.scope.contract_number for item in contracts):
+            raise ValueError("contract evidence contradicts the selected contract")
+        for item in periods:
+            value = item.normalized_value
+            if isinstance(value, Period) and (
+                (value.start is not None and value.start > self.scope.period_end)
+                or (value.end is not None and value.end < self.scope.period_start)
+            ):
+                raise ValueError("period evidence lies outside the selected period")
+        if row.indicator_code is not None and any(
+            item.normalized_value != row.indicator_code for item in articles
+        ):
+            raise ValueError("article evidence contradicts the indicator code")
 
 
 def _is_admitted(document: SourceDocument) -> bool:
@@ -463,6 +557,11 @@ def _require_refs(
     return found
 
 
+_RESULT_WITH_FILE_ERRORS = {
+    "properties": {"documents": {"contains": {"properties": {"errors": {"minItems": 1}}}}}
+}
+
+
 class CheckJob(ContractModel):
     model_config = ConfigDict(
         json_schema_extra={
@@ -476,6 +575,25 @@ class CheckJob(ContractModel):
                 {
                     "if": {"properties": {"status": {"const": "failed"}}},
                     "then": {"properties": {"error": {"type": "object"}}},
+                },
+                {
+                    "if": {
+                        "properties": {"status": {"enum": ["queued", "processing", "completed"]}}
+                    },
+                    "then": {"properties": {"error": {"type": "null"}}},
+                },
+                {
+                    "if": {"properties": {"status": {"const": "completed"}}},
+                    "then": {"properties": {"result": {"not": _RESULT_WITH_FILE_ERRORS}}},
+                },
+                {
+                    "if": {"properties": {"status": {"const": "completed_with_issues"}}},
+                    "then": {
+                        "anyOf": [
+                            {"properties": {"error": {"type": "object"}}},
+                            {"properties": {"result": _RESULT_WITH_FILE_ERRORS}},
+                        ]
+                    },
                 },
             ],
         }
@@ -494,4 +612,14 @@ class CheckJob(ContractModel):
             raise ValueError("job and result run IDs must match")
         if self.status == "failed" and self.error is None:
             raise ValueError("a failed job requires a technical error")
+        if self.status in ("queued", "processing", "completed") and self.error is not None:
+            raise ValueError("a job error requires failed or completed_with_issues status")
+        if self.result is not None:
+            has_issues = self.error is not None or any(
+                item.errors for item in self.result.documents
+            )
+            if (self.status == "completed_with_issues") != has_issues:
+                raise ValueError(
+                    "completed_with_issues must agree with the recorded technical errors"
+                )
         return self
