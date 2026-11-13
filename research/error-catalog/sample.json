@@ -1,0 +1,864 @@
+{
+  "format": "nrt64-qa-fixtures/1",
+  "synthetic": true,
+  "seed": 64,
+  "variants_per_scenario": 1,
+  "cases": [
+    {
+      "case": "C05",
+      "scenario": "partial_payment_is_not_full_cost",
+      "basis": "evidence_rule",
+      "input": {
+        "reported": "6227.45",
+        "sources": [
+          {
+            "ref": "payment",
+            "contract": "QA-C-742765",
+            "party": "QA-V-523583",
+            "period": "2026-06",
+            "amount": "164.13",
+            "settlement": "partial",
+            "expense_document": null
+          }
+        ],
+        "target_contract": "QA-C-742765",
+        "target_period": "2026-06"
+      },
+      "expected": {
+        "status": "unverified",
+        "comparison_amount": null,
+        "reason": "partial_payment_without_accrual"
+      },
+      "synthetic": true,
+      "variant": 1,
+      "case_id": "C05-001"
+    },
+    {
+      "case": "C07",
+      "scenario": "ndfl_crossing_first_threshold",
+      "basis": "ndfl_main_base",
+      "input": {
+        "reported": "2194.00",
+        "sources": [
+          {
+            "ref": "payroll",
+            "contract": "QA-C-742765",
+            "party": "QA-V-523583",
+            "period": "2026-06",
+            "amount": "2194.00",
+            "prior_annual_base": "2398667.00",
+            "increment": "14803.00",
+            "prior_assessed_tax": "311827.00",
+            "main_resident_base": true,
+            "one_tax_agent": true
+          }
+        ],
+        "target_contract": "QA-C-742765",
+        "target_period": "2026-06"
+      },
+      "expected": {
+        "status": "verified",
+        "comparison_amount": "2194.00",
+        "reason": "split_tax_brackets"
+      },
+      "synthetic": true,
+      "variant": 1,
+      "case_id": "C07-001"
+    },
+    {
+      "case": "F01",
+      "scenario": "partial_sum_equals_report",
+      "basis": "evidence_rule",
+      "input": {
+        "reported": "6227.45",
+        "sources": [
+          {
+            "ref": "missing",
+            "contract": "QA-C-742765",
+            "party": "QA-V-523583",
+            "period": "2026-06",
+            "amount": null,
+            "available": false
+          },
+          {
+            "ref": "present",
+            "contract": "QA-C-742765",
+            "party": "QA-V-523583",
+            "period": "2026-06",
+            "amount": "6227.45"
+          }
+        ],
+        "observed_subtotal": "6227.45",
+        "target_contract": "QA-C-742765",
+        "target_period": "2026-06"
+      },
+      "expected": {
+        "status": "unverified",
+        "comparison_amount": null,
+        "reason": "mandatory_source_missing"
+      },
+      "synthetic": true,
+      "variant": 1,
+      "case_id": "F01-001"
+    },
+    {
+      "case": "C03",
+      "scenario": "vat_correction_old_supply",
+      "basis": "vat_standard",
+      "input": {
+        "reported": "953.80",
+        "sources": [
+          {
+            "ref": "correction",
+            "contract": "QA-C-742765",
+            "party": "QA-V-523583",
+            "period": "2026-06",
+            "amount": "953.80",
+            "taxable_base": "4769.00",
+            "supply_date": "2025-12-23",
+            "issued_date": "2026-06-04",
+            "same_original_supply": true,
+            "standard_vat": true
+          }
+        ],
+        "target_contract": "QA-C-742765",
+        "target_period": "2026-06"
+      },
+      "expected": {
+        "status": "verified",
+        "comparison_amount": "953.80",
+        "reason": "original_vat_rate"
+      },
+      "synthetic": true,
+      "variant": 1,
+      "case_id": "C03-001"
+    },
+    {
+      "case": "C04",
+      "scenario": "act_signed_after_period",
+      "basis": "qa_assumption",
+      "input": {
+        "reported": "6227.45",
+        "sources": [
+          {
+            "ref": "act",
+            "contract": "QA-C-742765",
+            "party": "QA-V-523583",
+            "period": "2026-06",
+            "amount": "6227.45",
+            "service_date": "2026-06-26",
+            "signed_date": "2026-07-03"
+          }
+        ],
+        "comparison_policy": "fictional_accrual_event_date",
+        "target_contract": "QA-C-742765",
+        "target_period": "2026-06"
+      },
+      "expected": {
+        "status": "verified",
+        "comparison_amount": "6227.45",
+        "reason": "synthetic_use_event_date"
+      },
+      "synthetic": true,
+      "variant": 1,
+      "case_id": "C04-001"
+    },
+    {
+      "case": "C02",
+      "scenario": "vat_2026_wrong_rate",
+      "basis": "vat_standard",
+      "input": {
+        "reported": "953.80",
+        "sources": [
+          {
+            "ref": "upd",
+            "contract": "QA-C-742765",
+            "party": "QA-V-523583",
+            "period": "2026-06",
+            "amount": "1049.18",
+            "taxable_base": "4769.00",
+            "supply_date": "2026-06-04",
+            "standard_vat": true
+          }
+        ],
+        "target_contract": "QA-C-742765",
+        "target_period": "2026-06"
+      },
+      "expected": {
+        "status": "discrepancy",
+        "comparison_amount": "1049.18",
+        "reason": "vat_rate_mismatch"
+      },
+      "synthetic": true,
+      "variant": 1,
+      "case_id": "C02-001"
+    },
+    {
+      "case": "M01",
+      "scenario": "byte_duplicate_multi_operation",
+      "basis": "evidence_rule",
+      "input": {
+        "reported": "6391.58",
+        "sources": [
+          {
+            "ref": "copy",
+            "contract": "QA-C-742765",
+            "party": "QA-V-523583",
+            "period": "2026-06",
+            "amount": "6391.58",
+            "content_key": "QA-C-742765-BYTES",
+            "operations": [
+              "6227.45",
+              "164.13"
+            ]
+          },
+          {
+            "ref": "original",
+            "contract": "QA-C-742765",
+            "party": "QA-V-523583",
+            "period": "2026-06",
+            "amount": "6391.58",
+            "content_key": "QA-C-742765-BYTES",
+            "operations": [
+              "6227.45",
+              "164.13"
+            ]
+          }
+        ],
+        "target_contract": "QA-C-742765",
+        "target_period": "2026-06"
+      },
+      "expected": {
+        "status": "verified",
+        "comparison_amount": "6391.58",
+        "reason": "one_copy_all_distinct_operations"
+      },
+      "synthetic": true,
+      "variant": 1,
+      "case_id": "M01-001"
+    },
+    {
+      "case": "F02",
+      "scenario": "total_is_not_an_extra_operation",
+      "basis": "evidence_rule",
+      "input": {
+        "reported": "6391.58",
+        "sources": [
+          {
+            "ref": "total",
+            "contract": "QA-C-742765",
+            "party": "QA-V-523583",
+            "period": "2026-06",
+            "amount": "6391.58",
+            "row_type": "summary"
+          },
+          {
+            "ref": "line-b",
+            "contract": "QA-C-742765",
+            "party": "QA-V-523583",
+            "period": "2026-06",
+            "amount": "164.13",
+            "row_type": "detail"
+          },
+          {
+            "ref": "line-a",
+            "contract": "QA-C-742765",
+            "party": "QA-V-523583",
+            "period": "2026-06",
+            "amount": "6227.45",
+            "row_type": "detail"
+          }
+        ],
+        "target_contract": "QA-C-742765",
+        "target_period": "2026-06"
+      },
+      "expected": {
+        "status": "verified",
+        "comparison_amount": "6391.58",
+        "reason": "use_detail_or_total_once"
+      },
+      "synthetic": true,
+      "variant": 1,
+      "case_id": "F02-001"
+    },
+    {
+      "case": "P02",
+      "scenario": "unsupported_template",
+      "basis": "evidence_rule",
+      "input": {
+        "reported": "6227.45",
+        "sources": [
+          {
+            "ref": "sheet",
+            "contract": "QA-C-742765",
+            "party": "QA-V-523583",
+            "period": "2026-06",
+            "amount": null,
+            "columns": [
+              {
+                "header": "QA unknown",
+                "text": "6227.45"
+              }
+            ]
+          }
+        ],
+        "target_contract": "QA-C-742765",
+        "target_period": "2026-06"
+      },
+      "expected": {
+        "status": "unverified",
+        "comparison_amount": null,
+        "reason": "unknown_header"
+      },
+      "synthetic": true,
+      "variant": 1,
+      "case_id": "P02-001"
+    },
+    {
+      "case": "F04",
+      "scenario": "payment_date_is_not_service_period",
+      "basis": "evidence_rule",
+      "input": {
+        "reported": "6227.45",
+        "sources": [
+          {
+            "ref": "payment",
+            "contract": "QA-C-742765",
+            "party": "QA-V-523583",
+            "period": "2026-06",
+            "amount": "6227.45",
+            "payment_date": "2026-06-01",
+            "service_period": null
+          }
+        ],
+        "comparison_policy": "fictional_accrual",
+        "target_contract": "QA-C-742765",
+        "target_period": "2026-06"
+      },
+      "expected": {
+        "status": "unverified",
+        "comparison_amount": null,
+        "reason": "no_service_period_evidence"
+      },
+      "synthetic": true,
+      "variant": 1,
+      "case_id": "F04-001"
+    },
+    {
+      "case": "C08",
+      "scenario": "contribution_threshold",
+      "basis": "contribution_general_2026",
+      "input": {
+        "reported": "3517.12",
+        "sources": [
+          {
+            "ref": "contributions",
+            "contract": "QA-C-742765",
+            "party": "QA-V-523583",
+            "period": "2026-06",
+            "amount": "3517.12",
+            "prior_annual_base": "2975616.00",
+            "increment": "19953.00",
+            "general_tariff": true,
+            "year": 2026
+          }
+        ],
+        "target_contract": "QA-C-742765",
+        "target_period": "2026-06"
+      },
+      "expected": {
+        "status": "verified",
+        "comparison_amount": "3517.12",
+        "reason": "split_contribution_brackets"
+      },
+      "synthetic": true,
+      "variant": 1,
+      "case_id": "C08-001"
+    },
+    {
+      "case": "C09",
+      "scenario": "gross_and_net_are_distinct",
+      "basis": "qa_assumption",
+      "input": {
+        "reported": "6391.58",
+        "sources": [
+          {
+            "ref": "payroll",
+            "contract": "QA-C-742765",
+            "party": "QA-V-523583",
+            "period": "2026-06",
+            "amount": "6391.58",
+            "gross": "6391.58",
+            "net_payment": "6227.45",
+            "withholding": "164.13",
+            "employer_contribution": "0.81"
+          }
+        ],
+        "comparison_policy": "fictional_gross",
+        "target_contract": "QA-C-742765",
+        "target_period": "2026-06"
+      },
+      "expected": {
+        "status": "verified",
+        "comparison_amount": "6391.58",
+        "reason": "fictional_report_uses_gross"
+      },
+      "synthetic": true,
+      "variant": 1,
+      "case_id": "C09-001"
+    },
+    {
+      "case": "F03",
+      "scenario": "complete_small_difference",
+      "basis": "evidence_rule",
+      "input": {
+        "reported": "6228.26",
+        "sources": [
+          {
+            "ref": "act",
+            "contract": "QA-C-742765",
+            "party": "QA-V-523583",
+            "period": "2026-06",
+            "amount": "6227.45"
+          }
+        ],
+        "target_contract": "QA-C-742765",
+        "target_period": "2026-06"
+      },
+      "expected": {
+        "status": "discrepancy",
+        "comparison_amount": "6227.45",
+        "reason": "complete_comparable_values_differ"
+      },
+      "synthetic": true,
+      "variant": 1,
+      "case_id": "F03-001"
+    },
+    {
+      "case": "C06",
+      "scenario": "advance_without_delivery",
+      "basis": "evidence_rule",
+      "input": {
+        "reported": "6227.45",
+        "sources": [
+          {
+            "ref": "advance",
+            "contract": "QA-C-742765",
+            "party": "QA-V-523583",
+            "period": "2026-06",
+            "amount": "6227.45",
+            "settlement": "advance",
+            "expense_document": null
+          }
+        ],
+        "comparison_policy": "fictional_accrual",
+        "target_contract": "QA-C-742765",
+        "target_period": "2026-06"
+      },
+      "expected": {
+        "status": "unverified",
+        "comparison_amount": null,
+        "reason": "delivery_unconfirmed"
+      },
+      "synthetic": true,
+      "variant": 1,
+      "case_id": "C06-001"
+    },
+    {
+      "case": "M03",
+      "scenario": "other_period_or_contract",
+      "basis": "evidence_rule",
+      "input": {
+        "reported": "6227.45",
+        "sources": [
+          {
+            "ref": "old-period",
+            "contract": "QA-C-742765",
+            "party": "QA-V-523583",
+            "period": "2025-12",
+            "amount": "6227.45"
+          },
+          {
+            "ref": "other-contract",
+            "contract": "QA-C-742765-OTHER",
+            "party": "QA-V-523583",
+            "period": "2026-06",
+            "amount": "6227.45"
+          }
+        ],
+        "target_contract": "QA-C-742765",
+        "target_period": "2026-06"
+      },
+      "expected": {
+        "status": "unverified",
+        "comparison_amount": null,
+        "reason": "no_matching_source"
+      },
+      "synthetic": true,
+      "variant": 1,
+      "case_id": "M03-001"
+    },
+    {
+      "case": "P04",
+      "scenario": "explicit_zero",
+      "basis": "evidence_rule",
+      "input": {
+        "reported": "0.00",
+        "sources": [
+          {
+            "ref": "sheet",
+            "contract": "QA-C-742765",
+            "party": "QA-V-523583",
+            "period": "2026-06",
+            "amount": "0.00",
+            "cell_text": "0.00"
+          }
+        ],
+        "target_contract": "QA-C-742765",
+        "target_period": "2026-06"
+      },
+      "expected": {
+        "status": "verified",
+        "comparison_amount": "0.00",
+        "reason": "zero_confirmed"
+      },
+      "synthetic": true,
+      "variant": 1,
+      "case_id": "P04-001"
+    },
+    {
+      "case": "P05",
+      "scenario": "merged_cells_and_uncached_total",
+      "basis": "evidence_rule",
+      "input": {
+        "reported": "6391.58",
+        "sources": [
+          {
+            "ref": "row-2",
+            "contract": "QA-C-742765",
+            "party": "QA-V-523583",
+            "period": "2026-06",
+            "amount": "164.13",
+            "fragment": "D6"
+          },
+          {
+            "ref": "row-1",
+            "contract": "QA-C-742765",
+            "party": "QA-V-523583",
+            "period": "2026-06",
+            "amount": "6227.45",
+            "fragment": "D5"
+          },
+          {
+            "ref": "total",
+            "contract": "QA-C-742765",
+            "party": "QA-V-523583",
+            "period": "2026-06",
+            "amount": null,
+            "fragment": "D7",
+            "formula": "SUM(D5:D6)",
+            "cache_present": false
+          }
+        ],
+        "merged_header": "A1:D1",
+        "target_contract": "QA-C-742765",
+        "target_period": "2026-06"
+      },
+      "expected": {
+        "status": "verified",
+        "comparison_amount": "6391.58",
+        "reason": "complete_detail_supports_sum"
+      },
+      "synthetic": true,
+      "variant": 1,
+      "case_id": "P05-001"
+    },
+    {
+      "case": "C01",
+      "scenario": "rounding_at_wrong_level",
+      "basis": "qa_assumption",
+      "input": {
+        "reported": "6.22",
+        "sources": [
+          {
+            "ref": "invoice",
+            "contract": "QA-C-742765",
+            "party": "QA-V-523583",
+            "period": "2026-06",
+            "amount": "6.22",
+            "net_lines": [
+              "26.03",
+              "5.03"
+            ],
+            "rounding_policy": "per_line_half_up",
+            "rate": "0.20"
+          }
+        ],
+        "target_contract": "QA-C-742765",
+        "target_period": "2026-06"
+      },
+      "expected": {
+        "status": "verified",
+        "comparison_amount": "6.22",
+        "reason": "synthetic_rule_rounds_each_line"
+      },
+      "synthetic": true,
+      "variant": 1,
+      "case_id": "C01-001"
+    },
+    {
+      "case": "M04",
+      "scenario": "replacement_chain",
+      "basis": "qa_assumption",
+      "input": {
+        "reported": "6227.45",
+        "sources": [
+          {
+            "ref": "old",
+            "contract": "QA-C-742765",
+            "party": "QA-V-523583",
+            "period": "2026-06",
+            "amount": "6391.58",
+            "version_state": "superseded"
+          },
+          {
+            "ref": "replacement",
+            "contract": "QA-C-742765",
+            "party": "QA-V-523583",
+            "period": "2026-06",
+            "amount": "6227.45",
+            "replaces": "old"
+          }
+        ],
+        "target_contract": "QA-C-742765",
+        "target_period": "2026-06"
+      },
+      "expected": {
+        "status": "verified",
+        "comparison_amount": "6227.45",
+        "reason": "one_confirmed_replacement"
+      },
+      "synthetic": true,
+      "variant": 1,
+      "case_id": "M04-001"
+    },
+    {
+      "case": "O02",
+      "scenario": "ocr_missing_separator",
+      "basis": "evidence_rule",
+      "input": {
+        "reported": "6227.45",
+        "sources": [
+          {
+            "ref": "scan",
+            "contract": "QA-C-742765",
+            "party": "QA-V-523583",
+            "period": "2026-06",
+            "amount": null,
+            "ocr_candidate": "622745"
+          }
+        ],
+        "target_contract": "QA-C-742765",
+        "target_period": "2026-06"
+      },
+      "expected": {
+        "status": "unverified",
+        "comparison_amount": null,
+        "reason": "decimal_separator_unconfirmed"
+      },
+      "synthetic": true,
+      "variant": 1,
+      "case_id": "O02-001"
+    },
+    {
+      "case": "M02",
+      "scenario": "one_payment_multiple_articles",
+      "basis": "evidence_rule",
+      "input": {
+        "reported": "6227.45",
+        "sources": [
+          {
+            "ref": "payment",
+            "contract": "QA-C-742765",
+            "party": "QA-V-523583",
+            "period": "2026-06",
+            "amount": "6391.58",
+            "possible_articles": [
+              "QA-A",
+              "QA-B"
+            ],
+            "allocation": null
+          }
+        ],
+        "target_contract": "QA-C-742765",
+        "target_period": "2026-06"
+      },
+      "expected": {
+        "status": "unverified",
+        "comparison_amount": null,
+        "reason": "no_confirmed_allocation"
+      },
+      "synthetic": true,
+      "variant": 1,
+      "case_id": "M02-001"
+    },
+    {
+      "case": "P01",
+      "scenario": "reordered_columns",
+      "basis": "evidence_rule",
+      "input": {
+        "reported": "6227.45",
+        "sources": [
+          {
+            "ref": "sheet",
+            "contract": "QA-C-742765",
+            "party": "QA-V-523583",
+            "period": "2026-06",
+            "amount": null,
+            "columns": [
+              {
+                "header": "amount",
+                "text": "6227.45"
+              },
+              {
+                "header": "base",
+                "text": "6391.58"
+              }
+            ]
+          }
+        ],
+        "target_contract": "QA-C-742765",
+        "target_period": "2026-06"
+      },
+      "expected": {
+        "status": "verified",
+        "comparison_amount": "6227.45",
+        "reason": "headers_identify_amount"
+      },
+      "synthetic": true,
+      "variant": 1,
+      "case_id": "P01-001"
+    },
+    {
+      "case": "P03",
+      "scenario": "blank_is_unknown",
+      "basis": "evidence_rule",
+      "input": {
+        "reported": "0.00",
+        "sources": [
+          {
+            "ref": "sheet",
+            "contract": "QA-C-742765",
+            "party": "QA-V-523583",
+            "period": "2026-06",
+            "amount": null,
+            "cell_text": ""
+          }
+        ],
+        "target_contract": "QA-C-742765",
+        "target_period": "2026-06"
+      },
+      "expected": {
+        "status": "unverified",
+        "comparison_amount": null,
+        "reason": "missing_amount"
+      },
+      "synthetic": true,
+      "variant": 1,
+      "case_id": "P03-001"
+    },
+    {
+      "case": "O03",
+      "scenario": "ocr_joined_rows",
+      "basis": "evidence_rule",
+      "input": {
+        "reported": "6227.45",
+        "sources": [
+          {
+            "ref": "scan",
+            "contract": "QA-C-742765",
+            "party": "QA-V-523583",
+            "period": "2026-06",
+            "amount": null,
+            "ocr_candidate": "6227.45164.13",
+            "fragment": "overlapping_rows"
+          }
+        ],
+        "target_contract": "QA-C-742765",
+        "target_period": "2026-06"
+      },
+      "expected": {
+        "status": "unverified",
+        "comparison_amount": null,
+        "reason": "row_scope_ambiguous"
+      },
+      "synthetic": true,
+      "variant": 1,
+      "case_id": "O03-001"
+    },
+    {
+      "case": "O01",
+      "scenario": "ocr_digit_conflict",
+      "basis": "evidence_rule",
+      "input": {
+        "reported": "6227.45",
+        "sources": [
+          {
+            "ref": "scan",
+            "contract": "QA-C-742765",
+            "party": "QA-V-523583",
+            "period": "2026-06",
+            "amount": null,
+            "ocr_candidate": "7227.45"
+          }
+        ],
+        "target_contract": "QA-C-742765",
+        "target_period": "2026-06"
+      },
+      "expected": {
+        "status": "unverified",
+        "comparison_amount": null,
+        "reason": "digit_unconfirmed"
+      },
+      "synthetic": true,
+      "variant": 1,
+      "case_id": "O01-001"
+    },
+    {
+      "case": "M05",
+      "scenario": "near_duplicate_is_ambiguous",
+      "basis": "evidence_rule",
+      "input": {
+        "reported": "6227.45",
+        "sources": [
+          {
+            "ref": "candidate-b",
+            "contract": "QA-C-742765",
+            "party": "QA-V-523583",
+            "period": "2026-06",
+            "amount": "6227.45",
+            "content_key": "qa-distinct-2"
+          },
+          {
+            "ref": "candidate-a",
+            "contract": "QA-C-742765",
+            "party": "QA-V-523583",
+            "period": "2026-06",
+            "amount": "6227.45",
+            "content_key": "qa-distinct-1"
+          }
+        ],
+        "target_contract": "QA-C-742765",
+        "target_period": "2026-06"
+      },
+      "expected": {
+        "status": "unverified",
+        "comparison_amount": null,
+        "reason": "identity_conflict"
+      },
+      "synthetic": true,
+      "variant": 1,
+      "case_id": "M05-001"
+    }
+  ]
+}
