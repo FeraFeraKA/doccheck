@@ -177,7 +177,40 @@ def test_invalid_number_or_ocr_text_stays_local():
     assert result.errors[-1].raw_value == invalid_text.raw_value
 
 
-@pytest.mark.parametrize("invalid_page", [date(2026, 11, 14), Decimal("2.5")])
+def test_distinct_invalid_sheet_ranges_keep_stable_local_diagnostics():
+    malformed = [
+        replace(ASSERTION, locator=TABLE.model_copy(update={"range": cell}))
+        for cell in ("A0", "B0")
+    ]
+    first = bind_observations(RUN, [PRIMARY], [ASSERTION, *malformed])
+    second = bind_observations(RUN, [PRIMARY], [*reversed(malformed), ASSERTION])
+
+    assert first.evidence == second.evidence and len(first.evidence) == 1
+    first_ids = {
+        item.locator.range: item.error.id
+        for item in first.errors
+        if isinstance(item.locator, SheetLocator)
+    }
+    second_ids = {
+        item.locator.range: item.error.id
+        for item in second.errors
+        if isinstance(item.locator, SheetLocator)
+    }
+    assert len(first.errors) == len(second.errors) == 2
+    assert first_ids == second_ids and set(first_ids) == {"A0", "B0"}
+    assert len(set(first_ids.values())) == 2
+    for item in first.errors:
+        assert item.error.code == "invalid_locator"
+        assert item.error.message == "Адрес наблюдения не соответствует формату источника."
+        assert "A0" not in item.error.model_dump_json()
+        assert "B0" not in item.error.model_dump_json()
+
+
+@pytest.mark.parametrize(
+    "invalid_page",
+    [date(2026, 11, 14), Decimal("2.5"), object()],
+    ids=["date", "decimal", "opaque"],
+)
 def test_malformed_typed_locator_cannot_drop_other_observations(invalid_page):
     report = ObservationAssertion(
         RUN,

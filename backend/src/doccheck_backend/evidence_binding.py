@@ -114,8 +114,12 @@ def _file_error(
             checked = _LOCATOR.validate_python(locator.model_dump(mode="python", warnings=False))
             address = checked.model_dump(mode="json")
         except (ValidationError, PydanticSerializationError, ValueError, UnicodeError):
-            # Keep the original locator locally, but exclude it from the wire error ID.
-            pass
+            # Distinguish rejected addresses when Pydantic can still serialize them.
+            # This payload affects only the hash. The original locator stays local.
+            try:
+                address = {"invalid_locator": locator.model_dump(mode="json", warnings=False)}
+            except (PydanticSerializationError, ValueError, UnicodeError):
+                pass
     return BoundFileError(
         document.id,
         FileError(
