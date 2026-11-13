@@ -98,13 +98,24 @@ def make_variant(rng: Random, variant: int) -> list[Case]:
     )
     ytd = NDFL_LIMIT - Decimal(rng.randrange(500, 4000))
     taxable = Decimal(rng.randrange(6000, 25000))
-    # Apply cumulative tax rounding before subtracting the prior assessed total.
-    before_tax = (ytd * Decimal("0.13")).quantize(RUBLE, rounding=ROUND_HALF_UP)
+    prior_calculated_tax = (ytd * Decimal("0.13")).quantize(
+        RUBLE, rounding=ROUND_HALF_UP
+    )
+    # The public sample uses full prior withholding. Even variants leave one ruble due.
+    prior_fully_withheld = variant % 2 == 1
+    prior_withheld_tax = prior_calculated_tax - (
+        Decimal(0) if prior_fully_withheld else RUBLE
+    )
     after_tax = (
         ytd * Decimal("0.13")
         + split_charge(ytd, taxable, NDFL_LIMIT, Decimal("0.13"), Decimal("0.15"))
     ).quantize(RUBLE, rounding=ROUND_HALF_UP)
-    ndfl = after_tax - before_tax
+    ndfl = after_tax - prior_withheld_tax
+    duplicate_operations = [
+        {"cell": "F7", "amount": money(amount)},
+        {"cell": "F8", "amount": money(amount)},
+    ]
+    duplicate_total = amount + amount
     contribution_ytd = CONTRIBUTION_LIMIT - Decimal(rng.randrange(500, 4000))
     contribution_base = Decimal(rng.randrange(5000, 20000))
     contribution = split_charge(
@@ -256,10 +267,11 @@ def make_variant(rng: Random, variant: int) -> list[Case]:
             [
                 source(
                     "upd",
-                    new_tax,
+                    old_tax,
                     taxable_base=money(cent_base),
                     supply_date=period + "-04",
                     standard_vat=True,
+                    rate="0.20",
                 )
             ],
             basis="vat_standard",
@@ -280,6 +292,7 @@ def make_variant(rng: Random, variant: int) -> list[Case]:
                     issued_date=period + "-04",
                     same_original_supply=True,
                     standard_vat=True,
+                    rate="0.20",
                 )
             ],
             basis="vat_standard",
@@ -335,7 +348,8 @@ def make_variant(rng: Random, variant: int) -> list[Case]:
                     ndfl,
                     prior_annual_base=money(ytd),
                     increment=money(taxable),
-                    prior_assessed_tax=money(before_tax),
+                    prior_withheld_tax=money(prior_withheld_tax),
+                    prior_tax_fully_withheld=prior_fully_withheld,
                     main_resident_base=True,
                     one_tax_agent=True,
                 )
@@ -383,22 +397,22 @@ def make_variant(rng: Random, variant: int) -> list[Case]:
         make_case(
             "M01",
             "byte_duplicate_multi_operation",
-            amount + second,
-            amount + second,
+            duplicate_total,
+            duplicate_total,
             "verified",
             "one_copy_all_distinct_operations",
             [
                 source(
                     "original",
-                    amount + second,
+                    duplicate_total,
                     content_key=contract + "-BYTES",
-                    operations=[money(amount), money(second)],
+                    operations=duplicate_operations,
                 ),
                 source(
                     "copy",
-                    amount + second,
+                    duplicate_total,
                     content_key=contract + "-BYTES",
-                    operations=[money(amount), money(second)],
+                    operations=duplicate_operations,
                 ),
             ],
             basis="evidence_rule",
@@ -465,8 +479,12 @@ def make_variant(rng: Random, variant: int) -> list[Case]:
             None,
             "unverified",
             "mandatory_source_missing",
-            [source("present", amount), source("missing", None, available=False)],
+            [
+                source("present", amount, available=True),
+                source("missing", None, available=False),
+            ],
             basis="evidence_rule",
+            comparison_profile={"required_source_refs": ["present", "missing"]},
             observed_subtotal=money(amount),
         ),
         make_case(

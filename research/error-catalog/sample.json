@@ -48,7 +48,8 @@
             "amount": "2194.00",
             "prior_annual_base": "2398667.00",
             "increment": "14803.00",
-            "prior_assessed_tax": "311827.00",
+            "prior_withheld_tax": "311827.00",
+            "prior_tax_fully_withheld": true,
             "main_resident_base": true,
             "one_tax_agent": true
           }
@@ -85,9 +86,16 @@
             "contract": "QA-C-742765",
             "party": "QA-V-523583",
             "period": "2026-06",
-            "amount": "6227.45"
+            "amount": "6227.45",
+            "available": true
           }
         ],
+        "comparison_profile": {
+          "required_source_refs": [
+            "present",
+            "missing"
+          ]
+        },
         "observed_subtotal": "6227.45",
         "target_contract": "QA-C-742765",
         "target_period": "2026-06"
@@ -118,7 +126,8 @@
             "supply_date": "2025-12-23",
             "issued_date": "2026-06-04",
             "same_original_supply": true,
-            "standard_vat": true
+            "standard_vat": true,
+            "rate": "0.20"
           }
         ],
         "target_contract": "QA-C-742765",
@@ -175,10 +184,11 @@
             "contract": "QA-C-742765",
             "party": "QA-V-523583",
             "period": "2026-06",
-            "amount": "1049.18",
+            "amount": "953.80",
             "taxable_base": "4769.00",
             "supply_date": "2026-06-04",
-            "standard_vat": true
+            "standard_vat": true,
+            "rate": "0.20"
           }
         ],
         "target_contract": "QA-C-742765",
@@ -198,18 +208,24 @@
       "scenario": "byte_duplicate_multi_operation",
       "basis": "evidence_rule",
       "input": {
-        "reported": "6391.58",
+        "reported": "12454.90",
         "sources": [
           {
             "ref": "copy",
             "contract": "QA-C-742765",
             "party": "QA-V-523583",
             "period": "2026-06",
-            "amount": "6391.58",
+            "amount": "12454.90",
             "content_key": "QA-C-742765-BYTES",
             "operations": [
-              "6227.45",
-              "164.13"
+              {
+                "cell": "F7",
+                "amount": "6227.45"
+              },
+              {
+                "cell": "F8",
+                "amount": "6227.45"
+              }
             ]
           },
           {
@@ -217,11 +233,17 @@
             "contract": "QA-C-742765",
             "party": "QA-V-523583",
             "period": "2026-06",
-            "amount": "6391.58",
+            "amount": "12454.90",
             "content_key": "QA-C-742765-BYTES",
             "operations": [
-              "6227.45",
-              "164.13"
+              {
+                "cell": "F7",
+                "amount": "6227.45"
+              },
+              {
+                "cell": "F8",
+                "amount": "6227.45"
+              }
             ]
           }
         ],
@@ -230,7 +252,7 @@
       },
       "expected": {
         "status": "verified",
-        "comparison_amount": "6391.58",
+        "comparison_amount": "12454.90",
         "reason": "one_copy_all_distinct_operations"
       },
       "synthetic": true,

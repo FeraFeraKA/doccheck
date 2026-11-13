@@ -94,21 +94,6 @@ class GenerateTest(unittest.TestCase):
         unknown, zero = cases["P03"], cases["P04"]
         self.assertIsNone(unknown["expected"]["comparison_amount"])
         self.assertEqual(zero["expected"]["comparison_amount"], "0.00")
-        self.assertEqual(
-            cases["F01"]["input"]["reported"],
-            cases["F01"]["input"]["observed_subtotal"],
-        )
-        self.assertIsNone(cases["F01"]["expected"]["comparison_amount"])
-
-        duplicate = cases["M01"]
-        copies = duplicate["input"]["sources"]
-        self.assertEqual(copies[0]["content_key"], copies[1]["content_key"])
-        self.assertEqual(copies[0]["operations"], copies[1]["operations"])
-        operations = [Decimal(amount) for amount in copies[0]["operations"]]
-        self.assertEqual(len(operations), 2)
-        self.assertEqual(
-            sum(operations), Decimal(duplicate["expected"]["comparison_amount"])
-        )
 
         rounding = cases["C01"]
         data = rounding["input"]["sources"][0]
@@ -121,11 +106,85 @@ class GenerateTest(unittest.TestCase):
 
         for scenario, rate in [("C02", "0.22"), ("C03", "0.20")]:
             case = cases[scenario]
-            taxable_base = Decimal(case["input"]["sources"][0]["taxable_base"])
+            document = case["input"]["sources"][0]
+            taxable_base = Decimal(document["taxable_base"])
+            self.assertEqual(document["rate"], "0.20")
+            self.assertEqual(
+                Decimal(document["amount"]), taxable_base * Decimal("0.20")
+            )
+            self.assertEqual(case["input"]["reported"], document["amount"])
+            self.assertEqual(
+                document["supply_date"][:4], "2026" if scenario == "C02" else "2025"
+            )
             self.assertEqual(
                 Decimal(case["expected"]["comparison_amount"]),
                 taxable_base * Decimal(rate),
             )
+
+    def test_ndfl_credits_withholding_even_when_it_differs_from_calculated_tax(
+        self,
+    ) -> None:
+        withholding_cases = [case for case in generate(43, 4) if case["case"] == "C07"]
+        coverage = set()
+        threshold = Decimal(2400000)
+        for case in withholding_cases:
+            with self.subTest(case=case["case_id"]):
+                payroll = case["input"]["sources"][0]
+                prior_base = Decimal(payroll["prior_annual_base"])
+                annual_base = prior_base + Decimal(payroll["increment"])
+                withheld = Decimal(payroll["prior_withheld_tax"])
+                self.assertLess(prior_base, threshold)
+                self.assertGreater(annual_base, threshold)
+                prior_calculated = (prior_base * Decimal("0.13")).quantize(
+                    Decimal(1), rounding=ROUND_HALF_UP
+                )
+                cumulative = (
+                    Decimal(312000) + (annual_base - threshold) * Decimal("0.15")
+                ).quantize(Decimal(1), rounding=ROUND_HALF_UP)
+                self.assertEqual(
+                    payroll["prior_tax_fully_withheld"], withheld == prior_calculated
+                )
+                self.assertEqual(
+                    Decimal(case["expected"]["comparison_amount"]),
+                    cumulative - withheld,
+                )
+                coverage.add(prior_calculated - withheld)
+        self.assertEqual(coverage, {Decimal(0), Decimal(1)})
+
+    def test_duplicate_requires_file_identity_and_keeps_equal_amount_operations(
+        self,
+    ) -> None:
+        for case in (case for case in generate(43, 8) if case["case"] == "M01"):
+            with self.subTest(case=case["case_id"]):
+                first, second = case["input"]["sources"]
+                self.assertNotEqual(first["ref"], second["ref"])
+                self.assertEqual(first["content_key"], second["content_key"])
+                self.assertEqual(first["operations"], second["operations"])
+                self.assertEqual(len(first["operations"]), 2)
+                self.assertEqual(len({row["cell"] for row in first["operations"]}), 2)
+                amounts = [Decimal(row["amount"]) for row in first["operations"]]
+                self.assertEqual(len(set(amounts)), 1)
+                expected = Decimal(case["expected"]["comparison_amount"])
+                self.assertEqual(sum(amounts), expected)
+                self.assertNotEqual(sum(set(amounts)), expected)
+                self.assertNotEqual(
+                    sum(Decimal(s["amount"]) for s in (first, second)), expected
+                )
+
+    def test_matching_partial_total_has_a_missing_required_source(self) -> None:
+        case = next(case for case in generate(43, 1) if case["case"] == "F01")
+        data = case["input"]
+        sources = {s["ref"]: s for s in data["sources"]}
+        required = set(data["comparison_profile"]["required_source_refs"])
+        self.assertEqual(
+            required - {ref for ref, s in sources.items() if s["available"]},
+            {"missing"},
+        )
+        self.assertIsNone(sources["missing"]["amount"])
+        self.assertEqual(sources["present"]["amount"], data["observed_subtotal"])
+        self.assertEqual(data["reported"], data["observed_subtotal"])
+        self.assertEqual(case["expected"]["status"], "unverified")
+        self.assertIsNone(case["expected"]["comparison_amount"])
 
     def test_cli_recreates_the_sample_and_writes_valid_json(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
