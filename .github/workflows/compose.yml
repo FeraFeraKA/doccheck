@@ -58,11 +58,12 @@ jobs:
             exit 1
           fi
           docker compose --profile document-worker config --services | grep -qx document-worker
-          mkdir -p data private holdout evaluation models
-          for directory in data private holdout evaluation models; do
+          mkdir -p data private holdout evaluation models secrets pgdata
+          for directory in data private holdout evaluation models secrets pgdata; do
             printf '%s\n' 'synthetic build-context sentinel' > "$directory/compose-ci-sentinel"
           done
           printf '%s\n' 'synthetic build-context sentinel' > frontend/src/compose-ci-sentinel.safetensors
+          printf '%s\n' 'synthetic build-context sentinel' > backend/src/doccheck_backend/compose-ci-sentinel.key
           printf '%s\n' 'synthetic build-context sentinel' > .env.compose-ci-sentinel
           docker build --file - . <<'DOCKERFILE'
           FROM python:3.12.12-slim-trixie@sha256:f3fa41d74a768c2fce8016b98c191ae8c1bacd8f1152870a3f9f87d350920b7c
@@ -76,7 +77,9 @@ jobs:
               done; \
               for path in .git .env .env.example .env.compose-ci-sentinel docs/case docs/agents data private \
                   docs/synthetic/nrt-89/inputs docs/synthetic/nrt-89/expectations \
-                  holdout evaluation models backend/ml_module backend/tests frontend/node_modules \
+                  holdout evaluation models secrets pgdata \
+                  backend/src/doccheck_backend/compose-ci-sentinel.key \
+                  backend/ml_module backend/tests frontend/node_modules \
                   frontend/tests frontend/src/compose-ci-sentinel.safetensors; do \
                 test ! -e "$path" || { echo "Unexpected in context: $path"; exit 1; }; \
               done
@@ -91,6 +94,27 @@ jobs:
           test "$(docker inspect --format '{{.State.ExitCode}}' "$(docker compose ps --all -q migrate)")" = 0
           test "$(docker inspect --format '{{.State.Health.Status}}' "$(docker compose ps -q db)")" = healthy
           test "$(docker inspect --format '{{.State.Health.Status}}' "$(docker compose ps -q api)")" = healthy
+      - name: Check built runtime filesystems for synthetic sentinels
+        shell: bash
+        run: |
+          listing=$(mktemp)
+          container=
+          cleanup() {
+            if [ -n "$container" ]; then docker rm "$container" >/dev/null; fi
+            rm -f "$listing"
+          }
+          trap cleanup EXIT
+          for service in api frontend; do
+            image=$(docker inspect --format '{{.Image}}' "$(docker compose ps -q "$service")")
+            container=$(docker create "$image")
+            docker export "$container" | tar -tf - > "$listing"
+            if grep -Eq '(^|/)(compose-ci-sentinel(\.safetensors|\.key)?|\.env\.compose-ci-sentinel)$' "$listing"; then
+              printf '%s\n' "Unexpected synthetic sentinel in $service runtime image" >&2
+              exit 1
+            fi
+            docker rm "$container" >/dev/null
+            container=
+          done
       - name: Reject a document worker with no configured processor
         run: |
           if DOCCHECK_DOCUMENT_PROCESSOR= docker compose --profile document-worker run --rm --no-deps document-worker; then
