@@ -241,6 +241,72 @@ def test_component_scope_must_match_normalized_evidence(
         CheckJob.model_validate(payload)
 
 
+@pytest.mark.parametrize(
+    ("index", "alternative"),
+    [(4, "OTHER"), (5, {"start": "2025-01-01", "end": None}), (6, "DEMO-B")],
+)
+def test_component_scope_rejects_unreferenced_conflicting_readings(
+    payload: dict, index: int, alternative: object
+) -> None:
+    result = payload["result"]
+    row = result["rows"][0]
+    observed = result["evidence"][index]
+    result["evidence"].append(
+        {**observed, "id": "scope-alternative", "normalized_value": alternative}
+    )
+    with pytest.raises(ValidationError, match="component scope evidence must agree"):
+        CheckJob.model_validate(payload)
+    row["calculation"]["components"] = []
+    row.update(
+        status="unverified",
+        observed_evidence_sum=None,
+        expected_value=None,
+        delta=None,
+        root_issue_id=None,
+    )
+    row["completeness"].update(state="incomplete", evidence_refs=[])
+    row["reasons"] = [
+        {
+            "code": "conflicting_readings",
+            "message": "Неоднозначная область операции",
+            "evidence_refs": [observed["id"], "scope-alternative"],
+        }
+    ]
+    result["summary"]["counts"].update(discrepancy=0, unverified=2)
+    assert CheckJob.model_validate(payload).result.rows[0].status == "unverified"
+
+
+def test_period_readings_can_omit_different_bounds_if_compatible(payload: dict) -> None:
+    evidence = payload["result"]["evidence"]
+    observed = evidence[5]
+    observed["normalized_value"]["end"] = None
+    alternative = {
+        **observed,
+        "id": "period-end-only",
+        "normalized_value": {"start": None, "end": "2025-02-28"},
+    }
+    evidence.append(alternative)
+    assert CheckJob.model_validate(payload).result is not None
+    alternative["normalized_value"]["end"] = "2025-01-31"
+    with pytest.raises(ValidationError, match="component scope evidence must agree"):
+        CheckJob.model_validate(payload)
+
+
+def test_period_validation_uses_known_bounds_from_other_readings(payload: dict) -> None:
+    evidence = payload["result"]["evidence"]
+    observed = evidence[5]
+    observed["normalized_value"] = {"start": None, "end": "2025-03-31"}
+    evidence.append(
+        {
+            **observed,
+            "id": "period-both-bounds",
+            "normalized_value": {"start": "2025-03-01", "end": "2025-03-31"},
+        }
+    )
+    with pytest.raises(ValidationError, match="lies outside the selected period"):
+        CheckJob.model_validate(payload)
+
+
 def test_unreadable_file_requires_a_recorded_error(payload: dict) -> None:
     payload["result"]["documents"][3]["errors"] = []
     with pytest.raises(ValidationError, match="requires a file error"):

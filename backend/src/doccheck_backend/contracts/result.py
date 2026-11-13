@@ -24,8 +24,9 @@ _RUB_SCHEMA = {"type": "string", "pattern": _RUB_PATTERN.pattern}
 _DECIMAL_FIELDS = ("reported_value", "expected_value", "observed_evidence_sum", "delta")
 _COMPLETED_JOB_STATES = ("completed", "completed_with_issues")
 PageLine = tuple[str, int, int]
-ReadingKind = Literal["numeric", "document_identity"]
-Reading = tuple[str | None, Decimal | str]
+ReadingKind = Literal["numeric", "contract", "period", "article", "document_identity"]
+DateBounds = tuple[str | None, str | None]
+Reading = tuple[str | None, Decimal | str | DateBounds]
 Digest = Annotated[
     str, StringConstraints(strict=True, pattern=re.compile(r"^[0-9a-f]{64}(?![\s\S])"))
 ]
@@ -192,6 +193,15 @@ class Evidence(ContractModel):
         return self
 
 
+def _reading(item: Evidence) -> tuple[ReadingKind, Reading]:
+    value = item.normalized_value
+    if isinstance(value, Period):
+        return "period", (None, (value.start, value.end))
+    if item.kind in ("amount", "reported_value"):
+        return "numeric", (item.unit, Decimal(value))
+    return item.kind, (None, value)
+
+
 class _EvidenceIndex:
     def __init__(self, evidence: list[Evidence]) -> None:
         parents = {item.id: item.id for item in evidence}
@@ -223,14 +233,8 @@ class _EvidenceIndex:
 
         self.readings: dict[tuple[ReadingKind, str], set[Reading]] = defaultdict(set)
         for item in evidence:
-            value = item.normalized_value
-            if not isinstance(value, str):
-                continue
-            group = self.groups[item.id]
-            if item.kind in ("amount", "reported_value"):
-                self.readings["numeric", group].add((item.unit, Decimal(value)))
-            elif item.kind == "document_identity":
-                self.readings["document_identity", group].add((None, value))
+            kind, reading = _reading(item)
+            self.readings[kind, self.groups[item.id]].add(reading)
 
         self.line_readings: dict[tuple[ReadingKind, PageLine], set[Reading]] = defaultdict(set)
         self.line_only_readings: dict[tuple[ReadingKind, PageLine], set[Reading]] = defaultdict(set)
@@ -240,18 +244,28 @@ class _EvidenceIndex:
             for line in self.line_only[group]:
                 self.line_only_readings[kind, line].update(readings)
 
-    def agrees(self, evidence_id: str, kind: ReadingKind, reading: Reading) -> bool:
+    def values(self, evidence_id: str, kind: ReadingKind) -> set[Reading]:
         group = self.groups[evidence_id]
-        expected = {reading}
-        if self.readings[kind, group] != expected:
-            return False
+        values = self.readings[kind, group].copy()
         for line in self.lines[group]:
             readings = (
                 self.line_readings if line in self.line_only[group] else self.line_only_readings
             )
-            if readings.get((kind, line), expected) != expected:
-                return False
-        return True
+            values.update(readings.get((kind, line), ()))
+        return values
+
+    def period_bounds(self, evidence_id: str) -> DateBounds:
+        # An absent bound does not contradict an observed bound.
+        dates = [
+            value for _, value in self.values(evidence_id, "period") if isinstance(value, tuple)
+        ]
+        starts = {start for start, _ in dates if start is not None}
+        ends = {end for _, end in dates if end is not None}
+        start = next(iter(starts), None)
+        end = next(iter(ends), None)
+        if len(starts) > 1 or len(ends) > 1 or (start and end and start > end):
+            raise ValueError("component scope evidence must agree at its canonical address")
+        return start, end
 
 
 class Completeness(ContractModel):
@@ -580,9 +594,7 @@ class CheckResult(ContractModel):
         identities: dict[str, set[str]] = {}
         for item in identity:
             if isinstance(item.normalized_value, str):
-                if not addresses.agrees(
-                    item.id, "document_identity", (None, item.normalized_value)
-                ):
+                if len(addresses.values(item.id, "document_identity")) != 1:
                     raise ValueError(
                         "document identity evidence must agree at its canonical address"
                     )
@@ -598,6 +610,10 @@ class CheckResult(ContractModel):
         for item in scope_evidence:
             if documents[item.document_id].role != "support":
                 raise ValueError("the report alone cannot establish the scope of a component")
+        if any(len(addresses.values(item.id, "contract")) != 1 for item in contracts) or any(
+            len(addresses.values(item.id, "article")) != 1 for item in articles
+        ):
+            raise ValueError("component scope evidence must agree at its canonical address")
         separate_sources = {item.document_id for item in scope_evidence} - sources
         for source in separate_sources:
             common_identity &= identities.get(source, set())
@@ -606,10 +622,9 @@ class CheckResult(ContractModel):
         if any(item.normalized_value != self.scope.contract_number for item in contracts):
             raise ValueError("contract evidence contradicts the selected contract")
         for item in periods:
-            value = item.normalized_value
-            if isinstance(value, Period) and (
-                (value.start is not None and value.start > self.scope.period_end)
-                or (value.end is not None and value.end < self.scope.period_start)
+            start, end = addresses.period_bounds(item.id)
+            if (start is not None and start > self.scope.period_end) or (
+                end is not None and end < self.scope.period_start
             ):
                 raise ValueError("period evidence lies outside the selected period")
         if row.indicator_code is not None and any(
@@ -629,8 +644,8 @@ def _check_amount_readings(
     addresses: _EvidenceIndex,
     role: Literal["reported", "component"],
 ) -> None:
-    expected = (unit, Decimal(amount))
-    if not evidence or any(not addresses.agrees(item.id, "numeric", expected) for item in evidence):
+    expected = {(unit, Decimal(amount))}
+    if not evidence or any(addresses.values(item.id, "numeric") != expected for item in evidence):
         raise ValueError(f"{role} evidence must agree on value and unit at its canonical address")
 
 
