@@ -125,3 +125,22 @@ def test_write_failure_does_not_queue_a_run(database_url, tmp_path, monkeypatch)
         assert "synthetic disk failure" not in failed.text
         assert list(root.iterdir()) == []
         assert submit(client, key).status_code == 202
+
+
+def test_damaged_ooxml_is_kept_for_file_level_processing():
+    from io import BytesIO
+    from zipfile import ZipFile
+
+    from starlette.datastructures import UploadFile
+
+    source = BytesIO()
+    with ZipFile(source, "w") as archive:
+        archive.writestr("word/тест.xml", "<document />")
+    damaged = bytearray(source.getvalue())
+    central = damaged.index(b"PK\x01\x02")
+    filename_start = central + 46
+    damaged[filename_start + len("word/")] = 0xFF
+    with BytesIO(damaged) as file:
+        upload = UploadFile(file, size=len(damaged), filename="damaged.docx")
+        assert uploads._file_format(upload) == "docx"
+        assert file.tell() == 0

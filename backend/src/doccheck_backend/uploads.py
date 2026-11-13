@@ -62,7 +62,7 @@ def _file_format(upload: UploadFile) -> str:
             with ZipFile(upload.file) as archive:
                 if required_member in archive.namelist():
                     return suffix
-        except BadZipFile:
+        except (BadZipFile, UnicodeDecodeError):
             # A damaged OOXML file may still belong to the declared format.
             return suffix
         finally:
@@ -122,6 +122,9 @@ def _save_file(upload: UploadFile, path: Path) -> str:
 
 
 def _sync_directory(path: Path) -> None:
+    if os.name == "nt":
+        # Windows does not expose POSIX directory fsync. File contents are still flushed.
+        return
     fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
     try:
         os.fsync(fd)
