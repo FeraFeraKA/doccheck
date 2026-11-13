@@ -1,0 +1,202 @@
+"""Write the saved reconciliation result as an Excel report."""
+
+import re
+from io import BytesIO
+
+from openpyxl import Workbook
+from openpyxl.cell import Cell
+from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.utils import get_column_letter
+from openpyxl.worksheet.worksheet import Worksheet
+
+from doccheck_backend.contracts import CheckResult
+from doccheck_backend.contracts.locators import Locator, PageLocator, ParagraphLocator, SheetLocator
+from doccheck_backend.contracts.result import ResultRow
+
+XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+_NON_XML_TEXT = re.compile(r"[^\t\n\r\u0020-\ud7ff\ue000-\ufffd\U00010000-\U0010ffff]")
+_STATUS_LABELS = {
+    "verified": "Подтверждён",
+    "discrepancy": "Расхождение",
+    "unverified": "Не проверен",
+}
+
+
+class XlsxReportLimitError(ValueError):
+    """A stored value cannot be represented without truncation in XLSX."""
+
+
+def _append(sheet: Worksheet, *values: str | int | None) -> None:
+    row = []
+    for value in values:
+        if isinstance(value, str):
+            text = _NON_XML_TEXT.sub(lambda match: ascii(match[0])[1:-1], value)
+            if len(text.encode("utf-16-le")) // 2 > 32_767:
+                raise XlsxReportLimitError("cell text exceeds Excel limit")
+            cell = Cell(sheet, value=text)
+            cell.data_type = "s"
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+            row.append(cell)
+        else:
+            row.append(value)
+    sheet.append(row)
+
+
+def _finish(sheet: Worksheet, header: int, widths: tuple[int, ...]) -> None:
+    for column, width in enumerate(widths, 1):
+        sheet.column_dimensions[get_column_letter(column)].width = width
+    for cell in sheet[header][: len(widths)]:
+        cell.fill = PatternFill(patternType="solid", fgColor="1C4649")
+        cell.font = Font(bold=True, color="FFFFFF")
+    last_column = get_column_letter(len(widths))
+    sheet.freeze_panes = f"A{header + 1}"
+    sheet.auto_filter.ref = f"A{header}:{last_column}{sheet.max_row}"
+
+
+def _location(locator: Locator) -> str:
+    if isinstance(locator, SheetLocator):
+        return f"Лист «{locator.sheet}», {locator.range}"
+    if isinstance(locator, ParagraphLocator):
+        return f"Абзац {locator.paragraph}"
+    if isinstance(locator, PageLocator):
+        parts = [f"Страница {locator.page}"]
+        if locator.line is not None:
+            parts.append(f"строка {locator.line}")
+        if locator.table_row is not None:
+            parts.append(f"строка таблицы {locator.table_row}, столбец {locator.table_column}")
+        if locator.fragment_id is not None:
+            parts.append(f"фрагмент {locator.fragment_id}")
+        if locator.bbox is not None:
+            parts.append("координаты " + ", ".join(map(str, locator.bbox)))
+        return "; ".join(parts)
+    return f"Таблица {locator.table}, строка {locator.row}, ячейка {locator.cell}"
+
+
+def _source_ids(row: ResultRow) -> str | None:
+    references = list(row.completeness.evidence_refs)
+    for component in row.calculation.components:
+        references.extend(component.amount_refs)
+        references.extend(component.contract_refs)
+        references.extend(component.period_refs)
+        references.extend(component.article_refs)
+        references.extend(component.identity_refs)
+    for reason in row.reasons:
+        references.extend(reason.evidence_refs)
+    return "\n".join(dict.fromkeys(references)) or None
+
+
+def export_check_result(result: CheckResult) -> bytes:
+    summary = result.summary
+    if (
+        max(
+            len(result.rows) + len(summary.primary_issues) + 11,
+            len(result.evidence) + 1,
+            len(result.documents) + 1,
+        )
+        > 1_048_576
+    ):
+        raise XlsxReportLimitError("too many worksheet rows")
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Сверка"
+    documents = {document.id: document for document in result.documents}
+    scope = result.scope
+    _append(sheet, "Проверка", result.run_id)
+    _append(sheet, "Тип данных", "Синтетические" if result.synthetic else "Рабочие")
+    _append(sheet, "Договор", scope.contract_number)
+    _append(sheet, "Период", scope.period_start, scope.period_end)
+    _append(sheet, "КФЗ", documents[scope.report_document_id].name, scope.report_document_id)
+    if scope.report_row_locator is not None:
+        _append(sheet, "Адрес в КФЗ", _location(scope.report_row_locator))
+    _append(sheet, "Подтверждено", summary.counts.verified)
+    _append(sheet, "Расхождения", summary.counts.discrepancy)
+    _append(sheet, "Не проверено", summary.counts.unverified)
+    _append(sheet, "Заключение", summary.conclusion)
+    for issue in summary.primary_issues:
+        _append(sheet, "Первичная ошибка", issue.id, issue.message)
+    _append(
+        sheet,
+        "ID строки",
+        "Показатель",
+        "Код",
+        "Единица",
+        "В КФЗ",
+        "Ожидаемое значение",
+        "Сумма по доступным источникам",
+        "Дельта",
+        "Статус",
+        "Полнота",
+        "Основание полноты",
+        "Причины",
+        "Политика",
+        "Формула",
+        "ID источников КФЗ",
+        "ID связанных источников",
+        "ID первичной ошибки",
+    )
+    headers = sheet.max_row
+    for row in result.rows:
+        _append(
+            sheet,
+            row.id,
+            row.label,
+            row.indicator_code,
+            row.unit,
+            row.reported_value,
+            row.expected_value,
+            row.observed_evidence_sum,
+            row.delta,
+            _STATUS_LABELS[row.status],
+            row.completeness.state,
+            row.completeness.reason,
+            "\n".join(reason.message for reason in row.reasons) or None,
+            row.calculation.policy_id,
+            row.calculation.formula,
+            "\n".join(row.reported_evidence_refs) or None,
+            _source_ids(row),
+            row.root_issue_id,
+        )
+    _finish(sheet, headers, (24, 42, 16, 12, 24, 24, 29, 22, 20, 17, 44, 44, 20, 40, 24, 28, 24))
+
+    sources = workbook.create_sheet("Источники")
+    _append(sources, "ID источника", "ID документа", "Документ", "Адрес", "Тип свидетельства")
+    for evidence in result.evidence:
+        _append(
+            sources,
+            evidence.id,
+            evidence.document_id,
+            documents[evidence.document_id].name,
+            _location(evidence.locator),
+            evidence.kind,
+        )
+    _finish(sources, 1, (29, 32, 42, 61, 24))
+
+    files = workbook.create_sheet("Документы")
+    _append(
+        files,
+        "ID документа",
+        "Документ",
+        "Роль",
+        "Состояние",
+        "Решение",
+        "Основание",
+        "Ошибки файла",
+        "ID исходного документа",
+    )
+    for document in result.documents:
+        _append(
+            files,
+            document.id,
+            document.name,
+            "КФЗ" if document.role == "report" else "Первичный",
+            document.parse_status,
+            document.decision.state,
+            document.decision.message,
+            "\n".join(f"{error.code}: {error.message}" for error in document.errors) or None,
+            document.duplicate_of,
+        )
+    _finish(files, 1, (32, 42, 16, 17, 17, 45, 45, 32))
+
+    with BytesIO() as output:
+        workbook.save(output)
+        return output.getvalue()

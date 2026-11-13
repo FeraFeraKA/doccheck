@@ -7,7 +7,7 @@ from uuid import UUID
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.concurrency import run_in_threadpool
@@ -21,6 +21,7 @@ from doccheck_backend.contracts.result import Evidence
 from doccheck_backend.database import create_database_engine
 from doccheck_backend.jobs import create_job, get_job
 from doccheck_backend.models import SyntheticJob
+from doccheck_backend.run_xlsx import XLSX_MEDIA_TYPE, XlsxReportLimitError, export_check_result
 from doccheck_backend.schemas import HealthResponse, JobResponse
 from doccheck_backend.uploads import (
     MAX_DOCUMENTS,
@@ -189,6 +190,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @application.get("/api/v0/runs/{run_id}/findings")
     def get_findings(request: Request, run_id: str) -> CheckResult:
         return run_reads.get_run_findings(request.app.state.engine, run_id)
+
+    @application.get(
+        "/api/v0/runs/{run_id}/exports/xlsx",
+        response_class=Response,
+        responses={200: {"content": {XLSX_MEDIA_TYPE: {}}}},
+    )
+    def export_run(request: Request, run_id: str) -> Response:
+        result = run_reads.get_run_findings(request.app.state.engine, run_id)
+        try:
+            payload = export_check_result(result)
+        except XlsxReportLimitError:
+            raise run_reads.RunReadError(
+                503, "service_unavailable", "Результат превышает пределы формата XLSX"
+            ) from None
+        filename = f"doccheck-{UUID(result.run_id)}.xlsx"
+        return Response(
+            payload,
+            media_type=XLSX_MEDIA_TYPE,
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Cache-Control": "no-store",
+            },
+        )
 
     @application.get(
         "/api/v0/runs/{run_id}/documents/{document_id}",
