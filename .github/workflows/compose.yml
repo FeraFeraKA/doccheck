@@ -53,6 +53,11 @@ jobs:
         run: |
           docker compose version
           docker compose config --quiet
+          if docker compose config --services | grep -qx document-worker; then
+            echo 'Document worker must be disabled by default' >&2
+            exit 1
+          fi
+          docker compose --profile document-worker config --services | grep -qx document-worker
           mkdir -p data private holdout evaluation models
           for directory in data private holdout evaluation models; do
             printf '%s\n' 'synthetic build-context sentinel' > "$directory/compose-ci-sentinel"
@@ -86,6 +91,14 @@ jobs:
           test "$(docker inspect --format '{{.State.ExitCode}}' "$(docker compose ps --all -q migrate)")" = 0
           test "$(docker inspect --format '{{.State.Health.Status}}' "$(docker compose ps -q db)")" = healthy
           test "$(docker inspect --format '{{.State.Health.Status}}' "$(docker compose ps -q api)")" = healthy
+      - name: Reject a document worker with no configured processor
+        run: |
+          if DOCCHECK_DOCUMENT_PROCESSOR= docker compose --profile document-worker run --rm --no-deps document-worker; then
+            echo 'Document worker accepted an empty processor' >&2
+            exit 1
+          else
+            test "$?" = 2
+          fi
       - name: Run browser scenario against the Compose stack
         working-directory: frontend
         run: |
