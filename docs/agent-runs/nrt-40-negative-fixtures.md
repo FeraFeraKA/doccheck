@@ -2,13 +2,14 @@
 
 [Задача NRT-40](https://linear.app/andreiakimov/issue/NRT-40/negativnye-fajly-i-scenarii-nepolnogo-komplekta) прочитана 14 ноября 2026 года. [NRT-71 и PR #35](https://github.com/VCyberPunk2077/doccheck/pull/35) описывают независимый аудит сценариев A01–A16. Здесь добавлены технические фикстуры для отдельных негативных входов.
 
-Из корня репозитория с Python 3.11+ и установленными `openpyxl==3.1.5`,
-`pypdf==6.21.4` и `Pillow>=11,<14`. Эти пакеты уже используются проектом
-или генератором NRT-89.
+Из корня репозитория с Python 3.11+. Генерация использует `openpyxl==3.1.5`
+с `et-xmlfile==2.0.0` и `Pillow==13.0.0`. Для тестов нужен также
+`pypdf==6.21.4`. Команда с `uv` создаёт временное окружение с зависимостями
+генератора.
 
 ```sh
-python research/negative-fixtures/generate.py --output data/nrt-40-qa
-python -m unittest discover -s research/negative-fixtures -v
+uv run --python 3.12 --no-project --with openpyxl==3.1.5 --with et-xmlfile==2.0.0 --with pillow==13.0.0 python research/negative-fixtures/generate.py --output data/nrt-40-qa
+uv run --python 3.12 --no-project --with openpyxl==3.1.5 --with et-xmlfile==2.0.0 --with pillow==13.0.0 --with pypdf==6.21.4 python -m unittest discover -s research/negative-fixtures -v
 ```
 
 Выберите новую директорию. В `inputs/` будут пять отдельных файлов для запуска по одному. `manifest.json` хранится рядом и содержит исходный путь, SHA-256 до и после, затронутую строку синтетической КФЗ, ожидаемый технический исход и влияние на полноту. Генератор берёт только перечисленные файлы из публичного NRT-89 и проверяет их по исходному манифесту. При генерации XLSX хеш конкретного результата фиксируется в манифесте, поскольку метаданные ZIP могут отличаться между запусками.
