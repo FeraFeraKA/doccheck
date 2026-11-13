@@ -1,6 +1,7 @@
 import os
 import subprocess
 from datetime import UTC, datetime, timedelta
+from urllib.parse import quote
 from uuid import UUID, uuid4
 
 import pytest
@@ -11,7 +12,7 @@ from test_run_worker import _synthetic_result
 
 from doccheck_backend.api import create_app
 from doccheck_backend.config import Settings
-from doccheck_backend.contracts import CheckResult
+from doccheck_backend.contracts import CheckJob, CheckResult
 from doccheck_backend.models import Run
 from doccheck_backend.run_worker import StoredRun
 
@@ -43,12 +44,12 @@ def _manifest(client, run_id):
         return StoredRun(run.id, run.scope, run.documents)
 
 
-def _complete(client, run_id) -> CheckResult:
+def _complete(client, run_id, *, evidence_id: str = "amount-7") -> CheckResult:
     run = _manifest(client, run_id)
     result = _synthetic_result(run, partial=True).model_dump(mode="json")
     result["evidence"] = [
         {
-            "id": "amount-7",
+            "id": evidence_id,
             "document_id": run.documents[0]["id"],
             "kind": "reported_value",
             "raw_value": "12 345,67",
@@ -58,15 +59,23 @@ def _complete(client, run_id) -> CheckResult:
             "locator": {"kind": "page", "page": 1, "line": 3, "fragment_id": "demo-7"},
         }
     ]
-    validated = CheckResult.model_validate(result)
+    job = CheckJob.model_validate(
+        {
+            "run_id": run_id,
+            "status": "completed_with_issues",
+            "result": result,
+            "error": {"code": "processing_completed_with_issues", "message": "Тестовая причина"},
+        }
+    )
+    assert job.result is not None and job.error is not None
     _update_run(
         client,
         run_id,
-        status="completed_with_issues",
-        result=validated.model_dump(mode="json"),
-        error={"code": "processing_completed_with_issues", "message": "Тестовая причина"},
+        status=job.status,
+        result=job.result.model_dump(mode="json"),
+        error=job.error.model_dump(mode="json"),
     )
-    return validated
+    return job.result
 
 
 def test_history_cursor_orders_ties_and_survives_inserts(client):
@@ -217,6 +226,82 @@ def test_download_rejects_directory_redirect_to_another_package(client, tmp_path
         run_directory.symlink_to(outside, target_is_directory=True)
     response = client.get(f"{RUNS}/{run_id}/documents/{document_id}")
     assert (response.status_code, response.json()["code"]) == (404, "document_not_found")
+
+
+@pytest.mark.parametrize("replace", [False, True])
+def test_changed_original_is_unavailable_for_document_and_fragments(client, tmp_path, replace):
+    run_id = _create(client)
+    report = _manifest(client, run_id).documents[0]["id"]
+    _complete(client, run_id)
+    base_url = f"{RUNS}/{run_id}/documents/{report}"
+    endpoints = (
+        (base_url, {}),
+        (f"{base_url}/fragments/amount-7", {}),
+        (f"{base_url}/fragments", {"evidence_id": "amount-7"}),
+    )
+    for url, params in endpoints:
+        assert client.get(url, params=params).status_code == 200
+
+    original = tmp_path / run_id / report
+    original_bytes = original.read_bytes()
+    changed = original_bytes[:-1] + b"!"
+    if replace:
+        replacement = original.with_suffix(".temporary")
+        replacement.write_bytes(changed)
+        replacement.replace(original)
+    else:
+        original.write_bytes(changed)
+
+    for url, params in endpoints:
+        response = client.get(url, params=params)
+        assert (response.status_code, response.json()["code"]) == (404, "document_not_found")
+    assert client.get(f"{RUNS}/{run_id}/findings").status_code == 200
+
+
+def test_evidence_ids_round_trip_through_both_fragment_routes(client):
+    run_id = _create(client)
+    other_id = _create(client)
+    report, support = [document["id"] for document in _manifest(client, run_id).documents]
+    foreign = _manifest(client, other_id).documents[0]["id"]
+    run_url = f"{RUNS}/{run_id}"
+    fragments = f"{run_url}/documents/{report}/fragments"
+    cases = (
+        ("строка-1", True),
+        ("formula.amount", True),
+        ("сумма + 100%?#", True),
+        # TestClient decodes the ASGI path twice. The literal percent pair is
+        # verified through the query route here and through Uvicorn separately.
+        ("prefix%2Fsuffix", False),
+        ("section/subsection", False),
+        ("section\\subsection", False),
+        (".", False),
+        ("..", False),
+    )
+    pending = client.get(fragments, params={"evidence_id": cases[0][0]})
+    assert (pending.status_code, pending.json()["code"]) == (409, "result_pending")
+    for evidence_id, common_path in cases:
+        _complete(client, run_id, evidence_id=evidence_id)
+        saved = client.get(f"{run_url}/findings").json()["evidence"][0]
+        assert saved["id"] == evidence_id
+        query = client.get(fragments, params={"evidence_id": evidence_id})
+        assert query.status_code == 200
+        assert query.json() == saved
+        if common_path:
+            path = client.get(f"{fragments}/{quote(evidence_id, safe='')}")
+            assert path.status_code == 200
+            assert path.json() == saved
+
+    for document_id, code in ((support, "fragment_not_found"), (foreign, "document_not_found")):
+        response = client.get(
+            f"{run_url}/documents/{document_id}/fragments", params={"evidence_id": ".."}
+        )
+        assert (response.status_code, response.json()["code"]) == (404, code)
+
+    for params in ({}, {"evidence_id": ""}):
+        response = client.get(fragments, params=params)
+        assert response.status_code == 422
+        assert response.json()["code"] == "invalid_input"
+        assert response.json()["field"] == "evidence_id"
 
 
 def test_missing_runs_and_corrupt_result_use_contract_errors(client):

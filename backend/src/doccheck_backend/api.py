@@ -73,7 +73,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @application.exception_handler(RequestValidationError)
     async def request_error(request: Request, exc: RequestValidationError) -> JSONResponse:
-        if request.method == "GET" and request.scope["path"] == "/api/v0/runs":
+        path = request.scope["path"]
+        if (
+            request.method == "GET"
+            and path.startswith("/api/v0/runs")
+            and (path == "/api/v0/runs" or path.endswith("/fragments"))
+        ):
             field = str(exc.errors()[0]["loc"][-1])
             return await run_read_error(
                 request,
@@ -187,6 +192,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @application.get("/api/v0/runs/{run_id}/documents/{document_id}/fragments/{evidence_id}")
     def get_fragment(request: Request, run_id: str, document_id: str, evidence_id: str) -> Evidence:
+        return run_reads.get_run_fragment(
+            request.app.state.engine,
+            request.app.state.upload_root,
+            run_id,
+            document_id,
+            evidence_id,
+            path_segment=True,
+        )
+
+    @application.get("/api/v0/runs/{run_id}/documents/{document_id}/fragments")
+    def get_fragment_by_id(
+        request: Request,
+        run_id: str,
+        document_id: str,
+        evidence_id: Annotated[str, Query(min_length=1)],
+    ) -> Evidence:
         return run_reads.get_run_fragment(
             request.app.state.engine,
             request.app.state.upload_root,

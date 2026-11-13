@@ -4,6 +4,7 @@ import json
 import re
 from base64 import b64decode, urlsafe_b64encode
 from datetime import UTC, datetime
+from hashlib import file_digest
 from os import fstat, stat_result
 from os.path import samestat
 from pathlib import Path
@@ -149,6 +150,10 @@ def _document_not_found() -> RunReadError:
     return RunReadError(404, "document_not_found", "Документ проверки недоступен")
 
 
+def _fragment_not_found() -> RunReadError:
+    return RunReadError(404, "fragment_not_found", "Фрагмент документа не найден")
+
+
 def _stored_document(run: Run, document_id: str) -> dict[str, object]:
     if _STORED_FILE_ID.fullmatch(document_id):
         for document in run.documents:
@@ -173,14 +178,10 @@ def _document_path(root: Path, run_id: UUID, document_id: str) -> tuple[Path, st
     return path, info
 
 
-def get_run_document(
-    engine: Engine, root: Path, run_id: str, document_id: str
-) -> tuple[BinaryIO, int, str]:
-    run = _load_run(engine, run_id)
-    document = _stored_document(run, document_id)
-    path, expected = _document_path(root, run.id, document_id)
-    name = str(document["name"]).replace("\\", "/").rsplit("/", 1)[-1]
-    safe_name = "".join(char for char in name if char.isprintable()).strip(" .") or document_id
+def _open_original(
+    root: Path, run_id: UUID, document_id: str, document: dict[str, object]
+) -> tuple[BinaryIO, int]:
+    path, expected = _document_path(root, run_id, document_id)
     try:
         stream = path.open("rb")
     except (FileNotFoundError, NotADirectoryError, PermissionError, IsADirectoryError):
@@ -190,27 +191,55 @@ def get_run_document(
     try:
         # Stream the opened file, never reopen a path after validating it.
         actual = fstat(stream.fileno())
-        _, current = _document_path(root, run.id, document_id)
+        _, current = _document_path(root, run_id, document_id)
         if not samestat(expected, actual) or not samestat(current, actual):
             raise _document_not_found()
+        if actual.st_size != document["size"]:
+            raise _document_not_found()
+        if file_digest(stream, "sha256").hexdigest() != document["sha256"]:
+            raise _document_not_found()
+        after = fstat(stream.fileno())
+        if after.st_size != actual.st_size or after.st_mtime_ns != actual.st_mtime_ns:
+            raise _document_not_found()
+        stream.seek(0)
     except OSError:
         stream.close()
         raise unavailable() from None
     except RunReadError:
         stream.close()
         raise
-    return stream, actual.st_size, safe_name
+    return stream, actual.st_size
+
+
+def get_run_document(
+    engine: Engine, root: Path, run_id: str, document_id: str
+) -> tuple[BinaryIO, int, str]:
+    run = _load_run(engine, run_id)
+    document = _stored_document(run, document_id)
+    name = str(document["name"]).replace("\\", "/").rsplit("/", 1)[-1]
+    safe_name = "".join(char for char in name if char.isprintable()).strip(" .") or document_id
+    stream, size = _open_original(root, run.id, document_id, document)
+    return stream, size, safe_name
 
 
 def get_run_fragment(
-    engine: Engine, root: Path, run_id: str, document_id: str, evidence_id: str
+    engine: Engine,
+    root: Path,
+    run_id: str,
+    document_id: str,
+    evidence_id: str,
+    *,
+    path_segment: bool = False,
 ) -> Evidence:
     run = _load_run(engine, run_id, with_result=True)
-    _stored_document(run, document_id)
+    document = _stored_document(run, document_id)
     result = _stored_result(run)
-    if _URL_ID.fullmatch(evidence_id):
-        for evidence in result.evidence:
-            if evidence.id == evidence_id and evidence.document_id == document_id:
-                _document_path(root, run.id, document_id)
-                return evidence
-    raise RunReadError(404, "fragment_not_found", "Фрагмент документа не найден")
+    # Intermediaries can normalize separators and dot segments in request paths.
+    if path_segment and ("/" in evidence_id or "\\" in evidence_id or evidence_id in (".", "..")):
+        raise _fragment_not_found()
+    for evidence in result.evidence:
+        if evidence.id == evidence_id and evidence.document_id == document_id:
+            stream, _ = _open_original(root, run.id, document_id, document)
+            stream.close()
+            return evidence
+    raise _fragment_not_found()
