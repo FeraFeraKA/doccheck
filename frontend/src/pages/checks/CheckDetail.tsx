@@ -8,6 +8,7 @@ import { FindingsHttpError, loadFindings } from './loadFindings';
 import { ResultHeader } from './ResultHeader';
 import type { CheckView } from './ResultHeader';
 import { ResultSummary, resultHeadline, resultTone } from './ResultSummary';
+import { ResultTable } from './ResultTable';
 import { formatDecimal, formatLocation, statusLabels } from './reviewResult';
 import type { ReviewResult } from './reviewResult';
 import { useCheckData } from './useCheckData';
@@ -161,31 +162,60 @@ function ResultContent({ id, view, result, run, synthetic, stored }: ResultConte
   );
 }
 
+function resultRowEvidenceIds(
+  row: ReviewResult['rows'][number] | undefined,
+  issue: ReviewResult['summary']['primary_issues'][number] | undefined,
+): string[] {
+  if (!row) return [];
+  return [
+    ...row.reported_evidence_refs,
+    ...row.calculation?.components.flatMap((component) =>
+      componentEvidenceFields.flatMap(([field]) => component[field] ?? []),
+    ) ?? [],
+    ...row.reasons.flatMap((reason) => reason.evidence_refs),
+    ...row.completeness.evidence_refs,
+    ...issue?.evidence_refs ?? [],
+  ];
+}
+
 function Reconciliation({ result, storedRunId }: { result: ReviewResult; storedRunId?: string }) {
   const { rows, evidence, documents, summary } = result;
   const [filter, setFilter] = useState('all');
   const [query, setQuery] = useState('');
   const [selectedId, setSelectedId] = useState(() => rows.find(({ status }) => status === 'discrepancy')?.id);
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [evidenceId, setEvidenceId] = useState<string>();
   const [openSourceId, setOpenSourceId] = useState<string>();
   const tableScroll = useRef<HTMLDivElement>(null);
   const selectedRow = useRef<HTMLTableRowElement>(null);
-  const pendingIssueScroll = useRef<string>(undefined);
+  const pendingIssueScroll = useRef<{ id: string; focus: boolean }>(undefined);
   const discrepancies = rows.filter(({ status }) => status === 'discrepancy');
+  const documentsById = new Map(documents.map((item) => [item.id, item]));
+  const allEvidenceById = new Map(evidence.map((item) => [item.id, item]));
+  const issuesById = new Map(summary.primary_issues.map((issue) => [issue.id, issue]));
   const search = query.trim().toLocaleLowerCase('ru');
-  const visible = rows.filter(({ label, status }) =>
-    (filter === 'all' || status === filter) && label.toLocaleLowerCase('ru').includes(search),
-  );
+  const visible = rows.filter((item) => {
+    if (filter !== 'all' && item.status !== filter) return false;
+    if (!search || item.label.toLocaleLowerCase('ru').includes(search)) return true;
+    const issue = item.root_issue_id === null ? undefined : issuesById.get(item.root_issue_id);
+    return resultRowEvidenceIds(item, issue).some((id) => {
+      const evidenceItem = allEvidenceById.get(id);
+      const name = evidenceItem && documentsById.get(evidenceItem.document_id)?.name;
+      return name?.toLocaleLowerCase('ru').includes(search);
+    });
+  });
   const row = visible.find(({ id }) => id === selectedId) ?? visible[0];
   const issueIndex = discrepancies.findIndex(({ id }) => id === row?.id);
 
   useLayoutEffect(() => {
-    if (pendingIssueScroll.current === undefined || pendingIssueScroll.current !== selectedId) return;
+    const target = pendingIssueScroll.current;
+    if (!target || target.id !== selectedId) return;
     pendingIssueScroll.current = undefined;
     const container = tableScroll.current;
     const selected = selectedRow.current;
     if (!container || !selected) return;
 
+    if (target.focus) selected.querySelector<HTMLButtonElement>('button')?.focus({ preventScroll: true });
     const rowBounds = selected.getBoundingClientRect();
     const containerBounds = container.getBoundingClientRect();
     const headerHeight = selected.closest('table')?.tHead?.offsetHeight ?? 0;
@@ -207,11 +237,22 @@ function Reconciliation({ result, storedRunId }: { result: ReviewResult; storedR
     setOpenSourceId(undefined);
   }
 
-  function moveIssue(direction: -1 | 1) {
+  function toggleRow(id: string) {
+    selectRow(id);
+    setExpanded((previous) => {
+      const next = new Set(previous);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function moveIssue(direction: -1 | 1, focus = false) {
     const next = issueIndex < 0 ? (direction === 1 ? 0 : discrepancies.length - 1) : issueIndex + direction;
     const issue = discrepancies[next];
     if (!issue) return;
-    pendingIssueScroll.current = issue.id;
+    pendingIssueScroll.current = { id: issue.id, focus };
+    setExpanded((previous) => new Set(previous).add(issue.id));
     setQuery('');
     setFilter('discrepancy');
     selectRow(issue.id);
@@ -226,18 +267,9 @@ function Reconciliation({ result, storedRunId }: { result: ReviewResult; storedR
   const issue = summary.primary_issues.find(({ id }) => id === row?.root_issue_id);
   const fileErrorIds = new Set(issue?.file_error_refs);
   const affectedFiles = documents.filter((item) => item.errors.some((error) => fileErrorIds.has(error.id)));
-  const refs = new Set([
-    ...row?.reported_evidence_refs ?? [],
-    ...row?.calculation?.components.flatMap((component) =>
-      componentEvidenceFields.flatMap(([field]) => component[field] ?? []),
-    ) ?? [],
-    ...row?.reasons.flatMap((reason) => reason.evidence_refs) ?? [],
-    ...row?.completeness.evidence_refs ?? [],
-    ...issue?.evidence_refs ?? [],
-  ]);
+  const refs = new Set(resultRowEvidenceIds(row, issue));
   const sources = evidence.filter(({ id }) => refs.has(id));
   const sourcesById = new Map(sources.map((item) => [item.id, item]));
-  const documentsById = new Map(documents.map((item) => [item.id, item]));
   const source = sources.find(({ id }) => id === evidenceId) ?? sources[0];
   const sourceIndex = sources.findIndex(({ id }) => id === source?.id);
   const document = source && documentsById.get(source.document_id);
@@ -248,7 +280,12 @@ function Reconciliation({ result, storedRunId }: { result: ReviewResult; storedR
   }
 
   return (
-    <section className="result-reconciliation" aria-label="Рабочее место сверки">
+    <section className="result-reconciliation" aria-label="Рабочее место сверки" onKeyDown={(event) => {
+      if (!event.altKey || (event.key !== 'ArrowDown' && event.key !== 'ArrowUp')) return;
+      if (event.target instanceof HTMLElement && event.target.closest('input, select, textarea, [contenteditable="true"]')) return;
+      event.preventDefault();
+      moveIssue(event.key === 'ArrowDown' ? 1 : -1, true);
+    }}>
       <div className="reconcile-commandbar">
         <div className="reconcile-command-title"><span className="reconcile-icon" aria-hidden="true">▤</span>
           <strong>Сверка с документами</strong>
@@ -258,55 +295,25 @@ function Reconciliation({ result, storedRunId }: { result: ReviewResult; storedR
           {discrepancies.length > 0 && <p aria-live="polite">
             Расхождение {issueIndex < 0 ? '—' : issueIndex + 1} из {discrepancies.length}
           </p>}
-          <button type="button" aria-label="Предыдущее расхождение" disabled={discrepancies.length === 0 || issueIndex === 0}
+          <button type="button" aria-label="Предыдущее расхождение" title="Предыдущее расхождение · Alt + ↑" aria-keyshortcuts="Alt+ArrowUp" disabled={discrepancies.length === 0 || issueIndex === 0}
             onClick={() => moveIssue(-1)}>↑</button>
-          <button type="button" aria-label="Следующее расхождение" disabled={discrepancies.length === 0 || issueIndex === discrepancies.length - 1}
+          <button type="button" aria-label="Следующее расхождение" title="Следующее расхождение · Alt + ↓" aria-keyshortcuts="Alt+ArrowDown" disabled={discrepancies.length === 0 || issueIndex === discrepancies.length - 1}
             onClick={() => moveIssue(1)}>↓</button>
         </div>
       </div>
       <div className="reconcile-panes">
-        <section className="reconcile-left">
-          <div className="reconcile-left-header"><div><h2>Показатели</h2>
-            <p>Выберите показатель, чтобы открыть источник</p></div>
-            <span className="record-count" aria-hidden="true">{visible.length}</span>
-          </div>
-          <div className="reconcile-filters" aria-label="Статус показателя">
-            {filters.map(([value, label, count]) => <button type="button" key={value}
-              aria-pressed={filter === value} onClick={() => { setFilter(value); selectRow(); }}>
-              {label} <span>{count}</span>
-            </button>)}
-          </div>
-          <div className="reconcile-search">
-            <span aria-hidden="true">⌕</span>
-            <input type="search" aria-label="Поиск показателя" placeholder="Поиск показателя…" value={query}
-              onChange={(event) => { setQuery(event.target.value); selectRow(); }} />
-          </div>
-          <div ref={tableScroll} className="reconcile-table-scroll" role="region" aria-label="Таблица показателей" tabIndex={0}>
-            <table className="reconcile-table">
-              <thead><tr><th scope="col">Показатель</th><th scope="col">Ед. изм.</th><th scope="col">КФЗ</th><th scope="col">По первичным документам</th><th scope="col">Δ</th><th scope="col">Статус</th></tr></thead>
-              <tbody>{visible.map((item) => (
-                <tr key={item.id} ref={item.id === row?.id ? selectedRow : undefined} data-selected={item.id === row?.id} data-status={item.status}>
-                  <td><button className="row-name-button" type="button" aria-pressed={item.id === row?.id} onClick={() => selectRow(item.id)}>
-                    <span className="row-status" data-status={item.status} aria-hidden="true">{item.status === 'verified' ? '✓' : item.status === 'discrepancy' ? '!' : '–'}</span>
-                    {item.label}
-                  </button></td>
-                  <td>{item.unit}</td>
-                  <td>{formatDecimal(item.reported_value)}</td>
-                  <td className="expected-cell">
-                    {formatDecimal(item.expected_value)}
-                    {item.expected_value === null && item.observed_evidence_sum != null && (
-                      <p className="checks-caption">Частичная сумма: {formatDecimal(item.observed_evidence_sum)} {item.unit}</p>
-                    )}
-                  </td>
-                  <td className="difference-cell">{formatDecimal(item.delta)}</td>
-                  <td><span className="checks-status" data-status={item.status}>{statusLabels[item.status]}</span></td>
-                </tr>
-              ))}</tbody>
-            </table>
-          </div>
-          {visible.length === 0 && <p className="reconcile-left-footer">Показатели не найдены.</p>}
-          <p className="reconcile-left-footer">— означает, что значение отсутствует.</p>
-        </section>
+        <ResultTable
+          rows={visible} total={rows.length} filters={filters} filter={filter} query={query}
+          selectedId={row?.id} selectedEvidenceId={source?.id} expanded={expanded}
+          tableScroll={tableScroll} selectedRow={selectedRow} evidenceFields={componentEvidenceFields}
+          evidenceById={allEvidenceById} documentsById={documentsById}
+          formatAddress={formatSourceChoice}
+          onFilterChange={(value) => { setFilter(value); selectRow(); }}
+          onQueryChange={(value) => { setQuery(value); selectRow(); }}
+          onReset={() => { setFilter('all'); setQuery(''); selectRow(); }}
+          onToggle={toggleRow}
+          onSelectSource={(rowId, id) => { setSelectedId(rowId); selectSource(id); }}
+        />
         <section className="evidence-panel">
           {row ? <div className="evidence-header">
             <div className="evidence-heading"><h2>{row.label}</h2><span className="checks-status" data-status={row.status}>{statusLabels[row.status]}</span></div>
