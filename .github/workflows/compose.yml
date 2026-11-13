@@ -1,0 +1,154 @@
+name: Compose checks
+
+on:
+  push:
+    paths:
+      - compose.yaml
+      - .dockerignore
+      - .env.example
+      - backend/**
+      - frontend/**
+      - .github/workflows/compose.yml
+  pull_request:
+    paths:
+      - compose.yaml
+      - .dockerignore
+      - .env.example
+      - backend/**
+      - frontend/**
+      - .github/workflows/compose.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compose:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    env:
+      COMPOSE_PROJECT_NAME: doccheck-compose-ci
+      DOCCHECK_DB_PASSWORD: synthetic-ci-password
+      DOCCHECK_PORT: '18080'
+      SYNTHETIC_DELAY_SECONDS: '3'
+      WORKER_POLL_SECONDS: '0.5'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: frontend/.node-version
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: frontend/package.json
+      - name: Install browser test dependencies
+        working-directory: frontend
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm exec playwright install --with-deps chromium --only-shell
+      - name: Validate configuration and prepare context sentinels
+        run: |
+          docker compose version
+          docker compose config --quiet
+          mkdir -p data private holdout evaluation models
+          for directory in data private holdout evaluation models; do
+            printf '%s\n' 'synthetic build-context sentinel' > "$directory/compose-ci-sentinel"
+          done
+          printf '%s\n' 'synthetic build-context sentinel' > frontend/src/compose-ci-sentinel.safetensors
+          printf '%s\n' 'synthetic build-context sentinel' > .env.compose-ci-sentinel
+          docker build --file - . <<'DOCKERFILE'
+          FROM python:3.12.12-slim-trixie@sha256:f3fa41d74a768c2fce8016b98c191ae8c1bacd8f1152870a3f9f87d350920b7c
+          WORKDIR /context
+          COPY . .
+          RUN set -eu; \
+              for path in backend/pyproject.toml backend/src/doccheck_backend/api.py \
+                  frontend/package.json frontend/src/app/main.tsx; do \
+                test -f "$path" || { echo "Missing from context: $path"; exit 1; }; \
+              done; \
+              for path in .git .env .env.example .env.compose-ci-sentinel docs data private \
+                  holdout evaluation models backend/ml_module backend/tests frontend/node_modules \
+                  frontend/tests frontend/src/compose-ci-sentinel.safetensors; do \
+                test ! -e "$path" || { echo "Unexpected in context: $path"; exit 1; }; \
+              done
+          DOCKERFILE
+      - name: Build and start Compose
+        run: |
+          docker version --format 'Docker Engine {{.Server.Version}} on {{.Server.Os}}/{{.Server.Arch}}'
+          start=$SECONDS
+          docker compose up --build --wait --wait-timeout 120
+          printf 'Build and startup: %s s\n' "$((SECONDS - start))"
+          docker compose ps --all
+          test "$(docker inspect --format '{{.State.ExitCode}}' "$(docker compose ps --all -q migrate)")" = 0
+          test "$(docker inspect --format '{{.State.Health.Status}}' "$(docker compose ps -q db)")" = healthy
+          test "$(docker inspect --format '{{.State.Health.Status}}' "$(docker compose ps -q api)")" = healthy
+      - name: Run browser scenario against the Compose stack
+        working-directory: frontend
+        run: |
+          node --input-type=module <<'JAVASCRIPT'
+          import assert from 'node:assert/strict';
+          import { appendFileSync } from 'node:fs';
+          import { chromium, expect } from '@playwright/test';
+
+          const origin = 'http://127.0.0.1:' + process.env.DOCCHECK_PORT;
+          const browser = await chromium.launch();
+          try {
+            const page = await browser.newPage();
+            await page.goto(origin);
+            await expect(page.getByText('API и PostgreSQL доступны.')).toBeVisible();
+            const created = page.waitForResponse(response =>
+              response.url() === origin + '/api/synthetic-jobs' && response.request().method() === 'POST');
+            const start = Date.now();
+            await page.getByRole('button', { name: 'Создать синтетическое задание' }).click();
+            const response = await created;
+            assert.equal(response.status(), 201);
+            const job = await response.json();
+            assert.equal(job.status, 'queued');
+            assert.equal(job.synthetic, true);
+            assert.match(job.id, /^[a-f0-9-]{36}$/);
+            await expect(page.getByText('Статус: В очереди')).toBeVisible();
+            await expect(page.getByText('Статус: Обрабатывается')).toBeVisible();
+            await expect(page.getByText('Статус: Завершено')).toBeVisible({ timeout: 15000 });
+            await expect(page.getByText(/^Тестовый результат:/)).toBeVisible();
+            const completed = await page.request.get(origin + '/api/synthetic-jobs/' + job.id);
+            assert.equal(completed.status(), 200);
+            const result = await completed.json();
+            assert.equal(result.status, 'completed');
+            assert.equal(result.result.synthetic, true);
+            assert.equal(result.error, null);
+            appendFileSync(process.env.GITHUB_ENV, 'DOCCHECK_CI_JOB_ID=' + job.id + '\n');
+            console.log('Browser synthetic job completed in ' + (Date.now() - start) + ' ms.');
+          } finally {
+            await browser.close();
+          }
+          JAVASCRIPT
+      - name: Verify persisted result after down and up
+        run: |
+          docker compose down
+          test -z "$(docker compose ps --all -q)"
+          start=$SECONDS
+          docker compose up --no-build --wait --wait-timeout 120
+          printf 'Restart without build: %s s\n' "$((SECONDS - start))"
+          docker compose exec -T api python - "$DOCCHECK_CI_JOB_ID" <<'PYTHON'
+          import json
+          import sys
+          from urllib.request import urlopen
+
+          job_id = sys.argv[1]
+          with urlopen(f"http://127.0.0.1:8000/api/synthetic-jobs/{job_id}", timeout=5) as response:
+              job = json.load(response)
+          assert job["id"] == job_id
+          assert job["status"] == "completed"
+          assert job["result"]["synthetic"] is True
+          print("Completed synthetic job survived restart.")
+          PYTHON
+          curl --fail --silent --show-error "http://127.0.0.1:$DOCCHECK_PORT/health"
+      - name: Record image sizes and observed memory
+        run: |
+          docker compose images
+          ids=$(docker compose ps -q)
+          docker stats --no-stream --format 'table {{.Name}}\t{{.MemUsage}}' $ids
+      - name: Show service status on failure
+        if: failure()
+        run: docker compose ps --all
+      - name: Remove CI containers and CI volume
+        if: always()
+        run: docker compose down --volumes

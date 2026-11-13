@@ -1,0 +1,80 @@
+x-backend: &backend
+  image: doccheck-backend:local
+  build:
+    context: .
+    dockerfile: backend/Dockerfile
+  environment:
+    DATABASE_URL: "postgresql+psycopg://doccheck:${DOCCHECK_DB_PASSWORD:?Set DOCCHECK_DB_PASSWORD in .env}@db:5432/doccheck"
+
+services:
+  db:
+    image: postgres:18.4@sha256:a02db8cac496f15b094798a38254f14d6e00741f709360e5e00bb6668ea31636
+    environment:
+      POSTGRES_USER: doccheck
+      POSTGRES_DB: doccheck
+      POSTGRES_PASSWORD: "${DOCCHECK_DB_PASSWORD:?Set DOCCHECK_DB_PASSWORD in .env}"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "doccheck", "-d", "doccheck"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    networks: [backend]
+
+  migrate:
+    <<: *backend
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [backend]
+
+  api:
+    <<: *backend
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).close()"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    networks: [frontend, backend]
+
+  worker:
+    <<: *backend
+    environment:
+      DATABASE_URL: "postgresql+psycopg://doccheck:${DOCCHECK_DB_PASSWORD:?Set DOCCHECK_DB_PASSWORD in .env}@db:5432/doccheck"
+      WORKER_POLL_SECONDS: "${WORKER_POLL_SECONDS:-0.5}"
+      SYNTHETIC_DELAY_SECONDS: "${SYNTHETIC_DELAY_SECONDS:-2}"
+    command: ["python", "-m", "doccheck_backend.worker"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      db:
+        condition: service_healthy
+    networks: [backend]
+
+  frontend:
+    image: doccheck-frontend:local
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${DOCCHECK_PORT:-8080}:80"
+    networks: [frontend]
+
+networks:
+  frontend:
+  backend:
+    internal: true
+
+volumes:
+  postgres-data:
