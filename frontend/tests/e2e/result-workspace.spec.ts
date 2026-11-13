@@ -64,6 +64,7 @@ test('issue navigation scrolls the selected row into the mobile table and shows 
 test('source pane opens the stored original at a mobile width', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const id = 'stored-layout';
+  const ledgerRequests: string[] = [];
   await page.route(`**/api/v0/runs/${id}`, (route) => route.fulfill({ json: {
     run_id: id, status: 'completed_with_issues', created_at: '2026-11-14T00:00:00Z', error: null,
     progress: { processed_documents: 4, total_documents: 4 },
@@ -76,11 +77,90 @@ test('source pane opens the stored original at a mobile width', async ({ page })
   await page.route(`**/api/v0/runs/${id}/documents/report`, (route) => route.fulfill({
     body: '%PDF-1.4 synthetic transport fixture', contentType: 'application/octet-stream',
   }));
+  await page.route(`**/api/v0/runs/${id}/documents/ledger**`, (route) => {
+    const url = new URL(route.request().url());
+    ledgerRequests.push(url.pathname + url.search);
+    return url.pathname.endsWith('/fragments')
+      ? route.fulfill({ json: example.result.evidence.find(({ id }) => id === 'amount-2') })
+      : route.fulfill({ body: 'synthetic XLSX transport fixture', contentType: 'application/octet-stream' });
+  });
 
   await page.goto(`/checks/${id}`);
   await page.getByRole('button', { name: 'Просмотреть источник' }).click();
   const preview = page.getByRole('region', { name: 'Просмотр источника' });
   await expect(preview.getByRole('link', { name: 'Скачать оригинал' })).toBeVisible();
   await expect(preview.getByRole('link', { name: /Открыть страницу 1 PDF/ })).toHaveAttribute('href', /#page=1$/);
+  await page.getByText('Основания по слагаемым', { exact: true }).press('Enter');
+  const amount = page.getByRole('button', { name: /^Сумма · .*C7$/ });
+  await amount.press('Enter');
+  await expect(amount).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('combobox', { name: 'Доказательство' })).toHaveValue('amount-2');
+  await expect(preview).toHaveCount(0);
+  expect(ledgerRequests).toEqual([]);
+  await page.getByRole('button', { name: 'Просмотреть источник' }).click();
+  await expect(preview.getByText(/Лист «Синтетика», C7/)).toBeVisible();
+  await expect(preview.getByRole('link', { name: 'Скачать оригинал' })).toBeVisible();
+  expect([...new Set(ledgerRequests)].sort()).toEqual([
+    `/api/v0/runs/${id}/documents/ledger`,
+    `/api/v0/runs/${id}/documents/ledger/fragments?evidence_id=amount-2`,
+  ]);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+});
+
+test('sources on the same PDF page have distinct selectable boxes at 320px', async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 780 });
+  const id = 'box-result';
+  const firstBox = [0.1, 0.2, 0.4, 0.25];
+  const secondBox = [0.1, 0.7, 0.4, 0.75];
+  const result = structuredClone(example.result);
+  const contract = result.evidence.find(({ id }) => id === 'contract');
+  if (!contract) throw new Error('Missing synthetic contract evidence');
+  const first = { ...contract, locator: { kind: 'page', page: 1, bbox: firstBox } };
+  const second = { ...first, id: 'contract-alt', locator: { ...first.locator, bbox: secondBox } };
+  const documents = result.documents.map((doc) => {
+    if (doc.id === 'ledger') return { ...doc, format: 'pdf', name: 'synthetic-ledger.pdf' };
+    if (doc.id === 'ledger-copy') return { ...doc, format: 'pdf', name: 'synthetic-ledger-copy.pdf' };
+    return doc;
+  });
+  const evidence = result.evidence.map((item, index) => {
+    if (item.id === first.id) return first;
+    return item.document_id === 'ledger'
+      ? { ...item, locator: { kind: 'page', page: 1, line: index + 1 } }
+      : item;
+  });
+  result.rows[0].calculation.components[0].contract_refs.push(second.id);
+
+  await page.route(`**/api/v0/runs/${id}`, (route) => route.fulfill({ json: {
+    run_id: id, status: 'completed_with_issues', created_at: '2026-11-14T00:00:00Z',
+    error: null, progress: { processed_documents: 4, total_documents: 4 },
+  } }));
+  await page.route(`**/api/v0/runs/${id}/findings`, (route) => route.fulfill({
+    json: { ...result, run_id: id, documents, evidence: [...evidence, second] },
+  }));
+  await page.route(`**/api/v0/runs/${id}/documents/ledger`, (route) => route.fulfill({
+    body: '%PDF-1.4 synthetic transport fixture', contentType: 'application/octet-stream',
+  }));
+  await page.route(`**/api/v0/runs/${id}/documents/ledger/fragments?evidence_id=${second.id}`, (route) =>
+    route.fulfill({ json: second }));
+  await page.goto('/checks/' + id);
+  await page.getByText('Основания по слагаемым', { exact: true }).click();
+  const component = page.getByRole('list', { name: 'Слагаемые' }).locator(':scope > li').first();
+  const choices = page.getByRole('combobox', { name: 'Доказательство' });
+  for (const item of [first, second]) {
+    const coords = item.locator.bbox.join(', ');
+    const label = `synthetic-ledger.pdf · Страница 1 · Рамка (${coords})`;
+    await expect(choices.getByRole('option', { name: label, exact: true })).toHaveAttribute('value', item.id);
+    const button = component.getByRole('button', { name: 'Договор · ' + label, exact: true });
+    await expect(button).toBeVisible();
+    await button.click();
+    await expect(choices).toHaveValue(item.id);
+    await expect(page.locator('.source-address-card').getByText(coords, { exact: true })).toBeVisible();
+  }
+  const fragmentRequest = page.waitForRequest((request) =>
+    new URL(request.url()).pathname.endsWith('/fragments'));
+  await page.getByRole('button', { name: 'Просмотреть источник' }).click();
+  expect(new URL((await fragmentRequest).url()).searchParams.get('evidence_id')).toBe(second.id);
+  await expect(page.getByRole('region', { name: 'Просмотр источника' })
+    .getByRole('link', { name: /Открыть страницу 1 PDF/ })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
 });

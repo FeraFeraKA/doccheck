@@ -268,6 +268,16 @@ it('показывает доказательства слагаемых при 
   const select = await screen.findByRole('combobox', { name: 'Доказательство' });
   expect(within(select).getByRole('option', { name: /Лист «Синтетика», C6/ })).toBeVisible();
   expect(within(select).getByRole('option', { name: /Лист «Синтетика», C7/ })).toBeVisible();
-  fireEvent.change(select, { target: { value: 'amount-2' } });
+  const breakdown = screen.getByText('Основания по слагаемым', { selector: 'summary' });
+  fireEvent.click(breakdown);
+  const [first, second] = screen.getByRole('list', { name: 'Слагаемые' }).querySelectorAll<HTMLElement>(':scope > li');
+  const firstAmount = within(first).getByRole('button', { name: /^Сумма · .*C6$/ });
+  const secondAmount = within(second).getByRole('button', { name: /^Сумма · .*C7$/ });
+  expect(within(first).queryByRole('button', { name: /^Сумма · .*C7$/ })).not.toBeInTheDocument();
+  expect(within(second).getByRole('button', { name: /^Договор · .*A2$/ })).toBeVisible();
+  fireEvent.click(secondAmount);
+  expect(select).toHaveValue('amount-2');
+  expect(firstAmount).toHaveAttribute('aria-pressed', 'false');
+  expect(secondAmount).toHaveAttribute('aria-pressed', 'true');
   expect(screen.getByText('Лист «Синтетика», C7', { selector: 'dd' })).toBeVisible();
 });
