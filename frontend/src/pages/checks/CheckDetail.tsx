@@ -43,7 +43,7 @@ export function CheckDetail({ view }: { view: string }) {
 }
 
 function Reconciliation() {
-  const { rows, evidence, documents } = demoResult;
+  const { rows, evidence, documents, summary } = demoResult;
   const [selectedId, setSelectedId] = useState(rows[0]?.id);
   const [evidenceId, setEvidenceId] = useState<string>();
   const row = rows.find(({ id }) => id === selectedId);
@@ -60,6 +60,9 @@ function Reconciliation() {
     <div className="checks-reconcile">
       <section className="checks-card">
         <h2>Показатели</h2>
+        <p className="checks-status" data-status={summary.counts.discrepancy > 0 ? 'discrepancy' : undefined}>
+          Расхождения: {summary.counts.discrepancy}
+        </p>
         <div className="checks-table-scroll">
           <table>
             <thead><tr><th>Показатель</th><th>КФЗ</th><th>По первичным документам</th><th>Δ</th><th>Статус</th></tr></thead>

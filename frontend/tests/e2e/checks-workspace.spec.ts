@@ -45,14 +45,18 @@ test('the accountant opens the synthetic reconciliation and sees discrepancies a
   expect(apiRequests).toEqual([]);
 });
 
-test('workspace navigation and table fit the mobile viewport', async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto('/checks');
-  await page.getByRole('link', { name: 'Синтетическая сверка' }).click();
-  await expect(page.getByRole('heading', { name: 'Показатели' })).toBeVisible();
-  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
-  await expect(page.getByRole('link', { name: 'Исключения' })).toBeVisible();
-});
+for (const width of [320, 390]) {
+  test(`reconciliation shows the discrepancy count on entry at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.goto('/checks');
+    await page.getByRole('link', { name: 'Синтетическая сверка' }).click();
+
+    await expect(page.getByText('Расхождения: 1', { exact: true })).toBeInViewport({ ratio: 1 });
+    await expect(page.getByRole('heading', { name: 'Показатели' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Исключения' })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+  });
+}
 
 test('the upload wizard selects files without secure-context APIs', async ({ page }) => {
   await page.addInitScript(() => {
