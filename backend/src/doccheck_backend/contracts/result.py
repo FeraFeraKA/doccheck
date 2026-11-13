@@ -337,11 +337,36 @@ class Calculation(ContractModel):
     formula: Text
     components: list[Component]
 
+    def admitted_sum(
+        self, *, unit: str, completeness: Completeness
+    ) -> tuple[str | None, str | None]:
+        """Return observed and expected sums for components admitted in one unit."""
+        if self.operation != "sum":
+            raise ValueError("calculation requires the sum operation")
+        amounts = [component.amount for component in self.components]
+        _check_amount_unit(unit, amounts)
+        if not amounts:
+            return None, None
+        observed = format(_sum_exact_amounts(amounts), "f")
+        return observed, observed if completeness.state == "complete" else None
+
+
+def _check_amount_unit(unit: str, amounts: list[str]) -> None:
+    if unit == "RUB" and any(not _RUB_PATTERN.fullmatch(value) for value in amounts):
+        raise ValueError("RUB values must be decimal strings in kopecks")
+
 
 def _exact_units(value: str, places: int) -> int:
     """Convert a validated decimal string to an integer at a common precision."""
     numerator, denominator = Decimal(value).as_integer_ratio()
     return numerator * 10**places // denominator
+
+
+def _sum_exact_amounts(amounts: list[str]) -> Decimal:
+    places = max(len(amount.partition(".")[2]) for amount in amounts)
+    total = sum(_exact_units(amount, places) for amount in amounts)
+    sign, digits, _ = Decimal(total).as_tuple()
+    return Decimal((sign, digits, -places))
 
 
 class ResultRow(ContractModel):
@@ -449,14 +474,10 @@ class ResultRow(ContractModel):
         totals = (self.reported_value, self.expected_value, self.observed_evidence_sum, self.delta)
         components = [component.amount for component in self.calculation.components]
         values = [value for value in totals if value is not None] + components
-        if self.unit == "RUB" and any(not _RUB_PATTERN.fullmatch(value) for value in values):
-            raise ValueError("RUB values must be decimal strings in kopecks")
-        places = max((len(value.partition(".")[2]) for value in values), default=0)
+        _check_amount_unit(self.unit, values)
         if components:
             observed = self.observed_evidence_sum
-            if observed is None or sum(_exact_units(value, places) for value in components) != (
-                _exact_units(observed, places)
-            ):
+            if observed is None or Decimal(observed) != _sum_exact_amounts(components):
                 raise ValueError("observed sum must equal the sum of admitted components")
         elif self.observed_evidence_sum is not None:
             raise ValueError("observed sum must be null without admitted components")
@@ -477,6 +498,7 @@ class ResultRow(ContractModel):
             return self
         if self.reported_value is None or self.expected_value is None or self.delta is None:
             raise ValueError("a checked row requires reported value, expected value and delta")
+        places = max(len(value.partition(".")[2]) for value in values)
         delta = _exact_units(self.delta, places)
         if delta != (
             _exact_units(self.reported_value, places) - _exact_units(self.expected_value, places)
