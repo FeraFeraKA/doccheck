@@ -17,5 +17,13 @@
 
 После обновления на `6e05af205c713636e6c4a2e723dfac4a10ac24c2` сверены маршрут
 `/system-status` в приложении и правиле Vercel, название кнопки и показ ID.
-Предпоказовая проверка версии и ID добавлена в инструкцию. Повторный полный
-облачный цикл на этом шаге не выполнялся.
+Предпоказовая проверка версии и ID добавлена в инструкцию.
+
+В Brave публичная главная показала компактный мастер с ограничением загрузки
+и ссылкой на готовый пример. Прямой `/checks/synthetic-example` открылся
+после перезагрузки. На `/system-status` API и PostgreSQL были доступны,
+задание `464319d7-0b8d-4083-b863-de52c9dedaca` прошло
+`queued → processing → completed`. Документы не загружались.
+[Запись публикации NRT-108](https://linear.app/andreiakimov/issue/NRT-108/razvernut-demo-doccheck-na-vercel-i-render)
+привязывает публичный адрес к Vercel production `dpl_DtSPqJ2uXCXQm42ARMsRGk5GCMfD`
+(#63, `635ea657`).
