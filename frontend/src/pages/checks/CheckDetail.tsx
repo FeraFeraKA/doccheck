@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { Link, NavLink, useParams } from 'react-router';
 import { loadCheckRun, runStatusLabels } from './checkData';
 import type { RunDetails } from './checkData';
@@ -10,13 +10,29 @@ import type { ReviewResult } from './reviewResult';
 import { useCheckData } from './useCheckData';
 import { isRunId } from './runStatusApi';
 import { XlsxDownload } from './XlsxDownload';
+import './result-workspace.css';
 
 const tabs = [
   ['', 'Сверка'], ['/documents', 'Документы'], ['/exceptions', 'Исключения'],
   ['/conclusion', 'Заключение'], ['/log', 'Журнал проверки'],
 ];
 
+const componentEvidenceFields = [
+  ['amount_refs', 'Сумма'],
+  ['contract_refs', 'Договор'],
+  ['period_refs', 'Период'],
+  ['article_refs', 'Статья'],
+  ['identity_refs', 'Идентификация документа'],
+] as const;
+
 type CheckView = 'table' | 'documents' | 'exceptions' | 'conclusion' | 'log';
+
+function formatSourceChoice(locator: ReviewResult['evidence'][number]['locator']) {
+  const location = formatLocation(locator);
+  return 'bbox' in locator && locator.bbox
+    ? `${location} · Рамка (${locator.bbox.join(', ')})`
+    : location;
+}
 
 export function CheckDetail({ view, loadRun = loadCheckRun }: {
   view: CheckView;
@@ -29,7 +45,9 @@ export function CheckDetail({ view, loadRun = loadCheckRun }: {
 
   return (
     <>
-      <Link to="/checks">← Все проверки</Link>
+      <nav className="result-breadcrumb" aria-label="Путь к проверке">
+        <Link to="/checks">← Все проверки</Link>
+      </nav>
       {state.phase === 'loading' && <p role="status">Загрузка проверки…</p>}
       {state.phase === 'failed' && <section className="checks-card">
         <p role="alert">Не удалось получить состояние проверки.</p>
@@ -49,8 +67,10 @@ function RunContent({ id, view, run }: { id: string; view: CheckView; run: RunDe
   return (
     <>
       {id === demoJob.run_id && <p className="checks-demo">Синтетическая сверка · готовый пример</p>}
-      <h1>{run.title}</h1>
-      <p role="status">Состояние проверки · {runStatusLabels[status]}</p>
+      <div className="result-header">
+        <h1>{run.title}</h1>
+        <p role="status" className="result-run-state">Состояние проверки · {runStatusLabels[status]}</p>
+      </div>
       {run.progress && (
         <p>Обработано документов: {run.progress.processed} из {run.progress.total}</p>
       )}
@@ -107,11 +127,16 @@ function ResultContent({ id, view, result, synthetic, stored }: ResultContentPro
 
   return (
     <>
-      <p>Договор {scope.contract_number} · {scope.period_start} — {scope.period_end}</p>
-      <nav className="checks-tabs" aria-label="Разделы проверки">
+      <p className="result-scope">Договор {scope.contract_number} · {scope.period_start} — {scope.period_end}</p>
+      <nav className="result-tabs" aria-label="Разделы проверки">
         {tabs.map(([suffix, label]) => <NavLink key={suffix} to={runPath + suffix} end>{label}</NavLink>)}
       </nav>
       {view === 'table' && <>
+        <div className="result-overview">
+          <span><i aria-hidden="true" /> Подтверждено <strong>{summary.counts.verified}</strong></span>
+          <span>Не проверено <strong>{summary.counts.unverified}</strong></span>
+          <span>Документов <strong>{documents.length}</strong></span>
+        </div>
         {result.rows.length > 0
           ? <Reconciliation result={result} storedRunId={stored ? id : undefined} />
           : <section className="checks-card"><h2>Показатели</h2><p>Показатели отсутствуют.</p></section>}
@@ -145,122 +170,238 @@ function ResultContent({ id, view, result, synthetic, stored }: ResultContentPro
 
 function Reconciliation({ result, storedRunId }: { result: ReviewResult; storedRunId?: string }) {
   const { rows, evidence, documents, summary } = result;
-  const [selectedId, setSelectedId] = useState(rows[0]?.id);
+  const [filter, setFilter] = useState('all');
+  const [query, setQuery] = useState('');
+  const [selectedId, setSelectedId] = useState(() => rows.find(({ status }) => status === 'discrepancy')?.id);
   const [evidenceId, setEvidenceId] = useState<string>();
   const [openSourceId, setOpenSourceId] = useState<string>();
-  const row = rows.find(({ id }) => id === selectedId) ?? rows[0];
+  const tableScroll = useRef<HTMLDivElement>(null);
+  const selectedRow = useRef<HTMLTableRowElement>(null);
+  const pendingIssueScroll = useRef<string>(undefined);
+  const discrepancies = rows.filter(({ status }) => status === 'discrepancy');
+  const search = query.trim().toLocaleLowerCase('ru');
+  const visible = rows.filter(({ label, status }) =>
+    (filter === 'all' || status === filter) && label.toLocaleLowerCase('ru').includes(search),
+  );
+  const row = visible.find(({ id }) => id === selectedId) ?? visible[0];
+  const issueIndex = discrepancies.findIndex(({ id }) => id === row?.id);
+
+  useLayoutEffect(() => {
+    if (pendingIssueScroll.current === undefined || pendingIssueScroll.current !== selectedId) return;
+    pendingIssueScroll.current = undefined;
+    const container = tableScroll.current;
+    const selected = selectedRow.current;
+    if (!container || !selected) return;
+
+    const rowBounds = selected.getBoundingClientRect();
+    const containerBounds = container.getBoundingClientRect();
+    const headerHeight = selected.closest('table')?.tHead?.offsetHeight ?? 0;
+    const top = rowBounds.top - containerBounds.top - headerHeight;
+    const bottom = rowBounds.bottom - containerBounds.top - container.clientHeight;
+    if (top < 0) container.scrollTop += top;
+    else if (bottom > 0) container.scrollTop += bottom;
+
+    // On a narrow screen the table itself can sit below the viewport.
+    const visibleBounds = selected.getBoundingClientRect();
+    const viewportHeight = window.document.documentElement.clientHeight;
+    if (visibleBounds.top < 0) window.scrollBy(0, visibleBounds.top);
+    else if (visibleBounds.bottom > viewportHeight) window.scrollBy(0, visibleBounds.bottom - viewportHeight);
+  }, [filter, query, selectedId]);
+
+  function selectRow(id?: string) {
+    setSelectedId(id);
+    setEvidenceId(undefined);
+    setOpenSourceId(undefined);
+  }
+
+  function moveIssue(direction: -1 | 1) {
+    const next = issueIndex < 0 ? (direction === 1 ? 0 : discrepancies.length - 1) : issueIndex + direction;
+    const issue = discrepancies[next];
+    if (!issue) return;
+    pendingIssueScroll.current = issue.id;
+    setQuery('');
+    setFilter('discrepancy');
+    selectRow(issue.id);
+  }
+
+  const filters = [
+    ['all', 'Все', rows.length],
+    ['discrepancy', 'Расхождения', summary.counts.discrepancy],
+    ['unverified', 'Не проверено', summary.counts.unverified],
+    ['verified', 'Подтверждено', summary.counts.verified],
+  ] as const;
   const issue = summary.primary_issues.find(({ id }) => id === row?.root_issue_id);
   const fileErrorIds = new Set(issue?.file_error_refs);
   const affectedFiles = documents.filter((item) => item.errors.some((error) => fileErrorIds.has(error.id)));
   const refs = new Set([
     ...row?.reported_evidence_refs ?? [],
-    ...row?.calculation?.components.flatMap((component) => [
-      ...component.amount_refs,
-      ...component.contract_refs,
-      ...component.period_refs,
-      ...component.article_refs,
-      ...component.identity_refs ?? [],
-    ]) ?? [],
+    ...row?.calculation?.components.flatMap((component) =>
+      componentEvidenceFields.flatMap(([field]) => component[field] ?? []),
+    ) ?? [],
     ...row?.reasons.flatMap((reason) => reason.evidence_refs) ?? [],
     ...row?.completeness.evidence_refs ?? [],
     ...issue?.evidence_refs ?? [],
   ]);
   const sources = evidence.filter(({ id }) => refs.has(id));
+  const sourcesById = new Map(sources.map((item) => [item.id, item]));
+  const documentsById = new Map(documents.map((item) => [item.id, item]));
   const source = sources.find(({ id }) => id === evidenceId) ?? sources[0];
-  const document = documents.find(({ id }) => id === source?.document_id);
+  const sourceIndex = sources.findIndex(({ id }) => id === source?.id);
+  const document = source && documentsById.get(source.document_id);
+
+  function selectSource(id: string) {
+    setEvidenceId(id);
+    setOpenSourceId(undefined);
+  }
 
   return (
-    <div className="checks-reconcile">
-      <section className="checks-card">
-        <h2>Показатели</h2>
-        <p className="checks-status" data-status={summary.counts.discrepancy > 0 ? 'discrepancy' : undefined}>
-          Расхождения: {summary.counts.discrepancy}
-        </p>
-        <div className="checks-table-scroll">
-          <table>
-            <thead><tr><th>Показатель</th><th>Ед. изм.</th><th>КФЗ</th><th>По первичным документам</th><th>Δ</th><th>Статус</th></tr></thead>
-            <tbody>{rows.map((item) => (
-              <tr key={item.id} data-selected={item.id === row?.id}>
-                <td><button type="button" aria-pressed={item.id === row?.id} onClick={() => {
-                  setSelectedId(item.id);
-                  setEvidenceId(undefined);
-                  setOpenSourceId(undefined);
-                }}>{item.label}</button></td>
-                <td>{item.unit}</td>
-                <td>{formatDecimal(item.reported_value)}</td>
-                <td>
-                  {formatDecimal(item.expected_value)}
-                  {item.expected_value === null && item.observed_evidence_sum != null && (
-                    <p className="checks-caption">Частичная сумма: {formatDecimal(item.observed_evidence_sum)} {item.unit}</p>
-                  )}
-                </td>
-                <td>{formatDecimal(item.delta)}</td>
-                <td><span className="checks-status" data-status={item.status}>{statusLabels[item.status]}</span></td>
-              </tr>
-            ))}</tbody>
-          </table>
+    <section className="result-reconciliation" aria-label="Рабочее место сверки">
+      <div className="reconcile-commandbar">
+        <div className="reconcile-command-title"><span className="reconcile-icon" aria-hidden="true">▤</span>
+          <strong>Сверка с документами</strong>
         </div>
-        <p className="checks-caption">— означает, что значение отсутствует.</p>
-      </section>
-      <section className="checks-card checks-source">
-        <h2>Источник</h2>
-        {row && <>
-          {row.calculation && <p>{row.calculation.formula}</p>}
-          <p>Основание полноты: {row.completeness.reason}</p>
-          {row.reasons.map((reason) => <p key={reason.code}>{reason.message}</p>)}
-          {row.calculation && row.calculation.components.length > 0 && <details>
-            <summary>Основания по слагаемым</summary>
-            <ul>{row.calculation.components.map((component) => (
-              <li key={component.amount_refs.join(' ')}>
-                {formatDecimal(component.amount)} {row.unit} · {component.relation_reason}
-              </li>
-            ))}</ul>
-          </details>}
-        </>}
-        {issue && <p>{issue.message}</p>}
-        {affectedFiles.flatMap((item) => item.errors.filter((error) => fileErrorIds.has(error.id)).map((error) => (
-          <p key={error.id}>{item.name} · {error.message}</p>
-        )))}
-        {sources.length > 0 && <label>Доказательство
-          <select value={source?.id} onChange={(event) => {
-            setEvidenceId(event.target.value);
-            setOpenSourceId(undefined);
-          }}>
-            {sources.map((item) => (
-              <option key={item.id} value={item.id}>{documents.find(({ id }) => id === item.document_id)?.name}
-                {' · '}{formatLocation(item.locator)}</option>
-            ))}
-          </select>
-        </label>}
-        {source && document ? (
-          <dl>
-            <dt>Документ</dt><dd>{document.name}</dd>
-            {document.decision.state !== 'include' && <>
-              <dt>Решение по документу</dt><dd>{decisions[document.decision.state]}</dd>
+        <div className="issue-navigation">
+          <p className="issue-counter">Расхождения: {summary.counts.discrepancy}</p>
+          {discrepancies.length > 0 && <p aria-live="polite">
+            Расхождение {issueIndex < 0 ? '—' : issueIndex + 1} из {discrepancies.length}
+          </p>}
+          <button type="button" aria-label="Предыдущее расхождение" disabled={discrepancies.length === 0 || issueIndex === 0}
+            onClick={() => moveIssue(-1)}>↑</button>
+          <button type="button" aria-label="Следующее расхождение" disabled={discrepancies.length === 0 || issueIndex === discrepancies.length - 1}
+            onClick={() => moveIssue(1)}>↓</button>
+        </div>
+      </div>
+      <div className="reconcile-panes">
+        <section className="reconcile-left">
+          <div className="reconcile-left-header"><div><h2>Показатели</h2>
+            <p>Выберите показатель, чтобы открыть источник</p></div>
+            <span className="record-count" aria-hidden="true">{visible.length}</span>
+          </div>
+          <div className="reconcile-filters" aria-label="Статус показателя">
+            {filters.map(([value, label, count]) => <button type="button" key={value}
+              aria-pressed={filter === value} onClick={() => { setFilter(value); selectRow(); }}>
+              {label} <span>{count}</span>
+            </button>)}
+          </div>
+          <div className="reconcile-search">
+            <span aria-hidden="true">⌕</span>
+            <input type="search" aria-label="Поиск показателя" placeholder="Поиск показателя…" value={query}
+              onChange={(event) => { setQuery(event.target.value); selectRow(); }} />
+          </div>
+          <div ref={tableScroll} className="reconcile-table-scroll" role="region" aria-label="Таблица показателей" tabIndex={0}>
+            <table className="reconcile-table">
+              <thead><tr><th scope="col">Показатель</th><th scope="col">Ед. изм.</th><th scope="col">КФЗ</th><th scope="col">По первичным документам</th><th scope="col">Δ</th><th scope="col">Статус</th></tr></thead>
+              <tbody>{visible.map((item) => (
+                <tr key={item.id} ref={item.id === row?.id ? selectedRow : undefined} data-selected={item.id === row?.id} data-status={item.status}>
+                  <td><button className="row-name-button" type="button" aria-pressed={item.id === row?.id} onClick={() => selectRow(item.id)}>
+                    <span className="row-status" data-status={item.status} aria-hidden="true">{item.status === 'verified' ? '✓' : item.status === 'discrepancy' ? '!' : '–'}</span>
+                    {item.label}
+                  </button></td>
+                  <td>{item.unit}</td>
+                  <td>{formatDecimal(item.reported_value)}</td>
+                  <td className="expected-cell">
+                    {formatDecimal(item.expected_value)}
+                    {item.expected_value === null && item.observed_evidence_sum != null && (
+                      <p className="checks-caption">Частичная сумма: {formatDecimal(item.observed_evidence_sum)} {item.unit}</p>
+                    )}
+                  </td>
+                  <td className="difference-cell">{formatDecimal(item.delta)}</td>
+                  <td><span className="checks-status" data-status={item.status}>{statusLabels[item.status]}</span></td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+          {visible.length === 0 && <p className="reconcile-left-footer">Показатели не найдены.</p>}
+          <p className="reconcile-left-footer">— означает, что значение отсутствует.</p>
+        </section>
+        <section className="evidence-panel">
+          {row ? <div className="evidence-header">
+            <div className="evidence-heading"><h2>{row.label}</h2><span className="checks-status" data-status={row.status}>{statusLabels[row.status]}</span></div>
+            <div className="evidence-amounts">
+              <div><small>В КФЗ · {row.unit}</small><strong>{formatDecimal(row.reported_value)}</strong></div>
+              <div className="expected-readout"><small>По документам · {row.unit}</small><strong>{formatDecimal(row.expected_value)}</strong></div>
+              <div data-alert={row.status === 'discrepancy'}><small>Разница · {row.unit}</small><strong>{formatDecimal(row.delta)}</strong></div>
+            </div>
+          </div> : <p className="source-empty-state">Выберите показатель, чтобы увидеть источник.</p>}
+          {row && <div className="evidence-source-content">
+            <h3 className="evidence-tab-label">Источник</h3>
+            <div className="source-document-content">
+            <div className="evidence-rules">
+              {row.calculation && <p>{row.calculation.formula}</p>}
+              <p>Основание полноты: {row.completeness.reason}</p>
+              {row.reasons.map((reason) => <p key={reason.code}>{reason.message}</p>)}
+              {row.calculation && row.calculation.components.length > 0 && <details>
+                <summary>Основания по слагаемым</summary>
+                <ol aria-label="Слагаемые" className="component-evidence-list">{row.calculation.components.map((component) => (
+                  <li key={component.amount_refs[0]}>
+                    <p>{formatDecimal(component.amount)} {row.unit} · {component.relation_reason}</p>
+                    <ul>{componentEvidenceFields.flatMap(([field, label]) =>
+                      (component[field] ?? []).map((id) => {
+                        const item = sourcesById.get(id);
+                        const file = item && documentsById.get(item.document_id);
+                        return <li key={field + ':' + id}>
+                          {item && file ? (
+                            <button type="button" aria-pressed={source?.id === id} onClick={() => selectSource(id)}>
+                              {label} · {file.name} · {formatSourceChoice(item.locator)}
+                            </button>
+                          ) : <span>{label} · Адрес источника недоступен.</span>}
+                        </li>;
+                      }),
+                    )}</ul>
+                  </li>
+                ))}</ol>
+              </details>}
+            </div>
+            {issue && <p>{issue.message}</p>}
+            {affectedFiles.flatMap((item) => item.errors.filter((error) => fileErrorIds.has(error.id)).map((error) => (
+              <p key={error.id}>{item.name} · {error.message}</p>
+            )))}
+            {sources.length > 0 && <div className="document-picker">
+                <button type="button" aria-label="Предыдущий источник" disabled={sourceIndex <= 0}
+                onClick={() => selectSource(sources[sourceIndex - 1].id)}>‹</button>
+              <label>Доказательство
+              <select value={source?.id} onChange={(event) => selectSource(event.target.value)}>
+                {sources.map((item) => (
+                  <option key={item.id} value={item.id}>{documentsById.get(item.document_id)?.name}
+                    {' · '}{formatSourceChoice(item.locator)}</option>
+                ))}
+              </select>
+              </label>
+                <button type="button" aria-label="Следующий источник" disabled={sourceIndex >= sources.length - 1}
+                onClick={() => selectSource(sources[sourceIndex + 1].id)}>›</button>
+            </div>}
+            {source && document ? (
+              <dl className="source-address-card">
+                <dt>Документ</dt><dd>{document.name}</dd>
+                {document.decision.state !== 'include' && <>
+                  <dt>Решение по документу</dt><dd>{decisions[document.decision.state]}</dd>
+                </>}
+                <dt>Адрес в результате</dt><dd>{formatLocation(source.locator)}</dd>
+                {'bbox' in source.locator && source.locator.bbox && <>
+                  <dt>Координаты фрагмента</dt><dd>{source.locator.bbox.join(', ')}</dd>
+                </>}
+                <dt>Значение источника</dt><dd>{source.raw_value}</dd>
+              </dl>
+            ) : <p>Адрес источника недоступен.</p>}
+            {storedRunId && source && document && <>
+              <button type="button" aria-expanded={openSourceId === source.id}
+                onClick={() => setOpenSourceId(openSourceId === source.id ? undefined : source.id)}>
+                {openSourceId === source.id ? 'Закрыть просмотр источника' : 'Просмотреть источник'}
+              </button>
+              {openSourceId === source.id && (
+                <DocumentSourcePreview
+                  runId={storedRunId}
+                  document={{ id: document.id, name: document.name, format: document.format ?? null }}
+                  evidenceId={source.id}
+                />
+              )}
             </>}
-            <dt>Адрес в результате</dt><dd>{formatLocation(source.locator)}</dd>
-            {'bbox' in source.locator && source.locator.bbox && <>
-              <dt>Координаты фрагмента</dt><dd>{source.locator.bbox.join(', ')}</dd>
-            </>}
-            <dt>Значение источника</dt><dd>{source.raw_value}</dd>
-          </dl>
-        ) : <p>Адрес источника недоступен.</p>}
-        {storedRunId && source && document && <>
-          <button type="button" aria-expanded={openSourceId === source.id}
-            onClick={() => setOpenSourceId(openSourceId === source.id ? undefined : source.id)}>
-            {openSourceId === source.id ? 'Закрыть просмотр источника' : 'Просмотреть источник'}
-          </button>
-          {openSourceId === source.id && (
-            <DocumentSourcePreview
-              runId={storedRunId}
-              document={{ id: document.id, name: document.name, format: document.format ?? null }}
-              evidenceId={source.id}
-            />
-          )}
-        </>}
-        {!storedRunId && <p className="checks-caption">В готовом примере доступны адреса источников.</p>}
-      </section>
-    </div>
+            {!storedRunId && <p className="checks-caption">В готовом примере доступны адреса источников.</p>}
+            </div>
+          </div>}
+        </section>
+      </div>
+    </section>
   );
 }
 
