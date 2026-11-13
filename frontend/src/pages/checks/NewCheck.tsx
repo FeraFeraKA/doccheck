@@ -1,9 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
+import { classes } from '../../shared/lib/classes';
+import { Button } from '../../shared/ui/Button';
+import { UploadFileList } from './UploadFiles';
+import { WorkspaceIcon } from './WorkspaceIcon';
 import { prepareRunUpload, RunUploadHttpError } from './createRun';
 import { demoRunPath } from './demoData';
 
-const steps = ['КФЗ', 'Первичные документы'];
+const steps = ['Отчёт (КФЗ)', 'Первичные документы'];
 const formats = ['.pdf', '.docx', '.xlsx', '.png'];
 const mib = 1024 ** 2;
 const maxFileSize = 50 * mib;
@@ -35,14 +39,18 @@ function uploadErrorMessage(error: unknown): string {
   return 'Не удалось подтвердить приём пакета. Повторите отправку с теми же файлами.';
 }
 
+const publicDemo = import.meta.env.VITE_DOCCHECK_PUBLIC_DEMO === '1';
+
 export function NewCheck() {
   const navigate = useNavigate();
   const nextFileId = useRef(0);
+  const input = useRef<HTMLInputElement>(null);
   const active = useRef<AbortController | null>(null);
   const attempt = useRef<ReturnType<typeof prepareRunUpload> | null>(null);
   const [step, setStep] = useState(0);
   const [report, setReport] = useState<SelectedFile[]>([]);
   const [documents, setDocuments] = useState<SelectedFile[]>([]);
+  const [over, setOver] = useState(false);
   const [error, setError] = useState('');
   const [isSending, setIsSending] = useState(false);
   const isReport = step === 0;
@@ -64,7 +72,7 @@ export function NewCheck() {
   }
 
   function takeFiles(incoming: FileList) {
-    if (active.current || incoming.length === 0) return;
+    if (publicDemo || active.current || incoming.length === 0) return;
     const selected = Array.from(incoming);
     if (isReport && selected.length > 1) {
       setError('Выберите один файл КФЗ.');
@@ -98,7 +106,7 @@ export function NewCheck() {
   }
 
   async function submit() {
-    if (active.current || report.length !== 1 || documents.length === 0) return;
+    if (publicDemo || active.current || report.length !== 1 || documents.length === 0) return;
     const controller = new AbortController();
     active.current = controller;
     setIsSending(true);
@@ -120,64 +128,93 @@ export function NewCheck() {
   }
 
   return (
-    <div className="checks-upload">
+    <div className="upload-page">
       <h1>Новая проверка</h1>
-      <p>Выберите карточку фактических затрат (КФЗ) и первичные документы.</p>
-      <p>При отправке приложение сохраняет пакет для проверки. При сверке приложение собирает сводные значения из первичных документов и сравнивает их с КФЗ.</p>
-      <ol className="checks-tabs" aria-label="Шаги">
+      <p className="upload-intro">Добавьте отчёт и подтверждающие документы для сверки.</p>
+      <ol className="upload-steps" aria-label="Шаги">
         {steps.map((label, index) => (
           <li key={label}>
-            <button type="button" aria-current={index === step ? 'step' : undefined}
-              disabled={isSending || (index === 1 && report.length === 0)} onClick={() => changeStep(index)}>
-              {index + 1}. {label}
+            <button type="button" onClick={() => changeStep(index)} aria-current={index === step ? 'step' : undefined}
+              disabled={isSending || (index === 1 && !publicDemo && report.length === 0)}>
+              <span>{(index === 0 ? report.length : documents.length) > 0 && index !== step
+                ? <WorkspaceIcon name="check" size={16} /> : index + 1}</span>
+              {label}
             </button>
+            {index === 0 && <WorkspaceIcon name="arrow" size={16} />}
           </li>
         ))}
       </ol>
-      <section className="checks-card" onDragOver={(event) => event.preventDefault()}
-        onDrop={(event) => { event.preventDefault(); takeFiles(event.dataTransfer.files); }}>
-        <div className="checks-heading">
+      <section className={classes('upload-card', over && 'is-dragging')}
+        onDragOver={(event) => {
+          event.preventDefault();
+          if (!publicDemo && !active.current) setOver(true);
+        }}
+        onDragLeave={(event) => {
+          if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) {
+            setOver(false);
+          }
+        }}
+        onDrop={(event) => {
+          event.preventDefault();
+          setOver(false);
+          takeFiles(event.dataTransfer.files);
+        }}>
+        <header className="upload-card-header">
           <div>
             <h2>Загрузка документов</h2>
-            <p>{isReport ? 'Один файл КФЗ' : 'Первичные документы'} · PDF, DOCX, XLSX, PNG</p>
+            <p>{isReport ? 'Отчёт КФЗ · один файл PDF, DOCX, XLSX или PNG' : 'Первичные документы · PDF, DOCX, XLSX, PNG'}</p>
           </div>
-        </div>
-        <div className="checks-drop">
-          <label htmlFor="check-files">{isReport ? 'Выберите КФЗ' : 'Выберите первичные документы'}</label>
-          <input id="check-files" key={step} type="file" accept={formats.join(',')} multiple={!isReport}
-            disabled={isSending} onChange={(event) => {
+          <Link className="upload-example" to={demoRunPath}>Открыть готовый синтетический результат</Link>
+        </header>
+        {publicDemo ? <div className="upload-empty">
+          <div className="upload-empty-icon"><WorkspaceIcon name="file" size={32} /></div>
+          <h3>Загрузка доступна в локальной установке</h3>
+          <p>В публичном демо можно открыть готовый синтетический результат.</p>
+        </div> : <>
+          <input key={step} ref={input} type="file" hidden
+            aria-label={isReport ? 'Выберите КФЗ' : 'Выберите первичные документы'}
+            accept={formats.join(',')} multiple={!isReport} disabled={isSending}
+            onChange={(event) => {
               if (event.currentTarget.files) takeFiles(event.currentTarget.files);
               event.currentTarget.value = '';
             }} />
-          <p>Можно также перетащить файлы сюда.</p>
-        </div>
-        {error && <p role="alert" className="checks-error">{error}</p>}
-        {files.length === 0 ? <p className="checks-caption">
-          {isReport ? 'КФЗ пока не выбрана.' : 'Первичные документы пока не выбраны.'}
-        </p> : <ul className="checks-files">
-          {files.map(({ id, file }) => <li key={id}>
-            <span>{file.name}</span>
-            <button type="button" disabled={isSending} aria-label={'Удалить ' + file.name}
-              onClick={() => {
-                if (!active.current) changeFiles(files.filter((item) => item.id !== id));
-              }}>Удалить</button>
-          </li>)}
-        </ul>}
-        <div className="checks-actions">
-          {isReport ? (
-            <button className="checks-primary" type="button" disabled={report.length === 0}
-              onClick={() => changeStep(1)}>Далее</button>
-          ) : <>
-            <button type="button" disabled={isSending} onClick={() => changeStep(0)}>Назад</button>
-            <button className="checks-primary" type="button" disabled={isSending || report.length === 0 || documents.length === 0}
-              onClick={() => { void submit(); }}>Отправить на проверку</button>
+          {files.length === 0 ? <div className="upload-empty">
+            <div className="upload-empty-icon"><WorkspaceIcon name="file" size={32} /></div>
+            <h3>{isReport ? 'Перетащите отчёт сюда' : 'Перетащите документы сюда'}</h3>
+            <p>или выберите {isReport ? 'файл' : 'файлы'} на компьютере</p>
+            <Button variant="outline" disabled={isSending} onClick={() => input.current?.click()}>
+              {isReport ? 'Выбрать файл' : 'Выбрать файлы'}
+            </Button>
+          </div> : <>
+            <UploadFileList files={files} disabled={isSending} onRemove={(id) => {
+              if (!active.current) changeFiles(files.filter((item) => item.id !== id));
+            }} />
+            <div className="upload-list-actions">
+              <button type="button" disabled={isSending} onClick={() => input.current?.click()}>
+                <WorkspaceIcon name="plus" size={18} />
+                {isReport ? 'Заменить отчёт' : 'Добавить документы'}
+              </button>
+              <span>Файлов: {files.length}</span>
+            </div>
           </>}
-        </div>
-        {isSending && <p role="status">Отправляем пакет…</p>}
+          {error && <p className="upload-validation" role="alert">{error}</p>}
+        </>}
       </section>
-      <p className="checks-caption">
-        <Link to={demoRunPath}>Открыть готовый синтетический результат</Link>
-      </p>
+      <div className="upload-navigation">
+        <Button variant="outline" disabled={isReport || isSending} onClick={() => changeStep(0)}>Назад</Button>
+        {isReport ? (
+          <Button disabled={isSending || (!publicDemo && report.length === 0)}
+            onClick={() => changeStep(1)}>
+            Первичные документы <WorkspaceIcon name="arrow" size={17} />
+          </Button>
+        ) : !publicDemo && <div>
+          <Button disabled={isSending || report.length === 0 || documents.length === 0}
+            onClick={() => { void submit(); }}>
+            Отправить на проверку <WorkspaceIcon name="arrow" size={17} />
+          </Button>
+        </div>}
+      </div>
+      {isSending && <p role="status">Отправляем пакет…</p>}
     </div>
   );
 }

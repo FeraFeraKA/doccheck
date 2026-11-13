@@ -9,7 +9,7 @@ test('synthetic API mock: queued → processing → completed', async ({ page })
     pollCount += 1;
     return route.fulfill({ json: syntheticJob(pollCount === 1 ? 'processing' : 'completed') });
   });
-  await page.goto('/');
+  await page.goto('/system-status');
   await expect(page.getByRole('heading', { name: 'DocCheck' })).toBeVisible();
   await expect(page.getByText('API и PostgreSQL доступны.')).toBeVisible();
   await page.getByRole('button', { name: 'Создать синтетическое задание' }).click();
@@ -22,7 +22,7 @@ test('synthetic API mock: queued → processing → completed', async ({ page })
 
 test('API mock: ошибка связи и восстановление после повторной проверки', async ({ page }) => {
   await page.route('**/health', (route) => route.abort('connectionrefused'));
-  await page.goto('/');
+  await page.goto('/system-status');
   await expect(page.getByRole('alert')).toContainText('Нет связи с API.');
   await expect(page.getByRole('button', { name: 'Создать синтетическое задание' })).toBeDisabled();
   await page.unroute('**/health');
