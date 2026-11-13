@@ -189,6 +189,23 @@ def test_bare_number_needs_an_adjacent_header_address(module_path, tmp_path):
     assert not record.number_requires_review
 
 
+def test_contract_header_does_not_confirm_document_number(module_path, tmp_path):
+    document = _document(tmp_path)
+    observations = (
+        SourceObservation("Акт по договору:", PageLocator(kind="page", page=1, line=3), "native"),
+        SourceObservation("№ 543", PageLocator(kind="page", page=1, line=4), "native"),
+    )
+    (record,) = identify_documents(
+        [replace(document, observations=observations)], synthetic=True
+    ).documents
+    number = next(item for item in record.candidates if item.field == "doc_number")
+    assert number.value == "543"
+    assert number.sources == () and number.source_ambiguous
+    assert number.diagnostic == "unconfirmed_document_number_role"
+    assert observations[1] in number.provenance
+    assert record.number_requires_review
+
+
 def test_explicit_number_label_and_value_keep_both_module_sources(module_path, tmp_path):
     document = _document(tmp_path)
     observations = (
@@ -239,6 +256,31 @@ def test_conflicting_issuer_tax_ids_keep_each_reading_without_selection(module_p
     assert readings[None].provenance == (first, second)
     assert readings["1234567890"].sources == readings["1234567890"].provenance == (first,)
     assert readings["123456789012"].sources == readings["123456789012"].provenance == (second,)
+
+
+@pytest.mark.parametrize("conflict", [False, True])
+def test_unicode_tax_id_remains_an_addressed_unvalidated_reading(module_path, tmp_path, conflict):
+    document = _document(tmp_path)
+    ascii_reading = SourceObservation(
+        "ИНН исполнителя: 7707083893", PageLocator(kind="page", page=1, line=3), "native"
+    )
+    unicode_reading = SourceObservation(
+        "ИНН поставщика: ٧٧٠٧٠٨٣٨٩٤", PageLocator(kind="page", page=2, line=2), "native"
+    )
+    observations = (ascii_reading, unicode_reading) if conflict else (unicode_reading,)
+    supplied = replace(document, observations=(*document.observations, *observations))
+    (record,) = identify_documents([supplied], synthetic=True).documents
+    readings = {item.value: item for item in record.candidates if item.field == "issuer_tax_id"}
+
+    assert record.issuer_tax_id_conflict == conflict
+    assert set(readings) == ({None, "7707083893", "٧٧٠٧٠٨٣٨٩٤"} if conflict else {"٧٧٠٧٠٨٣٨٩٤"})
+    candidate = readings["٧٧٠٧٠٨٣٨٩٤"]
+    assert candidate.sources == () and candidate.source_ambiguous
+    assert candidate.provenance == (unicode_reading,)
+    assert candidate.diagnostic == "invalid_inn_format"
+    if conflict:
+        assert readings[None].provenance == observations
+        assert readings["7707083893"].sources == (ascii_reading,)
 
 
 def test_module_compound_needs_actual_line_adjacency_for_addresses(module_path, tmp_path):

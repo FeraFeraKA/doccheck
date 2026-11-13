@@ -3,7 +3,7 @@
 import json
 import re
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Literal, Protocol
@@ -12,6 +12,7 @@ from pydantic import TypeAdapter, ValidationError
 
 from doccheck_backend.contracts.locators import Locator, PageLocator, SheetLocator
 from doccheck_backend.contracts.result import FileFormat
+from doccheck_backend.requisite_validation import validate_observed_inn
 
 type Method = Literal["native", "ocr"]
 _LOCATOR = TypeAdapter(Locator)
@@ -34,9 +35,9 @@ _PREDICTIONS = {
     "evidence_quote",
 }
 _DOCUMENT_HEADER = re.compile(
-    r"^\s*(?:акт\b|сч[её]т\b|упд\b|ведомость\b|справка\b|"
-    r"служебная\s+записка\b|универсальный\s+передаточный\s+документ\b|"
-    r"номер\s+(?:документа|акта)\b|(?:№\s*)?документ(?:а)?\b)",
+    r"\s*(?:акт|сч[её]т|упд|ведомость|справка|служебная\s+записка|"
+    r"универсальный\s+передаточный\s+документ|"
+    r"номер\s+(?:документа|акта)|(?:№\s*)?документ(?:а)?)\s*[:：]?\s*",
     re.IGNORECASE,
 )
 _AMOUNT_ROLE = re.compile(
@@ -47,7 +48,7 @@ _AMOUNT_ROLE = re.compile(
 )
 _ISSUER_TAX_ID = re.compile(
     r"\s*(?:[A-Z]{1,3}[0-9]+:\s*)?инн\s+(?:исполнителя|поставщика|продавца)"
-    r"\s*[:：]?\s*([0-9]{10}(?:[0-9]{2})?)\s*",
+    r"\s*[:：]?\s*(\d{10}(?:\d{2})?)\s*",
     re.IGNORECASE,
 )
 
@@ -92,6 +93,7 @@ class IdentityCandidate:
     # These are inputs the module returned for the same reading. Their addresses
     # are known even when the adapter cannot attest the reading's role or grouping.
     provenance: tuple[SourceObservation, ...] = ()
+    diagnostic: str | None = None
 
 
 @dataclass(frozen=True)
@@ -320,7 +322,7 @@ def _document_number_context(
         previous
         for candidates in prepared.sources.values()
         for previous in candidates
-        if _DOCUMENT_HEADER.match(previous.text) and _adjacent(previous, source)
+        if _DOCUMENT_HEADER.fullmatch(previous.text) and _adjacent(previous, source)
     ]
     return matches[0] if len(matches) == 1 else None
 
@@ -400,7 +402,8 @@ def _candidate(
     if value is not None and not isinstance(value, str):
         raise IdentityResponseError("Invalid candidate value")
     sources, provenance, ambiguous = _evidence_sources(evidence, prepared, field, value)
-    return IdentityCandidate(field, value, sources, ambiguous, provenance)
+    diagnostic = "unconfirmed_document_number_role" if field == "doc_number" and ambiguous else None
+    return IdentityCandidate(field, value, sources, ambiguous, provenance, diagnostic)
 
 
 def _number_candidates(number: dict[str, object], prepared: _Prepared) -> list[IdentityCandidate]:
@@ -415,7 +418,12 @@ def _number_candidates(number: dict[str, object], prepared: _Prepared) -> list[I
     selected_evidence = matching_evidence[0] if len(matching_evidence) == 1 else None
     selected = _candidate("doc_number", selected_value, selected_evidence, prepared)
     if selected_value is not None and len(matching_evidence) != 1 and number.get("evidence"):
-        selected = IdentityCandidate(selected.field, selected.value, (), True)
+        selected = replace(
+            selected,
+            sources=(),
+            source_ambiguous=True,
+            diagnostic="unconfirmed_document_number_role",
+        )
     alternatives = [
         _candidate("doc_number", item.get("value"), item.get("evidence"), prepared)
         for item in readings
@@ -431,7 +439,13 @@ def _tax_id_candidates(
     field = "issuer_tax_id"
     evidence = issuer.get("tax_id_evidence")
     if not conflict:
-        return [_candidate(field, issuer.get("tax_id"), evidence, prepared)]
+        selected = _candidate(field, issuer.get("tax_id"), evidence, prepared)
+        if selected.value is not None and not selected.value.isascii():
+            validation = validate_observed_inn(selected.value)
+            selected = replace(
+                selected, sources=(), source_ambiguous=True, diagnostic=validation.issue
+            )
+        return [selected]
 
     # A null selected value is distinct from the conflicting, addressed readings.
     _, provenance, _ = _evidence_sources(evidence, prepared, field, None)
@@ -439,8 +453,17 @@ def _tax_id_candidates(
     for source in provenance:
         # Restrict the projection to complete INN tokens in the module's own evidence.
         match = _ISSUER_TAX_ID.fullmatch(source.text)
-        if match is not None:
+        if match is None:
+            continue
+        if match[1].isascii():
+            # Preserve the ASCII source observation as a candidate. This does not validate
+            # its checksum, existence, or party identity.
             results.append(IdentityCandidate(field, match[1], (source,), False, (source,)))
+        else:
+            validation = validate_observed_inn(match[1], locator=source.locator)
+            results.append(
+                IdentityCandidate(field, match[1], (), True, (source,), validation.issue)
+            )
     return results
 
 
