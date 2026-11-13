@@ -89,9 +89,10 @@ def export_check_result(result: CheckResult) -> bytes:
     summary = result.summary
     if (
         max(
-            len(result.rows) + len(summary.primary_issues) + 11,
+            len(result.rows) + 11,
             len(result.evidence) + 1,
             len(result.documents) + 1,
+            len(summary.primary_issues) + 1,
         )
         > 1_048_576
     ):
@@ -112,8 +113,6 @@ def export_check_result(result: CheckResult) -> bytes:
     _append(sheet, "Расхождения", summary.counts.discrepancy)
     _append(sheet, "Не проверено", summary.counts.unverified)
     _append(sheet, "Заключение", summary.conclusion)
-    for issue in summary.primary_issues:
-        _append(sheet, "Первичная ошибка", issue.id, issue.message)
     _append(
         sheet,
         "ID строки",
@@ -192,10 +191,24 @@ def export_check_result(result: CheckResult) -> bytes:
             document.parse_status,
             document.decision.state,
             document.decision.message,
-            "\n".join(f"{error.code}: {error.message}" for error in document.errors) or None,
+            "\n".join(f"{error.id} · {error.code}: {error.message}" for error in document.errors)
+            or None,
             document.duplicate_of,
         )
     _finish(files, 1, (32, 42, 16, 17, 17, 45, 45, 32))
+
+    issues = workbook.create_sheet("Первичные замечания")
+    _append(issues, "ID замечания", "Код", "Описание", "ID источников", "ID ошибок файлов")
+    for issue in summary.primary_issues:
+        _append(
+            issues,
+            issue.id,
+            issue.code,
+            issue.message,
+            "\n".join(issue.evidence_refs) or None,
+            "\n".join(issue.file_error_refs) or None,
+        )
+    _finish(issues, 1, (27, 27, 61, 32, 32))
 
     with BytesIO() as output:
         workbook.save(output)

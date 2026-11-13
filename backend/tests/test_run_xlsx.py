@@ -39,7 +39,7 @@ def test_workbook_preserves_amounts_and_keeps_all_untrusted_cells_literal():
     assert job.result is not None
 
     workbook = load_workbook(BytesIO(export_check_result(job.result)))
-    assert workbook.sheetnames == ["Сверка", "Источники", "Документы"]
+    assert workbook.sheetnames == ["Сверка", "Источники", "Документы", "Первичные замечания"]
     reconciliation = workbook["Сверка"]
     rows = {row[0].value: row for row in reconciliation if row[0].value in ("row-a", "row-b")}
     first, second = rows["row-a"], rows["row-b"]
@@ -66,6 +66,15 @@ def test_workbook_preserves_amounts_and_keeps_all_untrusted_cells_literal():
     assert "Страница 1" in sources["report-a"][3]
     assert sources["report-a"][2] == "=2+3"
     assert any(row[1] == "=2+3" for row in workbook["Документы"].values)
+    root_issue = second[16].value
+    assert root_issue == "issue-b"
+    issues = {row[0]: row for row in workbook["Первичные замечания"].values}
+    assert issues["issue-a"][3] == "report-a\namount-1\namount-2"
+    assert issues[root_issue][4] == "scan-read-error"
+    assert any(
+        row[6] and row[6].startswith(issues[root_issue][4] + " · ")
+        for row in workbook["Документы"].values
+    )
     assert all(
         cell.data_type != "f" and cell.hyperlink is None
         for sheet in workbook
