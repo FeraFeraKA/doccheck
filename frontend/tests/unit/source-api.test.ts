@@ -44,6 +44,21 @@ describe('source API', () => {
       .rejects.toBeInstanceOf(InvalidSourceResponseError);
   });
 
+  it('rejects a partial original response even with valid binary content', async () => {
+    respond(new Response(new Uint8Array([1, 2]), {
+      status: 206,
+      headers: { 'Content-Type': 'application/octet-stream', 'Content-Range': 'bytes 0-1/3' },
+    }));
+    await expect(getSourceOriginal('run-1', 'report-1', new AbortController().signal))
+      .rejects.toBeInstanceOf(InvalidSourceResponseError);
+  });
+
+  it('rejects a partial evidence response even with valid JSON', async () => {
+    respond(Response.json(evidence, { status: 206 }));
+    await expect(getSourceEvidence('run-1', 'report-1', evidence.id, new AbortController().signal))
+      .rejects.toBeInstanceOf(InvalidSourceResponseError);
+  });
+
   it.each(['строка/1 + %2F?#', '..', 'section\\line'])(
     'preserves evidence ID %s in a query parameter', async (id) => {
       const saved = { ...evidence, id };

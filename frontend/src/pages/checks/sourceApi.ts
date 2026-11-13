@@ -186,7 +186,8 @@ async function responseJson(response: Response, signal: AbortSignal): Promise<un
 async function requestSource(url: string, signal: AbortSignal): Promise<Response> {
   const response = await fetch(url, { signal });
   signal.throwIfAborted();
-  if (response.ok) return response;
+  if (response.status === 200) return response;
+  if (response.ok) throw new InvalidSourceResponseError();
   const error = await responseJson(response, signal);
   signal.throwIfAborted();
   const code = isRecord(error) && isSourceErrorCode(error.code) ? error.code : null;
