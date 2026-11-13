@@ -62,7 +62,8 @@ seed `890041`. В [списке входов](../synthetic/nrt-89/inputs.json) �
    воспроизведения — `cbb69dc25aeae910ffd08439ca6b71271669b335` из [PR #58](https://github.com/VCyberPunk2077/doccheck/pull/58).
    Из корня рабочей копии запустите команду с `uv` и Python 3.12. Она установит
    `openpyxl` и её зависимость `et-xmlfile` закреплённых версий во временное окружение.
-   Папка вывода должна быть новой. [Генератор NRT-40](https://github.com/VCyberPunk2077/doccheck/blob/cbb69dc25aeae910ffd08439ca6b71271669b335/research/negative-fixtures/generate.py)
+   Выберите путь, которого ещё нет. Если `data/nrt-40-qa` уже существует,
+   укажите новый путь в `--output` и возьмите PDF из него. [Генератор NRT-40](https://github.com/VCyberPunk2077/doccheck/blob/cbb69dc25aeae910ffd08439ca6b71271669b335/research/negative-fixtures/generate.py)
 
    ```sh
    uv run --python 3.12 --no-project --with openpyxl==3.1.5 --with et-xmlfile==2.0.0 python research/negative-fixtures/generate.py --output data/nrt-40-qa
@@ -77,7 +78,7 @@ seed `890041`. В [списке входов](../synthetic/nrt-89/inputs.json) �
    сумму 138 633,62 руб. Полная ожидаемая сумма и дельта остаются `null`.
    Из строки перейдите к сведениям об ошибке и к сохранившимся источникам.
 3. Скачайте XLSX из «Заключения», если сохранён частичный результат.
-   Сверьте наблюдаемую сумму и `unverified` в «Сверке», ошибку в
+   Сверьте наблюдаемую сумму и статус «Не проверен» (`unverified`) в «Сверке», ошибку в
    «Документах» и связанную причину в «Первичных замечаниях».
    Итоговое решение по обоим пакетам принимает бухгалтер. Экспорт служит
    отчётом о технической сверке и не требует автоматической подписи.
