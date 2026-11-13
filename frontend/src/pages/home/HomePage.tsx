@@ -1,3 +1,4 @@
+import { Link } from 'react-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   checkHealth, connectionError, createSyntheticJob, getSyntheticJob, isApiUnavailable,
@@ -111,6 +112,8 @@ export function HomePage() {
       <h1 className="text-2xl font-semibold">DocCheck</h1>
       <p className="mt-4">Синтетический режим: проверка работы приложения без документов.</p>
       <p className="mt-2">OCR и настоящая финансовая сверка здесь не выполняются.</p>
+
+      <Link className="mt-4 inline-block underline" to="/checks">Открыть интерфейс сверки</Link>
 
       <section className="mt-8" aria-labelledby="api-heading">
         <h2 id="api-heading" className="text-xl font-medium">Состояние API</h2>

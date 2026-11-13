@@ -107,5 +107,5 @@ uv run --frozen pytest tests/test_result_contract.py
 Команда из CI для проверки OpenAPI и ссылок на схемы запускается из `backend/`.
 
 ```sh
-uvx --python 3.12.12 --from openapi-spec-validator==0.7.2 openapi-spec-validator ../contracts/doccheck-api.v0.openapi.yaml
+uv run --frozen openapi-spec-validator ../contracts/doccheck-api.v0.openapi.yaml
 ```

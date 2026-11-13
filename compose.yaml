@@ -33,6 +33,11 @@ services:
 
   api:
     <<: *backend
+    environment:
+      DATABASE_URL: "postgresql+psycopg://doccheck:${DOCCHECK_DB_PASSWORD:?Set DOCCHECK_DB_PASSWORD in .env}@db:5432/doccheck"
+      DOCCHECK_UPLOAD_ROOT: /var/lib/doccheck/runs
+    volumes:
+      - run-files:/var/lib/doccheck/runs
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -49,8 +54,11 @@ services:
     <<: *backend
     environment:
       DATABASE_URL: "postgresql+psycopg://doccheck:${DOCCHECK_DB_PASSWORD:?Set DOCCHECK_DB_PASSWORD in .env}@db:5432/doccheck"
+      DOCCHECK_UPLOAD_ROOT: /var/lib/doccheck/runs
       WORKER_POLL_SECONDS: "${WORKER_POLL_SECONDS:-0.5}"
       SYNTHETIC_DELAY_SECONDS: "${SYNTHETIC_DELAY_SECONDS:-2}"
+    volumes:
+      - run-files:/var/lib/doccheck/runs:ro
     command: ["python", "-m", "doccheck_backend.worker"]
     depends_on:
       migrate:
@@ -78,3 +86,4 @@ networks:
 
 volumes:
   postgres-data:
+  run-files:

@@ -15,6 +15,7 @@ class Settings:
     database_url: str
     worker_poll_seconds: float = 0.5
     synthetic_delay_seconds: float = 2.0
+    upload_root: Path = Path("../data/runs")
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -33,6 +34,12 @@ class Settings:
             database_url=database_url,
             worker_poll_seconds=_seconds("WORKER_POLL_SECONDS", 0.5, 0.05, 60),
             synthetic_delay_seconds=_seconds("SYNTHETIC_DELAY_SECONDS", 2.0, 0, 60),
+            upload_root=Path(
+                os.environ.get(
+                    "DOCCHECK_UPLOAD_ROOT",
+                    str(Path(__file__).resolve().parents[3] / "data" / "runs"),
+                )
+            ),
         )
 
 

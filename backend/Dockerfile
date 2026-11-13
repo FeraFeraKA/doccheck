@@ -17,7 +17,8 @@ COPY --from=build /opt/venv /opt/venv
 COPY backend/alembic.ini ./
 COPY backend/migrations ./migrations
 RUN groupadd --gid 10001 doccheck \
-    && useradd --uid 10001 --gid 10001 --no-create-home doccheck
+    && useradd --uid 10001 --gid 10001 --no-create-home doccheck \
+    && install -d -m 700 -o doccheck -g doccheck /var/lib/doccheck/runs
 USER 10001:10001
 EXPOSE 8000
 CMD ["uvicorn", "doccheck_backend.api:app", "--host", "0.0.0.0", "--port", "8000"]

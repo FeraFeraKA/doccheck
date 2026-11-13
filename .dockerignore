@@ -5,6 +5,7 @@
 !backend/.python-version
 !backend/alembic.ini
 !backend/src/doccheck_backend/*.py
+!backend/src/doccheck_backend/contracts/*.py
 !backend/migrations/env.py
 !backend/migrations/versions/*.py
 !frontend/Dockerfile
@@ -18,3 +19,6 @@
 !frontend/src/**/*.ts
 !frontend/src/**/*.tsx
 !frontend/src/**/*.css
+
+!contracts/check-result.v1.synthetic.json
+!docs/synthetic/nrt-89/inputs.json
