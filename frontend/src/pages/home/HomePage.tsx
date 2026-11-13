@@ -37,8 +37,6 @@ export function HomePage() {
   useEffect(() => {
     const controller = new AbortController();
     healthController.current = controller;
-    setHealth('loading');
-    setHealthError(null);
     checkHealth(controller.signal).then(() => {
       if (!controller.signal.aborted) setHealth('ready');
     }).catch((error: unknown) => {
@@ -123,7 +121,11 @@ export function HomePage() {
         </p>
         {healthError && <p role="alert" className="mt-2">{healthError}</p>}
         <button className={`${buttonClass} mt-3`} disabled={health === 'loading'}
-          onClick={() => setHealthAttempt((attempt) => attempt + 1)}>
+          onClick={() => {
+            setHealth('loading');
+            setHealthError(null);
+            setHealthAttempt((attempt) => attempt + 1);
+          }}>
           Проверить связь
         </button>
       </section>
