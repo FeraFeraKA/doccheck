@@ -224,6 +224,50 @@ def test_pdf_without_text_is_not_an_empty_success(tmp_path):
 
 
 @pytest.mark.parametrize(
+    ("left", "right", "expected"),
+    [
+        ("123", "456 RUB", [None, Decimal(456)]),
+        ("12,34 RUB", "56,78 RUB", [Decimal("12.34"), Decimal("56.78")]),
+        ("Detached label", "1 234,56 RUB", [None, Decimal("1234.56")]),
+    ],
+)
+def test_pdf_same_line_keeps_widely_separated_columns(tmp_path, left, right, expected):
+    stream = (
+        f"BT /F1 12 Tf 20 140 Td ({left}) Tj ET\n"
+        f"BT /F1 12 Tf {270 - len(right) * 7.2:.3f} 140 Td ({right}) Tj ET\n"
+    ).encode("ascii")
+    path = _single_page_pdf(tmp_path / "upload", stream, font=b"Courier")
+    result = read_native_document(path, "pdf")
+
+    first, second = result.observations
+    assert [first.raw_text, second.raw_text] == [left, right]
+    assert [first.amount, second.amount] == expected
+    assert first.locator.line == second.locator.line == 1
+    assert first.locator.bbox[2] < second.locator.bbox[0]
+    assert result.issues == ()
+
+
+def test_pdf_wrapped_values_stay_with_their_column(tmp_path):
+    stream = b"\n".join(
+        (
+            b"BT /F1 12 Tf 20 150 Td (Paid: 1,) Tj ET",
+            b"BT /F1 12 Tf 205 150 Td (Cost: 8,) Tj ET",
+            b"BT /F1 12 Tf 20 134 Td (25 RUB) Tj ET",
+            b"BT /F1 12 Tf 205 134 Td (12 RUB) Tj ET",
+        )
+    )
+    path = _single_page_pdf(tmp_path / "upload", stream, font=b"Courier")
+    result = read_native_document(path, "pdf")
+
+    assert [item.locator.line for item in result.observations] == [1, 1, 2, 2]
+    assert all(item.amount is None for item in result.observations)
+    assert [(issue.code, issue.locator.line) for issue in result.issues] == [
+        ("ambiguous_rub_amount", 2),
+        ("ambiguous_rub_amount", 2),
+    ]
+
+
+@pytest.mark.parametrize(
     ("first", "second", "right", "divider", "expected"),
     [
         ("Service charge for this invoice: 123,", "45 RUB", 280, False, None),

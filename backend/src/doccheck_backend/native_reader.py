@@ -1,8 +1,10 @@
 """Native observations with contract addresses for a single trusted local file."""
 
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
+from itertools import groupby
 from pathlib import Path
 from typing import Literal
 from unicodedata import category
@@ -18,7 +20,7 @@ from lxml.etree import XMLSyntaxError
 from pdfminer.pdfexceptions import PDFException
 from pdfminer.psexceptions import PSException
 from pdfplumber.page import Page
-from pdfplumber.utils import chars_to_textmap
+from pdfplumber.utils import chars_to_textmap, objects_to_bbox
 from pdfplumber.utils.exceptions import PdfminerException
 
 from doccheck_backend.contracts.locators import (
@@ -240,6 +242,29 @@ def _visible_pdf_box(page: Page) -> tuple[float, float, float, float]:
     return max(left, x0), max(top, y0), min(right, x1), min(bottom, y1)
 
 
+def _pdf_line_fragments(chars: list[dict]) -> Iterator[tuple[int, str, list[dict]]]:
+    text_map = chars_to_textmap(chars)
+    for number, match in enumerate(re.finditer(r"[^\n]+", text_map.as_string), 1):
+        start = match.start()
+        previous = None
+        glyphs = []
+        for index in range(start, match.end()):
+            _, char = text_map.tuples[index]
+            if char is None:
+                continue
+            if previous is not None and char["upright"] and previous["upright"]:
+                size = max(char["size"], previous["size"])
+                # A column gutter is much wider than an intra-field word or digit separator.
+                if char["x0"] - previous["x1"] > 1.5 * size:
+                    yield number, text_map.as_string[start:index].strip(), glyphs
+                    start = index
+                    glyphs = []
+            glyphs.append(char)
+            previous = char
+        if glyphs:
+            yield number, text_map.as_string[start : match.end()].strip(), glyphs
+
+
 def _pdf_text_lines(page: Page, visible_box: tuple[float, float, float, float]) -> list[dict]:
     left, top, right, bottom = visible_box
     chars = []
@@ -278,19 +303,22 @@ def _pdf_text_lines(page: Page, visible_box: tuple[float, float, float, float]) 
 
     if not any(char["text"].strip() for char in chars):
         return []
-    lines = chars_to_textmap(chars).extract_text_lines()
     visible_lines = []
-    for line in lines:
-        line["reading_box"] = (line["x0"], line["top"], line["x1"], line["bottom"])
-        glyphs = [positions[id(char)] for char in line["chars"]]
+    visible_number = previous_number = 0
+    for number, text, fragment in _pdf_line_fragments(chars):
+        glyphs = [positions[id(char)] for char in fragment]
         visible_glyphs = [box for box in glyphs if box is not None]
         if not visible_glyphs:
             continue
+        if number != previous_number:
+            visible_number += 1
+            previous_number = number
+        line = {"number": visible_number, "text": text, "reading_box": objects_to_bbox(fragment)}
         if len(visible_glyphs) != len(glyphs) or any(box[4] for box in visible_glyphs):
             # Do not expose hidden text or reparse a visible tail as a complete amount.
             line["text"] = "".join(
                 char["text"] if box is not None and not box[4] else "�"
-                for char, box in zip(line["chars"], glyphs, strict=True)
+                for char, box in zip(fragment, glyphs, strict=True)
             )
             line["clipped"] = True
         glyphs = visible_glyphs
@@ -337,6 +365,45 @@ def _split_by_divider(previous: dict, current: dict, dividers: list) -> bool:
     cx0, cy0, cx1, _ = current["reading_box"]
     left, right = max(px0, cx0), min(px1, cx1)
     return any(x0 <= left and right <= x1 and py1 <= y <= cy0 for x0, x1, y in dividers)
+
+
+def _pdf_column_sequences(lines: list[dict]) -> list[list[int]]:
+    sequences: list[list[int]] = []
+    active: dict[int, list[int]] = {}
+    for _, row in groupby(enumerate(lines), key=lambda item: item[1]["number"]):
+        indexes = [index for index, _ in row]
+        earlier = sorted(active, key=lambda index: lines[index]["reading_box"][0])
+        later = sorted(indexes, key=lambda index: lines[index]["reading_box"][0])
+        matches: dict[int, list[int]] = {}
+        used: set[int] = set()
+        ambiguous: set[int] = set()
+        i = j = 0
+        # Fragments on each row are ordered by their horizontal spans. Compare
+        # overlapping spans and require a unique link in both directions.
+        while i < len(earlier) and j < len(later):
+            before, after = earlier[i], later[j]
+            if _adjacent_pdf_lines(lines[before], lines[after], alignment="either"):
+                if before in used:
+                    ambiguous.add(before)
+                used.add(before)
+                matches.setdefault(after, []).append(before)
+            previous_right = lines[before]["reading_box"][2]
+            current_right = lines[after]["reading_box"][2]
+            i += previous_right <= current_right
+            j += current_right <= previous_right
+
+        following = {}
+        for index in indexes:
+            candidates = matches.get(index, [])
+            if len(candidates) == 1 and candidates[0] not in ambiguous:
+                sequence = active[candidates[0]]
+                sequence.append(index)
+            else:
+                sequence = [index]
+                sequences.append(sequence)
+            following[index] = sequence
+        active = following
+    return sequences
 
 
 def _wrapped_pdf_lines(lines: list[dict], dividers: list) -> set[int]:
@@ -433,8 +500,13 @@ def _read_pdf(path: Path, collected: _Collected) -> None:
                 continue
             x0, top, x1, bottom = visible_box
             width, height = x1 - x0, bottom - top
-            interrupted = _wrapped_pdf_lines(lines, _pdf_dividers(page))
-            for number, line in enumerate(lines, 1):
+            dividers = _pdf_dividers(page)
+            interrupted = {
+                sequence[index]
+                for sequence in _pdf_column_sequences(lines)
+                for index in _wrapped_pdf_lines([lines[index] for index in sequence], dividers)
+            }
+            for index, line in enumerate(lines):
                 box = (
                     max(0.0, (line["x0"] - x0) / width),
                     max(0.0, (line["top"] - top) / height),
@@ -444,16 +516,14 @@ def _read_pdf(path: Path, collected: _Collected) -> None:
                 locator = PageLocator(
                     kind="page",
                     page=page.page_number,
-                    line=number,
+                    line=line["number"],
                     bbox=box if box[0] < box[2] and box[1] < box[3] else None,
                 )
                 if line.get("clipped"):
                     collected.issues.append(NativeIssue("clipped_pdf_text", locator=locator))
                     collected.observations.append(Observation(line["text"], locator))
                 else:
-                    _observe(
-                        collected, line["text"], locator, interrupted=number - 1 in interrupted
-                    )
+                    _observe(collected, line["text"], locator, interrupted=index in interrupted)
             page.close()
 
 
