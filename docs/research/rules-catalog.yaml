@@ -1,0 +1,196 @@
+version: "1.0"
+checked_on: "2026-11-13"
+scope: "Публичные правила и проверки согласованности для исследования NRT-60"
+status: research
+evaluation: "arithmetic_without_ai=false означает, что до арифметики нужно подтвердить связь или применимость правила. Это поле не предписывает использование ИИ."
+money:
+  representation: "Decimal из строки, RUB"
+  comparison: "Только при известных ролях, единицах, периоде и полном наборе требуемых доказательств"
+  exact_rub: "0.00"
+  tolerance_note: "Нулевой допуск в арифметической проверке является правилом сравнения DocCheck. Неизвестное округление или неполнота дают unverified."
+  rounding_note: "Порядок округления задаётся нормой либо документированной политикой. Денежное поле в копейках не доказывает уровень округления."
+
+sources:
+  law402:
+    reference: "Федеральный закон от 06.12.2011 № 402-ФЗ, ст. 9, ч. 1–5, 7"
+    url: "https://www.nalog.gov.ru/rn77/about_fts/docs/3997100/"
+  civil:
+    reference: "ГК РФ, часть вторая, ст. 486, 487, 720, 753, 781"
+    url: "https://www.consultant.ru/document/cons_doc_LAW_9027/"
+  payment:
+    reference: "Положение Банка России от 29.06.2021 № 762-П, гл. 4–5, приложения 1 и 2"
+    url: "https://www.cbr.ru/Queries/UniDbQuery/File/85920/-1/2302"
+  torg:
+    reference: "Постановление Госкомстата от 25.12.1998 № 132, форма ТОРГ-12 как образец"
+    url: "https://www.mos.ru/upload/documents/oiv/postanovlenie_goskomstata_rf_132.pdf"
+  upd:
+    reference: "Приказ ФНС от 19.12.2023 № ЕД-7-26/970@ с изменениями от 15.11.2024 № ЕД-7-26/1032@, формат 5.03"
+    url: "https://www.nalog.gov.ru/rn77/about_fts/docs/14414412/"
+  vat:
+    reference: "НК РФ, ст. 164, п. 3, 4. Закон от 28.11.2025 № 425-ФЗ, ст. 2, 25. Письмо ФНС от 29.12.2025 № СД-4-3/11802@"
+    url: "https://www.nalog.gov.ru/rn77/about_fts/about_nalog/16594097/"
+  labor:
+    reference: "ТК РФ, ст. 91, 135–138, 166, 168"
+    url: "https://mchs.gov.ru/uploads/document/2026-01-14/506f16e41342be54537ba16886ab2084.pdf"
+  ndfl:
+    reference: "НК РФ, ст. 226, п. 3–4. Разъяснение ФНС о зачёте удержанного налога"
+    url: "https://www.nalog.gov.ru/rn77/taxation/taxes/ndfl/ndfl_ul/"
+  ndfl_rates:
+    reference: "НК РФ, ст. 224, п. 1. Разъяснение ФНС о ставках основной базы"
+    url: "https://www.nalog.gov.ru/rn04/news/activities_fts/16654585/"
+  tax_rounding:
+    reference: "НК РФ, ст. 52, п. 6. Округление налога до полных рублей"
+    url: "https://www.nalog.gov.ru/rn77/news/tax_doc_news/4633768/"
+  contrib:
+    reference: "НК РФ, ст. 421, 425, 431, п. 1 и 5. Постановление Правительства от 31.10.2025 № 1705. Разъяснения ФНС"
+    url: "https://www.nalog.gov.ru/rn77/ip/prem_employ/"
+  travel:
+    reference: "Положение, утверждённое постановлением Правительства от 16.04.2025 № 501, п. 3, 6, 8, 9, 23"
+    url: "https://www.consultant.ru/document/cons_doc_LAW_503406/856de09213dec309d439af5754055dbc4acab98d/"
+  result_contract:
+    reference: "Проектный контракт результата и источников NRT-85"
+    path: "../result-source-contract.md"
+
+rules:
+  - id: DOC-01
+    name: "Итог по строкам одного документа"
+    documents: ["акт", "накладная", "УПД", "расчётная ведомость"]
+    kind: consistency
+    formula: "total = sum(detail_amount) по одной валюте, периоду и виду суммы"
+    tolerance_rub: "0.00"
+    rounding: "Суммировать значения уже оформленных строк. Проверить политику, если итог рассчитан из неокруглённых исходных данных."
+    sources: [law402, torg, upd]
+    arithmetic_without_ai: true
+    limits: "Форма содержит данные, а формула является проверкой согласованности. Исключить промежуточные итоги. Пропуск строки, пустой кэш и неподтверждённая формула не доказывают нулевой итог."
+
+  - id: DOC-02
+    name: "Количество, цена и стоимость"
+    documents: ["накладная", "УПД", "спецификация"]
+    kind: consistency
+    formula: "line_amount = round_for_document(quantity × unit_price − line_discount)"
+    tolerance_rub: null
+    rounding: "Нужно знать единицу, масштаб цены и уровень округления. Универсальный порог не подтверждён."
+    sources: [law402, torg, upd]
+    arithmetic_without_ai: true
+    limits: "Только строка с сопоставимыми количеством, ценой и скидкой в одном представлении. Если скидка не входит в такую формулу или цена задана за упаковку, сначала установить правила формы."
+
+  - id: DOC-03
+    name: "Связь базы, НДС и суммы с налогом"
+    documents: ["УПД с налоговой частью", "счёт-фактура"]
+    kind: consistency
+    formula: "gross = net + vat_amount"
+    tolerance_rub: "0.00"
+    rounding: "Проверять оформленные денежные значения одной строки или одного итога без смешения уровней."
+    sources: [upd, vat]
+    arithmetic_without_ai: true
+    limits: "Отсутствие налоговой части или пометка без НДС требуют определения режима. Не подставлять 0 для нечитаемой налоговой суммы."
+
+  - id: DOC-04
+    name: "Стандартная ставка НДС на дату отгрузки"
+    documents: ["УПД с налоговой частью", "счёт-фактура", "первичка отгрузки"]
+    kind: statutory_calculation
+    formula: "vat = taxable_net × rate, либо vat = taxable_gross × rate / (1 + rate) в случаях применения расчётной ставки"
+    tolerance_rub: null
+    rounding: "Для численного сравнения нужен уровень округления по форме и правилу. Проверка указанной ставки точная."
+    sources: [vat, upd]
+    arithmetic_without_ai: true
+    limits: "Стандартная отгрузка в 2025 году — 20%, с 01.01.2026 — 22%. В предусмотренных п. 4 ст. 164 НК РФ случаях 22/122, в том числе при получении аванса в 2026 году под облагаемую по стандартной ставке поставку. Льготы, специальные ставки и сложные переходные авансы проверяются отдельно."
+
+  - id: DOC-05
+    name: "НДС при изменении стоимости ранее отгруженного"
+    documents: ["исходный УПД или счёт-фактура", "корректировочный документ", "основание изменения стоимости"]
+    kind: statutory_calculation
+    formula: "correction_rate = original_supply_rate, delta_vat = vat_after − vat_before"
+    tolerance_rub: null
+    rounding: "Использовать оформленные суммы на сопоставимом уровне. Единый допуск для всех форм не подтверждён."
+    sources: [vat]
+    arithmetic_without_ai: false
+    limits: "Для подтверждённой связи корректировки с исходной поставкой. Корректировка в 2026 году для стандартной отгрузки 2025 года сохраняет 20%. Исправление ошибочного реквизита и изменение согласованной стоимости оформляются по разным основаниям."
+
+  - id: DOC-06
+    name: "Остаток оплаты по подтверждённому обязательству"
+    documents: ["договор", "акт или накладная", "платёжное поручение", "выписка"]
+    kind: consistency
+    formula: "balance = accepted_amount − sum(confirmed_allocated_payments)"
+    tolerance_rub: "0.00"
+    rounding: "Сравнивать согласованные рублёвые суммы в копейках."
+    sources: [civil, payment, result_contract]
+    arithmetic_without_ai: false
+    limits: "Сопоставление и распределение платежа требуют основания. Остаток описывает расчёты, включая частичную оплату. Для расхождения отчёта нужны его подтверждённый показатель и полный состав."
+
+  - id: DOC-07
+    name: "Период операции и разделение дат"
+    documents: ["отчёт", "договор", "акт, накладная или УПД", "платёжный документ"]
+    kind: comparison_policy_required
+    formula: "in_scope = period_start <= relevant_event_date <= period_end по согласованному правилу показателя"
+    tolerance_rub: null
+    rounding: "Не применяется."
+    sources: [law402, civil, result_contract]
+    arithmetic_without_ai: false
+    limits: "Дата оформления, факт поставки или оказания, приёмка, оплата и поступление в пакет могут отличаться. Норма об оформлении факта сама по себе не утверждает дату признания для КФЗ."
+
+  - id: DOC-08
+    name: "Начислено, удержано и остаток к выплате"
+    documents: ["расчётная ведомость", "расчётный листок", "подтверждения выплат и удержаний"]
+    kind: consistency
+    formula: "payable = gross_payroll − withheld_ndfl − other_documented_deductions − earlier_payments_for_same_period"
+    tolerance_rub: "0.00"
+    rounding: "Сопоставлять подтверждённые суммы на уровне работника и периода."
+    sources: [labor, ndfl, contrib]
+    arithmetic_without_ai: true
+    limits: "Ранее выплаченное вычитается только при расчёте остатка и если ещё не учтено. Страховые взносы работодателя не являются удержаниями работника. Правомерность и предел удержаний проверяются отдельно по ст. 137–138 ТК РФ."
+
+  - id: DOC-09
+    name: "НДФЛ нарастающим итогом для основной базы"
+    documents: ["налоговый регистр агента", "расчётная ведомость"]
+    kind: statutory_calculation
+    formula: "current_tax = round_rub(sum(base_part × part_rate)) − prior_withheld_tax, где base_part — часть накопленной облагаемой базы в ступени"
+    tolerance_rub: "0.00"
+    rounding: "Налог округлить до полных рублей по п. 6 ст. 52 НК РФ до зачёта удержанной суммы."
+    sources: [ndfl, ndfl_rates, tax_rounding]
+    arithmetic_without_ai: true
+    limits: "Основная база резидента у одного агента после применимых вычетов. Шкала действует с 01.01.2025. Пороги 2.4, 5, 20 и 50 млн RUB. Ставки частей базы 13%, 15%, 18%, 20%, 22%. Иные базы, возвраты и ограничения фактического удержания рассматриваются отдельно."
+
+  - id: DOC-10
+    name: "Страховые взносы по общему тарифу в 2026 году"
+    documents: ["регистр взносов", "ведомость облагаемых начислений по физлицу"]
+    kind: statutory_calculation
+    formula: "month_due = cumulative_due(base_to_date) − cumulative_due(prior_base); cumulative_due(B) = min(B, L) × 0.30 + max(B − L, 0) × 0.151"
+    tolerance_rub: null
+    rounding: "Исчисленная к перечислению сумма выражается в рублях и копейках. Для сравнения проверить применяемый уровень округления и предыдущие начисления."
+    sources: [contrib]
+    arithmetic_without_ai: true
+    limits: "L = 2979000 RUB в 2026 году на каждое физлицо, обычное нарастающее начисление без перерасчётов, льгот, дополнительных тарифов и взносов на травматизм."
+
+  - id: DOC-11
+    name: "Расчёт по командировочному авансу и срок отчёта"
+    documents: ["письменное решение", "подтверждения поездки и расходов", "авансовый отчёт", "документ выдачи и возврата"]
+    kind: consistency
+    formula: "settlement = advance_paid − approved_expenses; report_due = third_working_day_after(actual_return_date)"
+    tolerance_rub: "0.00"
+    rounding: "В примере расчёты только в рублях и с документированными суммами."
+    sources: [labor, travel]
+    arithmetic_without_ai: false
+    limits: "Для поездки по Положению № 501 с 01.09.2025. Положительный остаток сопоставить с возвратом, отрицательный с возмещением. Рабочие дни и дата получения отчёта должны быть подтверждены. Не выводить признание расхода из суммы аванса."
+
+  - id: DOC-12
+    name: "Копия файла и совпадение реквизитов"
+    documents: ["две версии первички", "реестр файлов"]
+    kind: project_evidence_check
+    formula: "same_bytes => один представитель файла и каждая его подтверждённая операция один раз"
+    tolerance_rub: null
+    rounding: "Не применяется."
+    sources: [law402, result_contract]
+    arithmetic_without_ai: false
+    limits: "Это правило доказательств DocCheck. Тип, стороны, номер, дата и сумма дают кандидата на связь. Разные файлы с совпавшими полями не исключаются без основания."
+
+  - id: DOC-13
+    name: "Исправление, заменяющая версия и поздний документ"
+    documents: ["исходная первичка", "исправление или корректировка", "служебная записка", "манифест"]
+    kind: project_evidence_check
+    formula: "recheck = affected_rows(changed_document) при подтверждённой связи и применимости"
+    tolerance_rub: null
+    rounding: "Не применяется."
+    sources: [law402, vat, result_contract]
+    arithmetic_without_ai: false
+    limits: "Для исправления по общему правилу проверить дату и подписи с учётом специальных запретов. Позднее получение само по себе не меняет дату факта. Правило замены и права на пересмотр определяются отдельно."
