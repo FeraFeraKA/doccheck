@@ -47,6 +47,7 @@ interface PrimaryReviewIssue extends ReviewIssue {
 interface ReviewDocument {
   id: string;
   name: string;
+  format?: string | null;
   role: string;
   decision: { state: string; reason_code: string; message: string; evidence_refs: string[] };
   errors: ReviewIssue[];
