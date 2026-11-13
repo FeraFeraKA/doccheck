@@ -88,8 +88,13 @@ test('source pane opens the stored original at a mobile width', async ({ page })
   await page.goto(`/checks/${id}`);
   await page.getByRole('button', { name: 'Просмотреть источник' }).click();
   const preview = page.getByRole('region', { name: 'Просмотр источника' });
+  const drawer = page.getByRole('dialog', { name: 'Источник документа' });
+  await expect(drawer).toBeVisible();
   await expect(preview.getByRole('link', { name: 'Скачать оригинал' })).toBeVisible();
   await expect(preview.getByRole('link', { name: /Открыть страницу 1 PDF/ })).toHaveAttribute('href', /#page=1$/);
+  await page.keyboard.press('Escape');
+  await expect(drawer).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Просмотреть источник' })).toBeFocused();
   await page.getByText('Основания по слагаемым', { exact: true }).press('Enter');
   const amount = page.getByRole('button', { name: /^Сумма · .*C7$/ });
   await amount.press('Enter');
@@ -105,6 +110,8 @@ test('source pane opens the stored original at a mobile width', async ({ page })
     `/api/v0/runs/${id}/documents/ledger/fragments?evidence_id=amount-2`,
   ]);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  await drawer.getByRole('button', { name: 'Вернуться к таблице' }).click();
+  await expect(drawer).toHaveCount(0);
 });
 
 test('sources on the same PDF page have distinct selectable boxes at 320px', async ({ page }) => {

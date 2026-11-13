@@ -360,6 +360,7 @@ test('the selected stored evidence opens its own original and address', async ({
     '/api/v0/runs/run-with-source/documents/report/fragments?evidence_id=report-a',
   ]));
 
+  await page.getByRole('button', { name: 'Закрыть просмотр источника' }).click();
   await page.getByLabel('Доказательство').selectOption('amount-1');
   await expect(preview).toHaveCount(0);
   await open.click();

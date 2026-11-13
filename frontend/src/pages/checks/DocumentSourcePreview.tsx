@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import './source-drawer.css';
 import { formatLocation } from './reviewResult';
 import {
   getSourceEvidence, getSourceOriginal, InvalidSourceResponseError, SourceHttpError,
@@ -117,69 +118,115 @@ function SelectedDocumentSource({ runId, document, evidenceId, onRetry }: {
     ? evidence.value.locator : null;
   const page = address?.kind === 'page' ? address : null;
   const canRetry = original.status === 'error' || evidence.status === 'error';
+  const pdfUrl = original.status === 'ready'
+    ? page ? `${original.value}#page=${page.page}` : original.value
+    : null;
+  const download = original.status === 'ready'
+    ? <a href={original.value} download={document.name}>Скачать оригинал</a> : null;
+  const fragment = evidence.status === 'ready'
+    ? <div><small>Выбранный фрагмент</small><strong>{evidence.value.raw_value}</strong></div>
+    : null;
+  const retry = canRetry
+    ? <button type="button" onClick={onRetry}>Повторить загрузку источника</button> : null;
 
-  return <section aria-label="Просмотр источника" className="document-viewer mt-3 space-y-2">
-    <p className="document-toolbar"><strong>{document.name}</strong></p>
-    {evidenceId === null && <p>Адрес фрагмента отсутствует.</p>}
-    {evidenceId !== null && evidence.status === 'loading' && <p role="status">Загрузка адреса…</p>}
-    {evidence.status === 'error' && <p role="alert">{evidence.message}</p>}
-    {evidence.status === 'ready' && (address === null
-      ? <p>Адрес фрагмента не поддерживается для этого формата.</p>
-      : <p><strong>Адрес</strong> {formatLocation(address)}</p>)}
-    {original.status === 'loading' && <p role="status">Загрузка оригинала…</p>}
-    {original.status === 'error' && <p role="alert">{original.message}</p>}
-    {original.status === 'ready' && <>
-      <p><a href={original.value} download={document.name}>Скачать оригинал</a></p>
-      {format === 'pdf' && (
+  return <section aria-label="Просмотр источника" className="source-viewer">
+    <div className="source-viewer-heading"><strong>{document.name}</strong>
+      {evidenceId === null && <p>Адрес фрагмента отсутствует.</p>}
+      {evidenceId !== null && evidence.status === 'loading' && <p role="status">Загрузка адреса…</p>}
+      {evidence.status === 'error' && <p role="alert">{evidence.message}</p>}
+      {evidence.status === 'ready' && (address === null
+        ? <p>Адрес фрагмента не поддерживается для этого формата.</p>
+        : <p><strong>Адрес</strong> <span>{formatLocation(address)}</span></p>)}
+    </div>
+    {original.status === 'ready' && format !== 'png' && <div className="source-viewer-toolbar">
+      {format === 'pdf' && page && <span>Стр. {page.page}</span>}
+      {format === 'pdf' && pdfUrl && (
         <a
-          href={page ? `${original.value}#page=${page.page}` : original.value}
+          href={pdfUrl}
           target="_blank"
           rel="noopener noreferrer"
         >
           {page ? `Открыть страницу ${page.page} PDF (в новой вкладке)` : 'Открыть PDF (в новой вкладке)'}
         </a>
       )}
-      {format === 'png' && (
-        <div className="document-viewport">
-          <SourceImage key={original.value} url={original.value} name={document.name} box={page?.bbox} />
-        </div>
-      )}
+      {download}
+    </div>}
+    {original.status === 'loading' && <div className="source-viewer-placeholder"><p role="status">Загрузка оригинала…</p></div>}
+    {original.status === 'error' && <div className="source-viewer-placeholder"><p role="alert">{original.message}</p></div>}
+    {original.status === 'ready' && format === 'png' && (
+      <SourceImage key={original.value} url={original.value} name={document.name} page={page?.page}
+        box={page?.bbox} download={download} fragment={fragment} retry={retry} />
+    )}
+    {original.status === 'ready' && format !== 'png' && <div className="source-viewer-placeholder">
+      {format === 'pdf' && <p>Страница открывается в PDF-просмотрщике браузера.</p>}
       {(format === 'xlsx' || format === 'docx') && (
         <p>Для просмотра по адресу откройте скачанный файл в офисном приложении.</p>
       )}
       {format !== 'pdf' && format !== 'png' && format !== 'xlsx' && format !== 'docx' && (
         <p>Предпросмотр этого формата недоступен.</p>
       )}
-    </>}
-    {canRetry && <button type="button" onClick={onRetry}>Повторить загрузку источника</button>}
+    </div>}
+    {(original.status !== 'ready' || format !== 'png') && (fragment || retry) && <div className="source-viewer-footer">
+      {fragment}{retry}
+    </div>}
   </section>;
 }
 
-function SourceImage({ url, name, box }: {
+function SourceImage({ url, name, page, box, download, fragment, retry }: {
   url: string;
   name: string;
+  page?: number;
   box?: [number, number, number, number] | null;
+  download: React.ReactNode;
+  fragment: React.ReactNode;
+  retry: React.ReactNode;
 }) {
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
-  if (state === 'error') return <p role="alert">Предпросмотр изображения недоступен.</p>;
+  const [zoom, setZoom] = useState(100);
+  const [highlight, setHighlight] = useState(true);
+  const mark = useRef<HTMLSpanElement>(null);
 
-  return <div className="relative inline-block max-w-full">
-    <img
-      src={url}
-      alt={name}
-      className="block h-auto max-w-full"
-      onLoad={() => setState('ready')}
-      onError={() => setState('error')}
-    />
-    {state === 'ready' && box && <span
-      aria-hidden="true"
-      className="pointer-events-none absolute border-2 border-rose-600"
-      style={{
-        left: `${box[0] * 100}%`,
-        top: `${box[1] * 100}%`,
-        width: `${(box[2] - box[0]) * 100}%`,
-        height: `${(box[3] - box[1]) * 100}%`,
-      }}
-    />}
-  </div>;
+  return <>
+    <div className="source-viewer-toolbar">
+      {page && <span>Стр. {page}</span>}
+      {state === 'ready' && <div className="source-viewer-zoom">
+        <button type="button" aria-label="Уменьшить масштаб" disabled={zoom <= 75} onClick={() => setZoom(zoom - 25)}>−</button>
+        <span aria-label="Масштаб документа">{zoom}%</span>
+        <button type="button" aria-label="Увеличить масштаб" disabled={zoom >= 175} onClick={() => setZoom(zoom + 25)}>+</button>
+        <button type="button" aria-label="Сбросить масштаб" disabled={zoom === 100} onClick={() => setZoom(100)}>↺</button>
+      </div>}
+      {box && state === 'ready' && <button type="button" aria-pressed={highlight}
+        onClick={() => setHighlight(!highlight)}>Подсветка</button>}
+      {download}
+    </div>
+    {state === 'error' ? <div className="source-viewer-placeholder"><p role="alert">Предпросмотр изображения недоступен.</p></div>
+      : <div className="source-viewer-viewport" role="region" tabIndex={0} aria-label={`Просмотр документа: ${name}`}>
+      {state === 'loading' && <p role="status">Загрузка изображения…</p>}
+      <div className="source-viewer-sheet" style={{ width: `${zoom}%` }}>
+        <img
+          src={url}
+          alt={name}
+          draggable={false}
+          onLoad={() => setState('ready')}
+          onError={() => setState('error')}
+        />
+        {state === 'ready' && box && highlight && <span
+          ref={mark}
+          aria-hidden="true"
+          className="source-viewer-highlight"
+          style={{
+            left: `${box[0] * 100}%`,
+            top: `${box[1] * 100}%`,
+            width: `${(box[2] - box[0]) * 100}%`,
+            height: `${(box[3] - box[1]) * 100}%`,
+          }}
+        />}
+      </div>
+    </div>}
+    {(fragment || retry || (box && state === 'ready')) && <div className="source-viewer-footer">
+      {fragment}
+      {box && state === 'ready' && <button type="button" disabled={!highlight} onClick={() => mark.current?.scrollIntoView({ block: 'center', inline: 'center' })}>К фрагменту</button>}
+      {retry}
+    </div>}
+  </>;
 }

@@ -4,6 +4,7 @@ import { loadCheckRun, runStatusLabels } from './checkData';
 import type { RunDetails } from './checkData';
 import { demoJob } from './demoData';
 import { DocumentSourcePreview } from './DocumentSourcePreview';
+import { SourceDrawer } from './SourceDrawer';
 import { FindingsHttpError, loadFindings } from './loadFindings';
 import { ResultHeader } from './ResultHeader';
 import type { CheckView } from './ResultHeader';
@@ -404,16 +405,18 @@ function Reconciliation({ result, storedRunId, rowJump }: {
               </dl>
             ) : <p>Адрес источника недоступен.</p>}
             {storedRunId && source && document && <>
-              <button type="button" aria-expanded={openSourceId === source.id}
-                onClick={() => setOpenSourceId(openSourceId === source.id ? undefined : source.id)}>
-                {openSourceId === source.id ? 'Закрыть просмотр источника' : 'Просмотреть источник'}
+              <button type="button" aria-haspopup="dialog" aria-expanded={openSourceId === source.id}
+                onClick={() => setOpenSourceId(source.id)}>
+                Просмотреть источник
               </button>
               {openSourceId === source.id && (
-                <DocumentSourcePreview
-                  runId={storedRunId}
-                  document={{ id: document.id, name: document.name, format: document.format ?? null }}
-                  evidenceId={source.id}
-                />
+                <SourceDrawer onClose={() => setOpenSourceId(undefined)}>
+                  <DocumentSourcePreview
+                    runId={storedRunId}
+                    document={{ id: document.id, name: document.name, format: document.format ?? null }}
+                    evidenceId={source.id}
+                  />
+                </SourceDrawer>
               )}
             </>}
             {!storedRunId && <p className="checks-caption">В готовом примере доступны адреса источников.</p>}
