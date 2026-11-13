@@ -41,7 +41,7 @@ _NUMBER_END = (
     r"(?:по\s+|к\s+|для\s+)?(?:договор\w*|контракт\w*)\b))"
 )
 _DOCUMENT_HEADER = re.compile(
-    r"\s*(?:акт|сч[её]т|упд|ведомость|справка|служебная\s+записка|"
+    r"\s*(?:акт(?:\s+оказанных\s+услуг)?|сч[её]т|упд|ведомость|справка|служебная\s+записка|"
     r"универсальный\s+передаточный\s+документ|"
     r"номер\s+(?:документа|акта)|(?:№\s*)?документ(?:а)?)\s*[:：]?\s*",
     re.IGNORECASE,
@@ -546,6 +546,37 @@ def _record(raw: dict[str, object], prepared: _Prepared) -> DocumentIdentity:
     )
 
 
+def _number_review_queue(
+    raw: dict[str, object], documents: Sequence[DocumentIdentity]
+) -> dict[str, object]:
+    required = {document.id for document in documents if document.number_requires_review}
+    listed = {_required_text(item) for item in _array(raw.get("number_review_document_ids"))}
+    cards = [_mapping(item) for item in _array(raw.get("number_cards"))]
+    card_ids = {_required_text(item) for card in cards for item in _array(card.get("document_ids"))}
+    # Preserve the module's grouping and append singleton cards where the adapter
+    # requires review without identifying any safe comparison documents.
+    missing = sorted(required - card_ids)
+    cards.extend(
+        {
+            "document_ids": [document_id],
+            "comparison_ids": [document_id],
+            "kind": "number_review",
+            "correction_propagates": False,
+            "is_duplicate_group": False,
+        }
+        for document_id in missing
+    )
+    flagged = sorted(listed | required)
+    return {
+        **raw,
+        "number_review_document_ids": flagged,
+        "number_cards": cards,
+        "number_review_documents": len(flagged),
+        "number_review_cards": len(cards),
+        "all_unverified_numbers_are_visible": set(flagged) <= card_ids.union(missing),
+    }
+
+
 def _known_id(value: object, known: Mapping[str, _Prepared]) -> str:
     document_id = _required_text(value)
     if document_id not in known:
@@ -644,6 +675,6 @@ def identify_documents(
         tuple(records),
         tuple(errors),
         _duplicates(_array(groups.get("groups")), usable),
-        _mapping(result.get("review_queue")),
+        _number_review_queue(_mapping(result.get("review_queue")), records),
         tuple(_mapping(item) for item in _array(groups.get("review_pairs"))),
     )

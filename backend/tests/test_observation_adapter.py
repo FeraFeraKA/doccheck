@@ -162,10 +162,11 @@ def test_retains_source_provenance_when_module_role_cannot_be_rechecked(
     assert candidate.sources == () and candidate.source_ambiguous
 
 
-def test_bare_number_needs_an_adjacent_header_address(module_path, tmp_path):
+@pytest.mark.parametrize("heading", ["Акт", "Акт оказанных услуг"])
+def test_bare_number_needs_an_adjacent_header_address(module_path, tmp_path, heading):
     document = _document(tmp_path)
     label = SourceObservation(
-        "Акт", PageLocator(kind="page", page=1, bbox=(0.1, 0.1, 0.2, 0.2)), "native"
+        heading, PageLocator(kind="page", page=1, bbox=(0.1, 0.1, 0.2, 0.2)), "native"
     )
     reading = SourceObservation(
         "№ 412", PageLocator(kind="page", page=1, bbox=(0.8, 0.8, 0.9, 0.9)), "native"
@@ -195,15 +196,27 @@ def test_contract_header_does_not_confirm_document_number(module_path, tmp_path)
         SourceObservation("Акт по договору:", PageLocator(kind="page", page=1, line=3), "native"),
         SourceObservation("№ 543", PageLocator(kind="page", page=1, line=4), "native"),
     )
-    (record,) = identify_documents(
-        [replace(document, observations=observations)], synthetic=True
-    ).documents
+    result = identify_documents([replace(document, observations=observations)], synthetic=True)
+    (record,) = result.documents
     number = next(item for item in record.candidates if item.field == "doc_number")
     assert number.value == "543"
     assert number.sources == () and number.source_ambiguous
     assert number.diagnostic == "unconfirmed_document_number_role"
     assert observations[1] in number.provenance
     assert record.number_requires_review
+    queue = result.review_queue
+    assert queue["number_review_document_ids"] == [record.id]
+    assert queue["number_review_documents"] == queue["number_review_cards"] == 1
+    assert queue["all_unverified_numbers_are_visible"] is True
+    assert queue["number_cards"] == [
+        {
+            "document_ids": [record.id],
+            "comparison_ids": [record.id],
+            "kind": "number_review",
+            "correction_propagates": False,
+            "is_duplicate_group": False,
+        }
+    ]
 
 
 @pytest.mark.parametrize("label", ["№ документа: 412", "Номер акта: 412", "Документ № 412"])
