@@ -48,7 +48,7 @@ backend, сохранив согласованный интерфейс и яв�
 ## Проверки
 
 - Node 26.12.1, pnpm 12.14.0. Прошли `pnpm install --frozen-lockfile --offline`,
-  `pnpm typecheck`, `pnpm build` и `git diff --check`.
+  `pnpm lint`, `pnpm typecheck`, `pnpm build` и `git diff --check`.
 - `pnpm test` — 18 тестов. Новый набор проверяет загрузку, ошибку и повтор,
   пустую историю, нулевой прогресс, отсутствие результата, сбой обработки
   и защиту от запоздавшего ответа при смене ID. Отдельный сценарий проверяет
