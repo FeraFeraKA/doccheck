@@ -49,7 +49,7 @@ for (const width of [320, 390]) {
     await page.setViewportSize({ width, height: 844 });
     await page.route('**/api/v0/runs', (route) => route.fulfill({ json: { items: [], next_cursor: null } }));
     await page.goto('/checks');
-    await page.getByRole('link', { name: 'Синтетическая сверка' }).click();
+    await page.getByRole('link', { name: 'Синтетическая сверка', exact: true }).click();
 
     await expect(page.getByText('Расхождения: 1', { exact: true })).toBeInViewport({ ratio: 1 });
     await expect(page.getByRole('heading', { name: 'Показатели' })).toBeVisible();
@@ -100,7 +100,7 @@ test('the accountant distinguishes missing files, invalid selection and unknown 
   await page.goto('/checks/unknown/conclusion');
   await expect(page.getByRole('heading', { name: 'Проверка не найдена' })).toBeVisible();
   await page.getByRole('link', { name: 'Все проверки' }).click();
-  await expect(page.getByRole('link', { name: 'Синтетическая сверка' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Синтетическая сверка', exact: true })).toBeVisible();
   await page.getByRole('searchbox', { name: 'Поиск на странице' }).fill('нет совпадений');
   await expect(page.getByText('Проверки не найдены.')).toBeVisible();
 });
@@ -125,12 +125,12 @@ test('saved run and history cursor are recovered from the URL', async ({ page })
     json: { code: 'result_pending', message: 'Результат пока недоступен' },
   }));
   await page.goto('/checks');
-  await expect(page.getByRole('link', { name: 'Синтетическая сверка' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Синтетическая сверка', exact: true })).toBeVisible();
   await page.getByRole('link', { name: 'Более ранние проверки' }).click();
   await page.reload();
-  await expect(page.getByRole('link', { name: 'Проверка older-run' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Проверка older-run', exact: true })).toBeVisible();
   await page.getByRole('link', { name: 'К новым проверкам' }).click();
-  await page.getByRole('link', { name: 'Проверка saved-run' }).click();
+  await page.getByRole('link', { name: 'Проверка saved-run', exact: true }).click();
   await page.reload();
   await expect(page.getByRole('heading', { name: 'Проверка saved-run' })).toBeVisible();
   await expect(page.getByText('Обработано документов: 2 из 2')).toBeVisible();
@@ -140,7 +140,7 @@ test('saved run and history cursor are recovered from the URL', async ({ page })
 test('the synthetic conclusion shows XLSX export as unavailable', async ({ page }) => {
   await page.route('**/api/v0/runs', (route) => route.fulfill({ json: { items: [], next_cursor: null } }));
   await page.goto('/checks');
-  await page.getByRole('link', { name: 'Синтетическая сверка' }).click();
+  await page.getByRole('link', { name: 'Синтетическая сверка', exact: true }).click();
   await page.getByRole('link', { name: 'Заключение' }).click();
 
   const download = page.getByRole('button', { name: 'Скачать XLSX' });
