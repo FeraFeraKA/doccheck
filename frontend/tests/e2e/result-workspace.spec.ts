@@ -64,6 +64,7 @@ test('issue navigation scrolls the selected row into the mobile table and shows 
 test('source pane opens the stored original at a mobile width', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const id = 'stored-layout';
+  const ledgerRequests: string[] = [];
   await page.route(`**/api/v0/runs/${id}`, (route) => route.fulfill({ json: {
     run_id: id, status: 'completed_with_issues', created_at: '2026-11-14T00:00:00Z', error: null,
     progress: { processed_documents: 4, total_documents: 4 },
@@ -76,11 +77,32 @@ test('source pane opens the stored original at a mobile width', async ({ page })
   await page.route(`**/api/v0/runs/${id}/documents/report`, (route) => route.fulfill({
     body: '%PDF-1.4 synthetic transport fixture', contentType: 'application/octet-stream',
   }));
+  await page.route(`**/api/v0/runs/${id}/documents/ledger**`, (route) => {
+    const url = new URL(route.request().url());
+    ledgerRequests.push(url.pathname + url.search);
+    return url.pathname.endsWith('/fragments')
+      ? route.fulfill({ json: example.result.evidence.find(({ id }) => id === 'amount-2') })
+      : route.fulfill({ body: 'synthetic XLSX transport fixture', contentType: 'application/octet-stream' });
+  });
 
   await page.goto(`/checks/${id}`);
   await page.getByRole('button', { name: 'Просмотреть источник' }).click();
   const preview = page.getByRole('region', { name: 'Просмотр источника' });
   await expect(preview.getByRole('link', { name: 'Скачать оригинал' })).toBeVisible();
   await expect(preview.getByRole('link', { name: /Открыть страницу 1 PDF/ })).toHaveAttribute('href', /#page=1$/);
+  await page.getByText('Основания по слагаемым', { exact: true }).press('Enter');
+  const amount = page.getByRole('button', { name: /^Сумма · .*C7$/ });
+  await amount.press('Enter');
+  await expect(amount).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('combobox', { name: 'Доказательство' })).toHaveValue('amount-2');
+  await expect(preview).toHaveCount(0);
+  expect(ledgerRequests).toEqual([]);
+  await page.getByRole('button', { name: 'Просмотреть источник' }).click();
+  await expect(preview.getByText(/Лист «Синтетика», C7/)).toBeVisible();
+  await expect(preview.getByRole('link', { name: 'Скачать оригинал' })).toBeVisible();
+  expect([...new Set(ledgerRequests)].sort()).toEqual([
+    `/api/v0/runs/${id}/documents/ledger`,
+    `/api/v0/runs/${id}/documents/ledger/fragments?evidence_id=amount-2`,
+  ]);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
 });

@@ -17,6 +17,14 @@ const tabs = [
   ['/conclusion', 'Заключение'], ['/log', 'Журнал проверки'],
 ];
 
+const componentEvidenceFields = [
+  ['amount_refs', 'Сумма'],
+  ['contract_refs', 'Договор'],
+  ['period_refs', 'Период'],
+  ['article_refs', 'Статья'],
+  ['identity_refs', 'Идентификация документа'],
+] as const;
+
 type CheckView = 'table' | 'documents' | 'exceptions' | 'conclusion' | 'log';
 
 export function CheckDetail({ view, loadRun = loadCheckRun }: {
@@ -220,21 +228,19 @@ function Reconciliation({ result, storedRunId }: { result: ReviewResult; storedR
   const affectedFiles = documents.filter((item) => item.errors.some((error) => fileErrorIds.has(error.id)));
   const refs = new Set([
     ...row?.reported_evidence_refs ?? [],
-    ...row?.calculation?.components.flatMap((component) => [
-      ...component.amount_refs,
-      ...component.contract_refs,
-      ...component.period_refs,
-      ...component.article_refs,
-      ...component.identity_refs ?? [],
-    ]) ?? [],
+    ...row?.calculation?.components.flatMap((component) =>
+      componentEvidenceFields.flatMap(([field]) => component[field] ?? []),
+    ) ?? [],
     ...row?.reasons.flatMap((reason) => reason.evidence_refs) ?? [],
     ...row?.completeness.evidence_refs ?? [],
     ...issue?.evidence_refs ?? [],
   ]);
   const sources = evidence.filter(({ id }) => refs.has(id));
+  const sourcesById = new Map(sources.map((item) => [item.id, item]));
+  const documentsById = new Map(documents.map((item) => [item.id, item]));
   const source = sources.find(({ id }) => id === evidenceId) ?? sources[0];
   const sourceIndex = sources.findIndex(({ id }) => id === source?.id);
-  const document = documents.find(({ id }) => id === source?.document_id);
+  const document = source && documentsById.get(source.document_id);
 
   function selectSource(id: string) {
     setEvidenceId(id);
@@ -319,11 +325,24 @@ function Reconciliation({ result, storedRunId }: { result: ReviewResult; storedR
               {row.reasons.map((reason) => <p key={reason.code}>{reason.message}</p>)}
               {row.calculation && row.calculation.components.length > 0 && <details>
                 <summary>Основания по слагаемым</summary>
-                <ul>{row.calculation.components.map((component) => (
-                  <li key={component.amount_refs.join(' ')}>
-                    {formatDecimal(component.amount)} {row.unit} · {component.relation_reason}
+                <ol aria-label="Слагаемые" className="component-evidence-list">{row.calculation.components.map((component) => (
+                  <li key={component.amount_refs[0]}>
+                    <p>{formatDecimal(component.amount)} {row.unit} · {component.relation_reason}</p>
+                    <ul>{componentEvidenceFields.flatMap(([field, label]) =>
+                      (component[field] ?? []).map((id) => {
+                        const item = sourcesById.get(id);
+                        const file = item && documentsById.get(item.document_id);
+                        return <li key={field + ':' + id}>
+                          {item && file ? (
+                            <button type="button" aria-pressed={source?.id === id} onClick={() => selectSource(id)}>
+                              {label} · {file.name} · {formatLocation(item.locator)}
+                            </button>
+                          ) : <span>{label} · Адрес источника недоступен.</span>}
+                        </li>;
+                      }),
+                    )}</ul>
                   </li>
-                ))}</ul>
+                ))}</ol>
               </details>}
             </div>
             {issue && <p>{issue.message}</p>}
@@ -336,7 +355,7 @@ function Reconciliation({ result, storedRunId }: { result: ReviewResult; storedR
               <label>Доказательство
               <select value={source?.id} onChange={(event) => selectSource(event.target.value)}>
                 {sources.map((item) => (
-                  <option key={item.id} value={item.id}>{documents.find(({ id }) => id === item.document_id)?.name}
+                  <option key={item.id} value={item.id}>{documentsById.get(item.document_id)?.name}
                     {' · '}{formatLocation(item.locator)}</option>
                 ))}
               </select>
