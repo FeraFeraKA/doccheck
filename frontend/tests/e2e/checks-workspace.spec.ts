@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import example from '../../../contracts/check-result.v1.synthetic.json' with { type: 'json' };
 
 test('the accountant opens the synthetic reconciliation and sees discrepancies and sources', async ({ page }) => {
   const apiRequests: string[] = [];
@@ -116,6 +117,10 @@ test('saved run and history cursor are recovered from the URL', async ({ page })
   await page.route('**/api/v0/runs/saved-run', (route) => route.fulfill({ json: {
     ...summary, progress: { processed_documents: 2, total_documents: 2 },
   } }));
+  await page.route('**/api/v0/runs/saved-run/findings', (route) => route.fulfill({
+    status: 409,
+    json: { code: 'result_pending', message: 'Результат пока недоступен' },
+  }));
   await page.goto('/checks');
   await expect(page.getByRole('link', { name: 'Синтетическая сверка' })).toBeVisible();
   await page.getByRole('link', { name: 'Более ранние проверки' }).click();
@@ -141,4 +146,99 @@ test('the synthetic conclusion shows XLSX export as unavailable', async ({ page 
   const note = 'Скачивание результата станет доступно после подключения экспорта.';
   await expect(download).toHaveAccessibleDescription(note);
   await expect(page.getByText(note)).toBeVisible();
+});
+
+test('the finished check loads stored findings and can retry without repeating status polling', async ({ page }) => {
+  const runId = 'partial-result';
+  const [first, ...otherRows] = example.result.rows;
+  const findings = {
+    ...example.result,
+    run_id: runId,
+    rows: [{
+      ...first,
+      expected_value: null,
+      observed_evidence_sum: first.calculation.components[0].amount,
+      delta: null,
+      status: 'unverified',
+      completeness: { ...first.completeness, state: 'incomplete', reason: 'Не хватает одной операции', evidence_refs: [] },
+      calculation: { ...first.calculation, components: first.calculation.components.slice(0, 1) },
+      reasons: [{ code: 'missing_evidence', message: 'Одна операция не подтверждена', evidence_refs: [] }],
+      root_issue_id: null,
+    }, ...otherRows],
+    summary: {
+      ...example.result.summary,
+      counts: { verified: 0, discrepancy: 0, unverified: 2 },
+      primary_issues: example.result.summary.primary_issues.filter((issue) => issue.id !== 'issue-a'),
+      conclusion: 'Оба показателя остаются непроверенными.',
+    },
+  };
+  let statusCalls = 0;
+  await page.route('**/api/v0/runs/partial-result', (route) => {
+    statusCalls += 1;
+    return route.fulfill({ json: {
+      run_id: runId, status: 'completed_with_issues', created_at: '2026-11-13T12:00:00Z', error: null,
+      progress: { processed_documents: 4, total_documents: 4 },
+    } });
+  });
+  let finishFailure: (() => void) | undefined;
+  const firstFailure = new Promise<void>((resolve) => { finishFailure = resolve; });
+  let findingsCalls = 0;
+  await page.route('**/api/v0/runs/partial-result/findings', async (route) => {
+    findingsCalls += 1;
+    if (findingsCalls === 1) {
+      await firstFailure;
+      return route.fulfill({ status: 503, json: { code: 'service_unavailable', message: 'Сервис недоступен' } });
+    }
+    return route.fulfill({ json: findings });
+  });
+  await page.goto('/checks/partial-result');
+  await expect(page.getByText('Загрузка результата сверки…')).toBeVisible();
+  finishFailure?.();
+  await expect(page.getByRole('alert')).toHaveText('Не удалось загрузить результат сверки.');
+  await expect(page.getByText('Состояние проверки · Завершена с замечаниями')).toBeVisible();
+  await page.getByRole('button', { name: 'Повторить загрузку результата' }).click();
+
+  await expect(page.getByText('Синтетический результат · сохранённая проверка')).toBeVisible();
+  const partial = page.getByRole('row').filter({ hasText: 'Синтетическая статья A' });
+  await expect(partial.getByText('Частичная сумма: 60,25 RUB')).toBeVisible();
+  await expect(partial.getByRole('cell', { name: '—', exact: true })).toBeVisible();
+  await expect(partial.getByRole('cell', { name: 'Не проверен', exact: true })).toBeVisible();
+  await page.getByLabel('Доказательство').selectOption('amount-1');
+  await expect(page.getByText('Лист «Синтетика», C6', { exact: true })).toBeVisible();
+  await page.getByText('Основания по слагаемым').click();
+  await expect(page.getByText(/Операция в строке 6 совпала по договору/)).toBeVisible();
+
+  const zero = page.getByRole('row').filter({ hasText: 'Синтетическая статья B' });
+  await expect(zero.getByRole('cell', { name: '0,00', exact: true })).toBeVisible();
+  await zero.getByRole('button').click();
+  await expect(page.getByText('Источник статьи B не прочитан')).toBeVisible();
+  await expect(page.getByText(/Ошибка чтения файла/)).toBeVisible();
+  await page.getByRole('link', { name: 'Исключения' }).click();
+  await expect(page.getByText('Ошибка чтения', { exact: true })).toBeVisible();
+  expect(statusCalls).toBe(1);
+  expect(findingsCalls).toBe(2);
+});
+
+test('a non-synthetic saved result with no rows has an explicit empty state', async ({ page }) => {
+  await page.route('**/api/v0/runs/empty-run', (route) => route.fulfill({ json: {
+    run_id: 'empty-run', status: 'completed', created_at: '2026-11-13T12:00:00Z', error: null,
+    progress: { processed_documents: 2, total_documents: 2 },
+  } }));
+  await page.route('**/api/v0/runs/empty-run/findings', (route) => route.fulfill({ json: {
+    ...example.result,
+    run_id: 'empty-run',
+    synthetic: false,
+    scope: { ...example.result.scope, report_row_locator: example.result.evidence[0].locator },
+    rows: [],
+    summary: {
+      counts: { verified: 0, discrepancy: 0, unverified: 0 },
+      primary_issues: [],
+      conclusion: 'Показатели отсутствуют.',
+    },
+  } }));
+
+  await page.goto('/checks/empty-run');
+  await expect(page.getByText('Показатели отсутствуют.', { exact: true })).toBeVisible();
+  await expect(page.getByText('Синтетический результат · сохранённая проверка')).toHaveCount(0);
+  await expect(page.getByRole('table')).toHaveCount(0);
 });
