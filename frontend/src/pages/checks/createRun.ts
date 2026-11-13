@@ -1,43 +1,11 @@
 import { HttpError } from '../../shared/api/requestJson';
+import { isRunId } from './runStatusApi';
 
 const runsPath = '/api/v0/runs';
-const runIdPattern = /^[A-Za-z0-9_-]+$/;
-
-interface PageLocator {
-  kind: 'page';
-  page: number;
-  bbox?: readonly [number, number, number, number] | null;
-  line?: number | null;
-  table_row?: number | null;
-  table_column?: number | null;
-  fragment_id?: string | null;
-}
-
-interface SheetLocator {
-  kind: 'sheet';
-  sheet: string;
-  range: string;
-}
-
-interface ParagraphLocator {
-  kind: 'paragraph';
-  paragraph: number;
-}
-
-interface TableCellLocator {
-  kind: 'table_cell';
-  table: number;
-  row: number;
-  cell: number;
-}
 
 export interface RunUpload {
   report: File;
   documents: readonly File[];
-  contract_number: string;
-  period_start: string;
-  period_end: string;
-  report_row_locator: PageLocator | SheetLocator | ParagraphLocator | TableCellLocator;
 }
 
 export interface AcceptedRun {
@@ -124,10 +92,6 @@ export function prepareRunUpload(upload: RunUpload, idempotencyKey: string) {
   const form = new FormData();
   form.append('report', upload.report);
   for (const document of upload.documents) form.append('documents', document);
-  form.append('contract_number', upload.contract_number);
-  form.append('period_start', upload.period_start);
-  form.append('period_end', upload.period_end);
-  form.append('report_row_locator', JSON.stringify(upload.report_row_locator));
 
   return async (signal?: AbortSignal): Promise<AcceptedRun> => {
     const requestUrl = new URL(runsPath, globalThis.location.origin);
@@ -144,7 +108,7 @@ export function prepareRunUpload(upload: RunUpload, idempotencyKey: string) {
 
     const value = await readJson(response);
     if (!isRecord(value) || value.status !== 'queued'
-      || typeof value.run_id !== 'string' || !runIdPattern.test(value.run_id)) {
+      || !isRunId(value.run_id)) {
       throw new InvalidRunUploadResponse();
     }
 

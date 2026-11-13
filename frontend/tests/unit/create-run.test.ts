@@ -21,10 +21,6 @@ function upload(): RunUpload {
       new File(['synthetic second'], 'B.xlsx'),
       new File(['synthetic first'], 'A.docx'),
     ],
-    contract_number: 'КФЗ-2',
-    period_start: '2025-01-01',
-    period_end: '2025-02-28',
-    report_row_locator: { kind: 'page', page: 2, table_row: 8, table_column: 1 },
   };
 }
 
@@ -64,17 +60,12 @@ it('отправляет multipart с файлами в заданном пор�
   const form = await request.formData();
   expect(Array.from(form.keys())).toEqual([
     'report', 'documents', 'documents',
-    'contract_number', 'period_start', 'period_end', 'report_row_locator',
   ]);
   expect(form.get('report')).toMatchObject({ name: 'report.pdf', type: 'application/pdf' });
   expect(form.getAll('documents')).toMatchObject([{ name: 'B.xlsx' }, { name: 'A.docx' }]);
   const firstDocument = form.getAll('documents')[0];
   if (!(firstDocument instanceof File)) throw new Error('Отсутствует первый файл');
   expect(await firstDocument.text()).toBe('synthetic second');
-  expect(form.get('contract_number')).toBe(input.contract_number);
-  expect(form.get('period_start')).toBe(input.period_start);
-  expect(form.get('period_end')).toBe(input.period_end);
-  expect(form.get('report_row_locator')).toBe(JSON.stringify(input.report_row_locator));
 });
 
 it('сохраняет исходный ключ и пакет при явном повторе после сетевого сбоя', async () => {
@@ -88,7 +79,7 @@ it('сохраняет исходный ключ и пакет при явном
 
   await expect(attempt()).rejects.toBe(networkError);
   expect(fetchMock).toHaveBeenCalledTimes(1);
-  input.contract_number = 'Новый договор';
+  input.report = new File(['new synthetic report'], 'new-report.pdf');
   input.documents = [...input.documents].reverse();
 
   await expect(attempt()).resolves.toMatchObject({ run_id: runId });
@@ -103,16 +94,16 @@ it('сохраняет исходный ключ и пакет при явном
   expect(retry.body).toBeInstanceOf(FormData);
   expect(next.body).toBeInstanceOf(FormData);
   if (!(retry.body instanceof FormData) || !(next.body instanceof FormData)) throw new Error('Ожидался multipart');
-  expect(retry.body.get('contract_number')).toBe('КФЗ-2');
+  expect(retry.body.get('report')).toMatchObject({ name: 'report.pdf' });
   expect(retry.body.getAll('documents')).toMatchObject([{ name: 'B.xlsx' }, { name: 'A.docx' }]);
-  expect(next.body.get('contract_number')).toBe('Новый договор');
+  expect(next.body.get('report')).toMatchObject({ name: 'new-report.pdf' });
   expect(next.body.getAll('documents')).toMatchObject([{ name: 'A.docx' }, { name: 'B.xlsx' }]);
 });
 
 it.each([
   [409, { code: 'idempotency_conflict', message: 'Изменён пакет' }],
   [422, { code: 'invalid_input', message: 'Некорректный файл', field: 'documents', file_index: 0 }],
-  [422, { code: 'invalid_input', message: 'Некорректный период', field: 'period_end' }],
+  [422, { code: 'invalid_input', message: 'КФЗ отсутствует', field: 'report' }],
 ])('возвращает структурированную ошибку HTTP %s без повторной отправки', async (status, details) => {
   const fetchMock = stubFetch().mockResolvedValueOnce(Response.json(details, { status }));
   const promise = prepareRunUpload(upload(), key)();
