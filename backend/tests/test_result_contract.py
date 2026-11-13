@@ -217,6 +217,65 @@ def test_transitive_pdf_aliases_are_specific_to_the_document_and_page(payload: d
     assert CheckJob.model_validate(payload).result is not None
 
 
+@pytest.mark.parametrize("reverse_evidence", [False, True])
+def test_pdf_lines_connected_by_one_fragment_share_conflicts_and_duplicates(
+    payload: dict, reverse_evidence: bool
+) -> None:
+    result = payload["result"]
+    row = result["rows"][0]
+    result["documents"][1]["format"] = "pdf"
+    first, second = result["evidence"][2:4]
+    for index, item in enumerate(result["evidence"][4:], start=20):
+        item["locator"] = {"kind": "page", "page": 1, "line": index}
+    first["locator"] = {"kind": "page", "page": 1, "line": 5}
+    second["locator"] = {"kind": "page", "page": 1, "line": 30}
+    for alias_id, line in (("box-first", 5), ("box-last", 6)):
+        result["evidence"].append(
+            {
+                **first,
+                "id": alias_id,
+                "locator": {"kind": "page", "page": 1, "line": line, "bbox": [0.1, 0.1, 0.3, 0.2]},
+            }
+        )
+    alias = {
+        **first,
+        "id": "line-last",
+        "locator": {"kind": "page", "page": 1, "line": 6},
+        "normalized_value": "900.50",
+    }
+    result["evidence"].append(alias)
+    if reverse_evidence:
+        result["evidence"].reverse()
+    with pytest.raises(ValidationError, match="component evidence must agree"):
+        CheckJob.model_validate(payload)
+    alias["normalized_value"] = first["normalized_value"]
+    assert CheckJob.model_validate(payload).result is not None
+    row["calculation"]["components"][1]["amount_refs"] = [alias["id"]]
+    with pytest.raises(ValidationError, match="must not be counted twice"):
+        CheckJob.model_validate(payload)
+
+
+def test_pdf_line_with_multiple_exact_addresses_requires_finer_evidence(payload: dict) -> None:
+    result = payload["result"]
+    row = result["rows"][0]
+    result["documents"][1]["format"] = "pdf"
+    first, second = result["evidence"][2:4]
+    for index, item in enumerate(result["evidence"][4:], start=20):
+        item["locator"] = {"kind": "page", "page": 1, "line": index}
+    first["locator"] = {"kind": "page", "page": 1, "line": 5, "fragment_id": "first"}
+    second["locator"] = {**first["locator"], "fragment_id": "second"}
+    ambiguous = {
+        **first,
+        "id": "line-only",
+        "locator": {"kind": "page", "page": 1, "line": 5},
+    }
+    result["evidence"].append(ambiguous)
+    assert CheckJob.model_validate(payload).result.rows[0].observed_evidence_sum == "120.50"
+    row["calculation"]["components"][0]["amount_refs"] = [ambiguous["id"]]
+    with pytest.raises(ValidationError, match="requires a precise evidence address"):
+        CheckJob.model_validate(payload)
+
+
 @pytest.mark.parametrize("index", [4, 5, 6])
 def test_component_scope_cannot_rely_on_unreadable_files(payload: dict, index: int) -> None:
     evidence = payload["result"]["evidence"][index]
@@ -305,6 +364,25 @@ def test_period_validation_uses_known_bounds_from_other_readings(payload: dict) 
     )
     with pytest.raises(ValidationError, match="lies outside the selected period"):
         CheckJob.model_validate(payload)
+
+
+def test_period_bounds_from_different_addresses_must_be_compatible(payload: dict) -> None:
+    result = payload["result"]
+    period = result["evidence"][5]
+    period["normalized_value"] = {"start": "2025-02-20", "end": None}
+    end = {
+        **period,
+        "id": "period-end",
+        "locator": {**period["locator"], "range": "A4"},
+        "normalized_value": {"start": None, "end": "2025-02-10"},
+    }
+    result["evidence"].append(end)
+    result["rows"][0]["calculation"]["components"][0]["period_refs"].append(end["id"])
+    with pytest.raises(ValidationError, match="one component has incompatible bounds"):
+        CheckJob.model_validate(payload)
+    end["normalized_value"]["end"] = "2025-02-20"
+    assert CheckJob.model_validate(payload).result is not None
+    assert period["normalized_value"]["end"] is None
 
 
 def test_unreadable_file_requires_a_recorded_error(payload: dict) -> None:
@@ -492,6 +570,55 @@ def test_conflicting_identity_cannot_establish_scope_even_if_unreferenced(payloa
     ]
     result["summary"]["counts"].update(discrepancy=0, unverified=2)
     assert CheckJob.model_validate(payload).result.rows[0].status == "unverified"
+
+
+def test_pdf_line_aliases_cannot_hide_an_identity_conflict(payload: dict) -> None:
+    result = payload["result"]
+    row = result["rows"][0]
+    result["documents"].append(
+        {
+            **result["documents"][1],
+            "id": "scope-source",
+            "name": "synthetic-scope.pdf",
+            "format": "pdf",
+            "sha256": "4" * 64,
+        }
+    )
+    result["evidence"][4].update(
+        document_id="scope-source", locator={"kind": "page", "page": 1, "line": 1}
+    )
+    identity = {
+        "id": "ledger-identity",
+        "document_id": "ledger",
+        "kind": "document_identity",
+        "raw_value": "DEMO-ACT-1",
+        "normalized_value": "DEMO-ACT-1",
+        "unit": None,
+        "method": "native",
+        "locator": {"kind": "sheet", "sheet": "Синтетика", "range": "A1"},
+    }
+    result["evidence"].append(identity)
+    for suffix, line, precise in (("first", 5, False), ("box1", 5, True), ("box2", 6, True)):
+        locator = {"kind": "page", "page": 1, "line": line}
+        if precise:
+            locator["bbox"] = [0.1, 0.1, 0.3, 0.2]
+        result["evidence"].append(
+            {**identity, "id": suffix, "document_id": "scope-source", "locator": locator}
+        )
+    for component in row["calculation"]["components"]:
+        component["identity_refs"] = ["ledger-identity", "first"]
+    assert CheckJob.model_validate(payload).result is not None
+    result["evidence"].append(
+        {
+            **identity,
+            "id": "conflicting-identity",
+            "document_id": "scope-source",
+            "locator": {"kind": "page", "page": 1, "line": 6},
+            "normalized_value": "DEMO-ACT-2",
+        }
+    )
+    with pytest.raises(ValidationError, match="document identity evidence must agree"):
+        CheckJob.model_validate(payload)
 
 
 def test_derived_mismatch_requires_discrepancy(payload: dict) -> None:

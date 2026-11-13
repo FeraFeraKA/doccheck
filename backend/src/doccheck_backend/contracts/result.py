@@ -217,42 +217,39 @@ class _EvidenceIndex:
             for key in item.locator.address_keys():
                 previous = addresses.setdefault((item.document_id, key), item.id)
                 parents[representative(item.id)] = representative(previous)
-        self.groups = {item.id: representative(item.id) for item in evidence}
 
-        # Line-only addresses are coarse. Fine addresses on a line stay distinct.
-        self.lines: dict[str, set[PageLine]] = defaultdict(set)
-        self.line_only: dict[str, set[PageLine]] = defaultdict(set)
+        exact_groups: dict[PageLine, set[str]] = defaultdict(set)
+        line_only: dict[str, PageLine] = {}
         for item in evidence:
             locator = item.locator
             if isinstance(locator, PageLocator) and locator.line is not None:
-                group = self.groups[item.id]
                 line = (item.document_id, locator.page, locator.line)
-                self.lines[group].add(line)
                 if ("line", locator.page, locator.line) in locator.address_keys():
-                    self.line_only[group].add(line)
+                    line_only[item.id] = line
+                else:
+                    exact_groups[line].add(representative(item.id))
+
+        # A line can stand for a single exact group. Several groups need finer addresses.
+        self.ambiguous_lines: set[str] = set()
+        for evidence_id, line in line_only.items():
+            groups = exact_groups[line]
+            if len(groups) > 1:
+                self.ambiguous_lines.add(evidence_id)
+            elif groups:
+                parents[representative(evidence_id)] = next(iter(groups))
+        self.groups = {item.id: representative(item.id) for item in evidence}
 
         self.readings: dict[tuple[ReadingKind, str], set[Reading]] = defaultdict(set)
         for item in evidence:
             kind, reading = _reading(item)
             self.readings[kind, self.groups[item.id]].add(reading)
 
-        self.line_readings: dict[tuple[ReadingKind, PageLine], set[Reading]] = defaultdict(set)
-        self.line_only_readings: dict[tuple[ReadingKind, PageLine], set[Reading]] = defaultdict(set)
-        for (kind, group), readings in self.readings.items():
-            for line in self.lines[group]:
-                self.line_readings[kind, line].update(readings)
-            for line in self.line_only[group]:
-                self.line_only_readings[kind, line].update(readings)
-
     def values(self, evidence_id: str, kind: ReadingKind) -> set[Reading]:
-        group = self.groups[evidence_id]
-        values = self.readings[kind, group].copy()
-        for line in self.lines[group]:
-            readings = (
-                self.line_readings if line in self.line_only[group] else self.line_only_readings
+        if evidence_id in self.ambiguous_lines:
+            raise ValueError(
+                "a line with several exact fragments requires a precise evidence address"
             )
-            values.update(readings.get((kind, line), ()))
-        return values
+        return self.readings[kind, self.groups[evidence_id]]
 
     def period_bounds(self, evidence_id: str) -> DateBounds:
         # An absent bound does not contradict an observed bound.
@@ -548,8 +545,6 @@ class CheckResult(ContractModel):
         for reason in row.reasons:
             _require_refs(reason.evidence_refs, evidence)
         used_groups: set[str] = set()
-        used_lines: set[PageLine] = set()
-        used_line_only: set[PageLine] = set()
         for component in row.calculation.components:
             amounts = _require_refs(component.amount_refs, evidence, "amount")
             _check_amount_readings(amounts, row.unit, component.amount, addresses, "component")
@@ -559,13 +554,9 @@ class CheckResult(ContractModel):
                     raise ValueError("components require admitted supporting documents")
             self._check_component_scope(component, row, amounts, documents, evidence, addresses)
             groups = {addresses.groups[item.id] for item in amounts}
-            lines = {line for group in groups for line in addresses.lines[group]}
-            line_only = {line for group in groups for line in addresses.line_only[group]}
-            if used_groups & groups or used_line_only & lines or line_only & used_lines:
+            if used_groups & groups:
                 raise ValueError("an amount evidence address must not be counted twice in a row")
             used_groups.update(groups)
-            used_lines.update(lines)
-            used_line_only.update(line_only)
 
     def _check_component_scope(
         self,
@@ -621,12 +612,16 @@ class CheckResult(ContractModel):
             raise ValueError("separate scope evidence requires a shared source identity")
         if any(item.normalized_value != self.scope.contract_number for item in contracts):
             raise ValueError("contract evidence contradicts the selected contract")
-        for item in periods:
-            start, end = addresses.period_bounds(item.id)
+        bounds = [addresses.period_bounds(item.id) for item in periods]
+        for start, end in bounds:
             if (start is not None and start > self.scope.period_end) or (
                 end is not None and end < self.scope.period_start
             ):
                 raise ValueError("period evidence lies outside the selected period")
+        latest_start = max((start for start, _ in bounds if start is not None), default=None)
+        earliest_end = min((end for _, end in bounds if end is not None), default=None)
+        if latest_start is not None and earliest_end is not None and latest_start > earliest_end:
+            raise ValueError("period evidence for one component has incompatible bounds")
         if row.indicator_code is not None and any(
             item.normalized_value != row.indicator_code for item in articles
         ):
