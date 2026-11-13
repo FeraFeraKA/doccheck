@@ -141,6 +141,8 @@
 }
 
 .checks-error { color: #992420; }
+.checks-export { margin-top: 1rem; }
+
 .checks-caption { margin-top: .75rem; color: #4d6465; font-size: .875rem; }
 
 .checks-stats {

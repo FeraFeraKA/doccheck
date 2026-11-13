@@ -94,3 +94,16 @@ test('the accountant distinguishes missing files, invalid selection and unknown 
   await page.getByRole('searchbox', { name: 'Поиск' }).fill('нет совпадений');
   await expect(page.getByText('Проверки не найдены.')).toBeVisible();
 });
+
+test('the synthetic conclusion shows XLSX export as unavailable', async ({ page }) => {
+  await page.goto('/checks');
+  await page.getByRole('link', { name: 'Синтетическая сверка' }).click();
+  await page.getByRole('link', { name: 'Заключение' }).click();
+
+  const download = page.getByRole('button', { name: 'Скачать XLSX' });
+  await expect(download).toBeVisible();
+  await expect(download).toBeDisabled();
+  const note = 'Скачивание результата станет доступно после подключения экспорта.';
+  await expect(download).toHaveAccessibleDescription(note);
+  await expect(page.getByText(note)).toBeVisible();
+});

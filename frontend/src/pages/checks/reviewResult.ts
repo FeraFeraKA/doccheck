@@ -73,11 +73,12 @@ export function formatLocation(locator: SourceAddress) {
   if ('paragraph' in locator) return `Абзац ${locator.paragraph}`;
   if ('table' in locator) return `Таблица ${locator.table}, строка ${locator.row}, ячейка ${locator.cell}`;
 
-  const page = `Страница ${locator.page}`;
+  const parts = [`Страница ${locator.page}`];
   if (locator.table_row != null && locator.table_column != null) {
-    return `${page}, строка ${locator.table_row}, столбец ${locator.table_column}`;
+    parts.push(`строка ${locator.table_row}`, `столбец ${locator.table_column}`);
+  } else if (locator.line != null) {
+    parts.push(`строка ${locator.line}`);
   }
-  if (locator.line != null) return `${page}, строка ${locator.line}`;
-  if (locator.fragment_id != null) return `${page}, фрагмент ${locator.fragment_id}`;
-  return page;
+  if (locator.fragment_id != null) parts.push(`фрагмент ${locator.fragment_id}`);
+  return parts.join(', ');
 }

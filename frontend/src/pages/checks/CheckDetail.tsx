@@ -83,6 +83,12 @@ function ResultContent({ id, view, result }: { id: string; view: CheckView; resu
       {view === 'conclusion' && <section className="checks-card">
         <h2>Заключение</h2><p>{summary.conclusion}</p>
         <ul>{summary.primary_issues.map((issue) => <li key={issue.id}>{issue.message}</li>)}</ul>
+        <div className="checks-export">
+          <button type="button" disabled aria-describedby="checks-export-note">Скачать XLSX</button>
+          <p id="checks-export-note" className="checks-caption">
+            Скачивание результата станет доступно после подключения экспорта.
+          </p>
+        </div>
       </section>}
       {view === 'log' && <CheckLog />}
     </>
