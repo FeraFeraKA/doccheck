@@ -111,6 +111,12 @@ jobs:
             if grep -Eq '(^|/)(compose-ci-sentinel(\.safetensors|\.key)?|\.env\.compose-ci-sentinel)$' "$listing"; then
               printf '%s\n' "Unexpected synthetic sentinel in $service runtime image" >&2
               exit 1
+            else
+              search_status=$?
+              if [ "$search_status" -ne 1 ]; then
+                printf '%s\n' "Cannot scan $service runtime image for synthetic sentinels" >&2
+                exit "$search_status"
+              fi
             fi
             docker rm "$container" >/dev/null
             container=
