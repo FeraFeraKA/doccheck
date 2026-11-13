@@ -94,6 +94,11 @@ export async function getSyntheticJob(id: string, signal: AbortSignal): Promise<
   return job;
 }
 
+export function isApiUnavailable(error: unknown): boolean {
+  if (error instanceof HttpError) return error.status >= 500;
+  return error instanceof TypeError || (error instanceof DOMException && error.name === 'TimeoutError');
+}
+
 export function connectionError(error: unknown): string {
   if (error instanceof InvalidResponseError || error instanceof SyntaxError) {
     return 'API вернул некорректный ответ. Повторите проверку позже.';

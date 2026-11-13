@@ -47,11 +47,33 @@ it.each([
   expect(screen.getByRole('button', { name: 'Создать синтетическое задание' })).toBeEnabled();
 });
 
-it('сохраняет последнее известное задание при ошибке polling и возобновляет по запросу', async () => {
+it('сбрасывает статус API при потере связи во время создания и восстанавливает его после проверки', async () => {
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(health())
+    .mockRejectedValueOnce(new TypeError('network'))
+    .mockResolvedValueOnce(health());
+  vi.stubGlobal('fetch', fetchMock);
+  renderApp();
+  await screen.findByText('API и PostgreSQL доступны.');
+  const create = screen.getByRole('button', { name: 'Создать синтетическое задание' });
+  fireEvent.click(create);
+  await screen.findByText(/Не удалось подтвердить создание задания/);
+  expect(screen.getByText('API недоступен.')).toBeVisible();
+  expect(screen.queryByText('API и PostgreSQL доступны.')).not.toBeInTheDocument();
+  expect(create).toBeDisabled();
+
+  fireEvent.click(screen.getByRole('button', { name: 'Проверить связь' }));
+  await screen.findByText('API и PostgreSQL доступны.');
+  expect(create).toBeEnabled();
+  expect(fetchMock.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(1);
+});
+
+it('сохраняет последнее известное задание при недоступном API и продолжает опрос после проверки связи', async () => {
   const fetchMock = vi.fn()
     .mockResolvedValueOnce(health())
     .mockResolvedValueOnce(Response.json(syntheticJob('queued'), { status: 201 }))
-    .mockRejectedValueOnce(new TypeError('network'))
+    .mockResolvedValueOnce(Response.json({ detail: 'Database unavailable' }, { status: 503 }))
+    .mockResolvedValueOnce(health())
     .mockResolvedValueOnce(Response.json(syntheticJob('completed')));
   vi.stubGlobal('fetch', fetchMock);
   renderApp();
@@ -59,9 +81,13 @@ it('сохраняет последнее известное задание пр
   fireEvent.click(screen.getByRole('button', { name: 'Создать синтетическое задание' }));
   await screen.findByText('Показан последний известный статус. Обновление приостановлено.');
   expect(screen.getByText('Статус: В очереди')).toBeVisible();
-  fireEvent.click(screen.getByRole('button', { name: 'Обновить статус задания' }));
+  expect(screen.getByText('API недоступен.')).toBeVisible();
+  expect(screen.queryByText('API и PostgreSQL доступны.')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Проверить связь' }));
+  await screen.findByText('API и PostgreSQL доступны.');
   await screen.findByText('Статус: Завершено');
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  expect(fetchMock).toHaveBeenNthCalledWith(5, `/api/synthetic-jobs/${jobId}`, expect.any(Object));
 });
 
 it('не выдаёт непризнанный ответ за завершённое синтетическое задание', async () => {

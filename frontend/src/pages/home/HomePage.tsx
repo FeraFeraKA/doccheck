@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  checkHealth, connectionError, createSyntheticJob, getSyntheticJob,
+  checkHealth, connectionError, createSyntheticJob, getSyntheticJob, isApiUnavailable,
   type JobStatus, type SyntheticJob,
 } from './scaffoldApi';
 
@@ -21,11 +21,22 @@ export function HomePage() {
   const [jobError, setJobError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [pollAttempt, setPollAttempt] = useState(0);
+  const healthController = useRef<AbortController | null>(null);
   const creationController = useRef<AbortController | null>(null);
   const activeJobId = job?.status === 'queued' || job?.status === 'processing' ? job.id : null;
 
+  const markApiUnavailable = useCallback((error: unknown) => {
+    if (isApiUnavailable(error)) {
+      // A health response started before the failed request is now stale.
+      healthController.current?.abort();
+      setHealth('error');
+      setHealthError(connectionError(error));
+    }
+  }, []);
+
   useEffect(() => {
     const controller = new AbortController();
+    healthController.current = controller;
     setHealth('loading');
     setHealthError(null);
     checkHealth(controller.signal).then(() => {
@@ -36,13 +47,16 @@ export function HomePage() {
         setHealthError(connectionError(error));
       }
     });
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      if (healthController.current === controller) healthController.current = null;
+    };
   }, [healthAttempt]);
 
   useEffect(() => () => creationController.current?.abort(), []);
 
   useEffect(() => {
-    if (!activeJobId) return;
+    if (!activeJobId || health !== 'ready') return;
     const id = activeJobId;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
@@ -56,7 +70,10 @@ export function HomePage() {
           timer = setTimeout(poll, 500);
         }
       } catch (error: unknown) {
-        if (!controller.signal.aborted) setJobError(connectionError(error));
+        if (!controller.signal.aborted) {
+          setJobError(connectionError(error));
+          markApiUnavailable(error);
+        }
       }
     }
     timer = setTimeout(poll, 500);
@@ -64,10 +81,10 @@ export function HomePage() {
       controller.abort();
       clearTimeout(timer);
     };
-  }, [activeJobId, pollAttempt]);
+  }, [activeJobId, health, markApiUnavailable, pollAttempt]);
 
   async function createJob() {
-    if (creating || activeJobId) return;
+    if (health !== 'ready' || creating || activeJobId) return;
     const controller = new AbortController();
     creationController.current = controller;
     setCreating(true);
@@ -78,7 +95,12 @@ export function HomePage() {
       if (!controller.signal.aborted) setJob(created);
     } catch (error: unknown) {
       if (!controller.signal.aborted) {
-        setJobError(`Не удалось подтвердить создание задания. ${connectionError(error)}`);
+        if (isApiUnavailable(error)) {
+          setJobError('Не удалось подтвердить создание задания.');
+          markApiUnavailable(error);
+        } else {
+          setJobError(`Не удалось подтвердить создание задания. ${connectionError(error)}`);
+        }
       }
     } finally {
       if (!controller.signal.aborted) setCreating(false);
@@ -125,13 +147,13 @@ export function HomePage() {
         )}
         {jobError && (
           <div className="mt-3">
-            <p role="alert">{jobError}</p>
+            {(!healthError || !activeJobId) && <p role="alert">{jobError}</p>}
             {activeJobId && <>
               <p className="mt-2">Показан последний известный статус. Обновление приостановлено.</p>
-              <button className={`${buttonClass} mt-2`} onClick={() => {
+              {health === 'ready' && <button className={`${buttonClass} mt-2`} onClick={() => {
                 setJobError(null);
                 setPollAttempt((attempt) => attempt + 1);
-              }}>Обновить статус задания</button>
+              }}>Обновить статус задания</button>}
             </>}
           </div>
         )}
