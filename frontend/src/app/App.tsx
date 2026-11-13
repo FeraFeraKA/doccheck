@@ -5,8 +5,9 @@ import { HomePage } from '../pages/home/HomePage';
 export function App() {
   return (
     <Routes>
-      <Route path="/" element={<HomePage />} />
+      <Route path="/system-status" element={<HomePage />} />
       <Route element={<ChecksWorkspace />}>
+        <Route index element={<NewCheck />} />
         <Route path="/checks" element={<ChecksOverview />} />
         <Route path="/checks/new" element={<NewCheck />} />
         <Route path="/checks/:id" element={<CheckDetail view="table" />} />
