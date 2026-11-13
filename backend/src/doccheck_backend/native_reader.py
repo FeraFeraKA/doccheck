@@ -304,13 +304,23 @@ def _wrapped_pdf_lines(lines: list[dict]) -> set[int]:
         if current.get("clipped") or previous.get("clipped"):
             continue
         tail = current["text"].lstrip(_SPACE_CHARS)
-        if not tail or tail[0] not in _DIGITS:
+        if not tail:
             continue
         before = previous["text"].rstrip(_SPACE_CHARS)
         if not before:
             continue
-        decimals = before[-1] in _NUMBER_CHARACTERS + _SIGNS
-        kopecks = _possible_kopecks(tail, 0)[0] and _rub_tokens(before)
+        decimals = tail[0] in _DIGITS and before[-1] in _NUMBER_CHARACTERS + _SIGNS
+        # Inspect the two lines only for a boundary split. Keep their own source
+        # addresses and never promote a value from their concatenated text.
+        kopecks = bool(_possible_kopecks(tail, 0)[0] and _rub_tokens(before))
+        if not kopecks and not decimals:
+            # The amount may have its ruble unit on the first line while only
+            # the kopeck suffix (or a part of it) wraps onto the second line.
+            joined = before + "\n" + tail
+            kopecks = bool(
+                _rub_tokens(before)
+                and any(not numeral and cents for numeral, cents in _rub_tokens(joined))
+            )
         if not (kopecks or (decimals and _rub_tokens(tail))):
             continue
         if decimals and not kopecks:
