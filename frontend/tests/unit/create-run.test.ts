@@ -10,6 +10,8 @@ import type { RunUpload } from '../../src/pages/checks/createRun';
 const key = '71c5c2f0-83d3-43bf-9237-da388101e51f';
 const nextKey = 'b50a4ef0-8ea0-4cc1-b940-0ff17fba1d64';
 const runId = 'run_123-test';
+const origin = 'http://localhost:8080';
+const postUrl = origin + '/api/v0/runs';
 const location = '/api/v0/runs/' + runId;
 
 function upload(): RunUpload {
@@ -35,6 +37,7 @@ function accepted(id = runId) {
 
 function stubFetch() {
   const fetchMock = vi.fn<(path: string, init: RequestInit) => Promise<Response>>();
+  vi.stubGlobal('location', new URL(origin + '/checks/new'));
   vi.stubGlobal('fetch', fetchMock);
   return fetchMock;
 }
@@ -53,9 +56,9 @@ it('отправляет multipart с файлами в заданном пор�
   });
 
   const [path, init] = fetchMock.mock.calls[0];
-  expect(path).toBe('/api/v0/runs');
+  expect(path).toBe(postUrl);
   expect(init).toMatchObject({ method: 'POST', signal, redirect: 'error' });
-  const request = new Request('http://localhost' + path, init);
+  const request = new Request(path, init);
   expect(request.headers.get('Content-Type')).toMatch(/^multipart\/form-data; boundary=/);
   expect(request.headers.get('Idempotency-Key')).toBe(key);
   const form = await request.formData();
@@ -109,12 +112,16 @@ it('сохраняет исходный ключ и пакет при явном
 it.each([
   [409, { code: 'idempotency_conflict', message: 'Изменён пакет' }],
   [422, { code: 'invalid_input', message: 'Некорректный файл', field: 'documents', file_index: 0 }],
+  [422, { code: 'invalid_input', message: 'Некорректный период', field: 'period_end' }],
 ])('возвращает структурированную ошибку HTTP %s без повторной отправки', async (status, details) => {
   const fetchMock = stubFetch().mockResolvedValueOnce(Response.json(details, { status }));
   const promise = prepareRunUpload(upload(), key)();
 
   await expect(promise).rejects.toBeInstanceOf(RunUploadHttpError);
-  await expect(promise).rejects.toMatchObject({ status, details });
+  await expect(promise).rejects.toMatchObject({ status });
+  const error = await promise.catch((caught: unknown) => caught);
+  if (!(error instanceof RunUploadHttpError)) throw new Error('Ожидалась ошибка загрузки');
+  expect(error.details).toStrictEqual(details);
   expect(fetchMock).toHaveBeenCalledTimes(1);
 });
 
@@ -128,12 +135,27 @@ it('сохраняет статус HTTP для ответа прокси без
   });
 });
 
+it.each(['runs/' + runId, './runs/' + runId, origin + location])(
+  'разрешает Location %s относительно POST и возвращает путь статуса',
+  async (header) => {
+    stubFetch().mockResolvedValueOnce(Response.json({ run_id: runId, status: 'queued' }, {
+      status: 202,
+      headers: { Location: header },
+    }));
+
+    await expect(prepareRunUpload(upload(), key)()).resolves.toEqual({ run_id: runId, status: 'queued', location });
+  },
+);
+
 it.each([
   [200, { run_id: runId, status: 'queued' }, location],
   [202, { run_id: runId, status: 'completed' }, location],
   [202, { run_id: '../other', status: 'queued' }, '/api/v0/runs/../other'],
   [202, { run_id: runId, status: 'queued' }, '/api/v0/runs/other'],
-  [202, { run_id: runId, status: 'queued' }, 'https://example.com'],
+  [202, { run_id: runId, status: 'queued' }, 'https://example.com' + location],
+  [202, { run_id: runId, status: 'queued' }, 'http://localhost:8081' + location],
+  [202, { run_id: runId, status: 'queued' }, location + '?view=full'],
+  [202, { run_id: runId, status: 'queued' }, location + '#summary'],
   [202, { run_id: runId, status: 'queued' }, undefined],
 ])('не принимает ответ с HTTP %s и несогласованным телом или Location', async (status, value, header) => {
   stubFetch().mockResolvedValueOnce(Response.json(value, {
@@ -150,5 +172,5 @@ it('передаёт отмену потребителю', async () => {
   const fetchMock = stubFetch().mockRejectedValueOnce(controller.signal.reason);
 
   await expect(prepareRunUpload(upload(), key)(controller.signal)).rejects.toMatchObject({ name: 'AbortError' });
-  expect(fetchMock).toHaveBeenCalledWith('/api/v0/runs', expect.objectContaining({ signal: controller.signal }));
+  expect(fetchMock).toHaveBeenCalledWith(postUrl, expect.objectContaining({ signal: controller.signal }));
 });

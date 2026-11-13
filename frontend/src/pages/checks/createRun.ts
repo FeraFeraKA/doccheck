@@ -104,7 +104,19 @@ function parseUploadError(value: unknown): UploadErrorDetails | null {
   if (file_index !== undefined && !(typeof file_index === 'number' && Number.isInteger(file_index) && file_index >= 0)) {
     return null;
   }
-  return { code, message, field, file_index };
+  const details: UploadErrorDetails = { code, message };
+  if (field !== undefined) details.field = field;
+  if (file_index !== undefined) details.file_index = file_index;
+  return details;
+}
+
+function hasExpectedLocation(value: string | null, requestUrl: URL, path: string): boolean {
+  if (value === null) return false;
+  try {
+    return new URL(value, requestUrl).href === requestUrl.origin + path;
+  } catch {
+    return false;
+  }
 }
 
 /** Один снимок пакета и UUID на осознанную отправку. Для повтора вызовите ту же функцию. */
@@ -118,7 +130,8 @@ export function prepareRunUpload(upload: RunUpload, idempotencyKey: string) {
   form.append('report_row_locator', JSON.stringify(upload.report_row_locator));
 
   return async (signal?: AbortSignal): Promise<AcceptedRun> => {
-    const response = await fetch(runsPath, {
+    const requestUrl = new URL(runsPath, globalThis.location.origin);
+    const response = await fetch(requestUrl.href, {
       method: 'POST',
       body: form,
       headers: { 'Idempotency-Key': idempotencyKey },
@@ -130,10 +143,13 @@ export function prepareRunUpload(upload: RunUpload, idempotencyKey: string) {
     if (response.status !== 202) throw new InvalidRunUploadResponse();
 
     const value = await readJson(response);
-    const location = response.headers.get('Location');
     if (!isRecord(value) || value.status !== 'queued'
-      || typeof value.run_id !== 'string' || !runIdPattern.test(value.run_id)
-      || location !== runsPath + '/' + value.run_id) {
+      || typeof value.run_id !== 'string' || !runIdPattern.test(value.run_id)) {
+      throw new InvalidRunUploadResponse();
+    }
+
+    const location = runsPath + '/' + value.run_id;
+    if (!hasExpectedLocation(response.headers.get('Location'), requestUrl, location)) {
       throw new InvalidRunUploadResponse();
     }
     return { run_id: value.run_id, status: value.status, location };
