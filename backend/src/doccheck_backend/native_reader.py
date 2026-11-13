@@ -66,6 +66,16 @@ def _rub_tokens(text: str) -> list[tuple[str, str]]:
         numeral = text[start:end].strip(_SPACE_CHARS)
         if not numeral or numeral[-1] not in "0123456789":
             continue
+        # Punctuation attached to a label ends the prose, not the numeral.
+        # A separator after a digit or before a fractional digit stays in the token.
+        if (
+            start > 0
+            and text[start - 1].isalpha()
+            and text[start] in ".,"
+            and text[start + 1] in _SPACE_CHARS
+        ):
+            start += 1
+            numeral = numeral[1:].lstrip(_SPACE_CHARS)
         if (
             start
             and text[start] not in _SPACE_CHARS

@@ -339,6 +339,21 @@ def test_long_numeric_text_without_currency_does_not_produce_an_amount():
     assert _text_amount("1 " * 40_000) == (None, False)
 
 
+@pytest.mark.parametrize(
+    ("text", "amount", "ambiguous"),
+    [
+        ("Итого. 123,45 руб.", "123.45", False),
+        ("Сумма, 123,45 руб.", "123.45", False),
+        ("Сумма, −\u20091 234,56 руб.", "-1234.56", False),
+        ("Итого. 1\u202f234,56 руб.", "1234.56", False),
+        ("Сумма, 12 34,56 руб.", None, True),
+        ("Сумма, 12. 34,56 руб.", None, True),
+    ],
+)
+def test_label_punctuation_is_distinct_from_malformed_grouping(text, amount, ambiguous):
+    assert _text_amount(text) == (Decimal(amount) if amount is not None else None, ambiguous)
+
+
 def test_sum_reads_only_cells_in_the_referenced_rectangle():
     class Sheet(dict):
         def items(self):
