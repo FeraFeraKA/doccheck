@@ -12,12 +12,12 @@ test('the accountant opens the synthetic reconciliation and sees discrepancies a
   await expect(page.getByRole('button', { name: 'Аспирант' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Бухгалтер' })).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'Новая проверка' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Выбрать файл' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Выбрать файл', exact: true })).toBeVisible();
   await expect(page.getByRole('navigation', { name: 'Основная навигация' })
     .getByRole('link', { name: 'Новая проверка' })).toHaveAttribute('aria-current', 'page');
   await expect(page.getByRole('link', { name: 'Журнал действий' })).toHaveCount(0);
   await expect(page.getByText('Добавьте отчёт и подтверждающие документы для сверки.')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Первичные документы', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Отправить на проверку' })).toBeDisabled();
   await page.getByRole('link', { name: 'Открыть готовый синтетический результат' }).click();
 
   const discrepancy = page.getByRole('row').filter({ hasText: 'Синтетическая статья A' });
@@ -62,6 +62,17 @@ test('the upload wizard selects files without secure-context APIs', async ({ pag
   await page.addInitScript(() => {
     Object.defineProperty(window.crypto, 'randomUUID', { value: undefined });
   });
+  await page.route('**/api/v0/runs', async (route) => {
+    expect(route.request().method()).toBe('POST');
+    expect(route.request().headers()['idempotency-key']).toMatch(/^[a-f0-9-]{36}$/);
+    await route.fulfill({
+      status: 202, headers: { Location: '/api/v0/runs/secure-fallback' },
+      json: { run_id: 'secure-fallback', status: 'queued' },
+    });
+  });
+  await page.route('**/api/v0/runs/secure-fallback', (route) => route.fulfill({ json: {
+    run_id: 'secure-fallback', status: 'queued', created_at: '2026-11-14T00:00:00Z', error: null,
+  } }));
   await page.goto('/checks/new');
   await page.getByLabel('Выберите КФЗ').setInputFiles({
     name: 'example.pdf',
@@ -69,7 +80,11 @@ test('the upload wizard selects files without secure-context APIs', async ({ pag
     buffer: Buffer.from('%PDF-1.4 synthetic example'),
   });
   await expect(page.getByText('example.pdf', { exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Первичные документы', exact: true })).toBeEnabled();
+  await page.getByLabel('Выберите первичные документы').setInputFiles({
+    name: 'support.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4 synthetic support'),
+  });
+  await page.getByRole('button', { name: 'Отправить на проверку' }).click();
+  await expect(page).toHaveURL(/\/checks\/secure-fallback$/);
 });
 
 test('the accountant distinguishes missing files, invalid selection and unknown checks', async ({ page }) => {
@@ -79,21 +94,20 @@ test('the accountant distinguishes missing files, invalid selection and unknown 
     next_cursor: null,
   } }));
   await page.goto('/checks/new');
-  await expect(page.getByText('Перетащите отчёт сюда')).toBeVisible();
+  await expect(page.getByText('Перетащите КФЗ сюда')).toBeVisible();
   await page.getByLabel('Выберите КФЗ').setInputFiles({
     name: 'empty.pdf',
     mimeType: 'application/pdf',
     buffer: Buffer.alloc(0),
   });
   await expect(page.getByRole('alert')).toHaveText('Добавьте непустые PDF, DOCX, XLSX или PNG.');
-  await expect(page.getByRole('button', { name: 'Первичные документы', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Отправить на проверку' })).toBeDisabled();
 
   await page.getByLabel('Выберите КФЗ').setInputFiles({
     name: 'report.pdf',
     mimeType: 'application/pdf',
     buffer: Buffer.from('%PDF-1.4 synthetic report'),
   });
-  await page.getByRole('button', { name: 'Первичные документы', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Отправить на проверку' })).toBeDisabled();
   await expect(page.getByText('Перетащите документы сюда')).toBeVisible();
 
@@ -355,13 +369,24 @@ test('the selected stored evidence opens its own original and address', async ({
   ]));
 });
 
-test('the wizard keeps the example link inside the tablet viewport', async ({ page }) => {
-  for (const width of [701, 768]) {
+test('the compact wizard adapts its upload blocks and keeps the example link in view', async ({ page }) => {
+  for (const width of [320, 390, 701, 768, 1440]) {
     await page.setViewportSize({ width, height: 900 });
     await page.goto('/');
 
     const example = page.getByRole('link', { name: 'Открыть готовый синтетический результат' });
+    if (width < 700) await example.scrollIntoViewIfNeeded();
     await expect(example).toBeInViewport({ ratio: 1 });
+    const report = await page.getByRole('region', { name: 'КФЗ', exact: true }).boundingBox();
+    const documents = await page.getByRole('region', { name: 'Первичные документы' }).boundingBox();
+    if (!report || !documents) throw new Error('Оба блока должны быть видны');
+    if (width < 768) {
+      expect(documents.y).toBeGreaterThan(report.y);
+      expect(documents.x).toBe(report.x);
+    } else {
+      expect(documents.y).toBe(report.y);
+      expect(documents.x).toBeGreaterThan(report.x);
+    }
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(width);
   }
   await page.getByRole('link', { name: 'Открыть готовый синтетический результат' }).click();
