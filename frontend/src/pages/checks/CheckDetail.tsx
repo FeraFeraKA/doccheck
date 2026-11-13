@@ -7,6 +7,8 @@ import { FindingsHttpError, loadFindings } from './loadFindings';
 import { formatDecimal, formatLocation, statusLabels } from './reviewResult';
 import type { ReviewResult } from './reviewResult';
 import { useCheckData } from './useCheckData';
+import { isRunId } from './runStatusApi';
+import { XlsxDownload } from './XlsxDownload';
 
 const tabs = [
   ['', 'Сверка'], ['/documents', 'Документы'], ['/exceptions', 'Исключения'],
@@ -54,7 +56,7 @@ function RunContent({ id, view, run }: { id: string; view: CheckView; run: RunDe
       {status === 'processing' && !run.progress && <p>Число обработанных документов пока неизвестно.</p>}
       {status === 'failed' && <p role="alert">{run.error ?? 'Не удалось выполнить проверку.'}</p>}
       {status === 'completed_with_issues' && run.error && <p role="alert">{run.error}</p>}
-      {result && <ResultContent id={id} view={view} result={result} synthetic />}
+      {result && <ResultContent id={id} view={view} result={result} synthetic stored={false} />}
       {!result && hasStoredResult && <StoredFindings id={id} view={view} />}
     </>
   );
@@ -86,7 +88,7 @@ function StoredFindings({ id, view }: { id: string; view: CheckView }) {
   const { result, synthetic } = state.data;
   return <>
     {synthetic && <p className="checks-demo">Синтетический результат · сохранённая проверка</p>}
-    <ResultContent id={id} view={view} result={result} synthetic={synthetic} />
+    <ResultContent id={id} view={view} result={result} synthetic={synthetic} stored />
   </>;
 }
 
@@ -95,9 +97,10 @@ interface ResultContentProps {
   view: CheckView;
   result: ReviewResult;
   synthetic: boolean;
+  stored: boolean;
 }
 
-function ResultContent({ id, view, result, synthetic }: ResultContentProps) {
+function ResultContent({ id, view, result, synthetic, stored }: ResultContentProps) {
   const { summary, documents, scope } = result;
   const runPath = '/checks/' + encodeURIComponent(id);
 
@@ -126,10 +129,12 @@ function ResultContent({ id, view, result, synthetic }: ResultContentProps) {
         <h2>Заключение</h2><p>{summary.conclusion}</p>
         <ul>{summary.primary_issues.map((issue) => <li key={issue.id}>{issue.message}</li>)}</ul>
         <div className="checks-export">
-          <button type="button" disabled aria-describedby="checks-export-note">Скачать XLSX</button>
-          <p id="checks-export-note" className="checks-caption">
-            Скачивание результата станет доступно после подключения экспорта.
-          </p>
+          {stored && isRunId(id) ? <XlsxDownload key={id} runId={id} /> : <>
+            <button type="button" disabled aria-describedby="checks-export-note">Скачать XLSX</button>
+            <p id="checks-export-note" className="checks-caption">
+              Скачивание XLSX доступно для сохранённой проверки.
+            </p>
+          </>}
         </div>
       </section>}
       {view === 'log' && <CheckLog synthetic={synthetic} />}
