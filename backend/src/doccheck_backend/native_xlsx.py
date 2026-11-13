@@ -170,16 +170,19 @@ def _sum_candidate(
     if not x1 <= x2 or not y1 <= y2 or (x2 - x1 + 1) * (y2 - y1 + 1) > _MAX_SUM_CELLS:
         return None, (), "invalid_sum_range"
     components = []
-    for key, current in cells.items():
-        x, y = _position(key)
-        if not (x1 <= x <= x2 and y1 <= y <= y2):
-            continue
-        if key == address or current.formula or current.kind == "e":
-            return None, (), "unsupported_sum_input"
-        if current.kind == "n":
-            if current.numeric is None:
-                return None, (), "invalid_numeric_cell"
-            components.append((key, current.numeric))
+    columns = [_column_name(column) for column in range(x1, x2 + 1)]
+    for row in range(y1, y2 + 1):
+        for column in columns:
+            key = f"{column}{row}"
+            current = cells.get(key)
+            if current is None:
+                continue
+            if key == address or current.formula or current.kind == "e":
+                return None, (), "unsupported_sum_input"
+            if current.kind == "n":
+                if current.numeric is None:
+                    return None, (), "invalid_numeric_cell"
+                components.append((key, current.numeric))
     if not components:
         return None, (), "missing_sum_input"
 
@@ -188,6 +191,14 @@ def _sum_candidate(
         context.prec = 650
         result = sum((value for _, value in components), Decimal(0))
     return result, tuple(key for key, _ in components), None
+
+
+def _column_name(number: int) -> str:
+    column = ""
+    while number:
+        number, index = divmod(number - 1, 26)
+        column = chr(ord("A") + index) + column
+    return column
 
 
 def _read_sheet(

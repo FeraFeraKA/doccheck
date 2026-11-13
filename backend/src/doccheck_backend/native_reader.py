@@ -28,7 +28,8 @@ from doccheck_backend.contracts.locators import (
 from doccheck_backend.native_observations import NativeDocument, NativeIssue, Observation
 from doccheck_backend.native_xlsx import read_workbook
 
-_SPACE = r"[ \u00a0\u2009\u202f]"
+_SPACE_CHARS = " \u00a0\u2009\u202f"
+_SPACE = rf"[{_SPACE_CHARS}]"
 _NUMBER = re.compile(
     rf"(?P<sign>[+−-]?){_SPACE}*"
     rf"(?P<integer>[0-9]{{1,3}}(?:{_SPACE}[0-9]{{3}})+|[0-9]+)"
@@ -36,11 +37,8 @@ _NUMBER = re.compile(
 )
 _CURRENCY = r"(?:₽|руб(?:лей|ля|ль|\.)?|RUB|р\.)"
 _KOPECKS = r"коп(?:еек|ейки|ейка|\.)?"
-# Capture the whole printed numeral before validating grouping and separators.
-_EXPLICIT_RUB = re.compile(
-    rf"(?<![\w./,+−-])([+−-]?{_SPACE}*[0-9](?:(?:[0-9.,]|{_SPACE})*[0-9])?)"
-    rf"{_SPACE}*{_CURRENCY}"
-    rf"(?:{_SPACE}*([0-9]+){_SPACE}*{_KOPECKS}(?!\w)|(?!\w))",
+_RUB_TOKEN = re.compile(
+    rf"{_CURRENCY}(?:{_SPACE}*([0-9]+){_SPACE}*{_KOPECKS}(?!\w)|(?!\w))",
     re.IGNORECASE,
 )
 _MONEY_HEADER = re.compile(r"^(?:сумма|стоимость)\s*[,\s(]+(?:руб\.?|₽|rub)\)?$", re.I)
@@ -52,27 +50,53 @@ class _Collected:
     issues: list[NativeIssue] = field(default_factory=list)
 
 
-def _text_amount(text: str, *, rub_column: bool = False) -> Decimal | None:
-    matches = _EXPLICIT_RUB.findall(text)
-    if not matches and rub_column:
+def _rub_tokens(text: str) -> list[tuple[str, str]]:
+    matches = []
+    # Each reverse scan stops at the first non-numeric character. Runs between currency
+    # markers cannot overlap, even when the document has a long invalid grouping.
+    for currency in _RUB_TOKEN.finditer(text):
+        end = currency.start()
+        if not end or text[end - 1] not in "0123456789" + _SPACE_CHARS:
+            continue
+        start = end
+        while start and text[start - 1] in "0123456789.," + _SPACE_CHARS:
+            start -= 1
+        if start and text[start - 1] in "+−-":
+            start -= 1
+        numeral = text[start:end].strip(_SPACE_CHARS)
+        if not numeral or numeral[-1] not in "0123456789":
+            continue
+        if (
+            start
+            and text[start] not in _SPACE_CHARS
+            and (text[start - 1].isalnum() or text[start - 1] in "_./,+−-")
+        ):
+            numeral = ""
+        matches.append((numeral, currency[1] or ""))
+    return matches
+
+
+def _text_amount(text: str, *, rub_column: bool = False) -> tuple[Decimal | None, bool]:
+    matches = _rub_tokens(text)
+    if not matches and rub_column and re.search(r"\d", text):
         matches = [(text.strip(), "")]
     if len(matches) != 1:
-        return None
+        return None, bool(matches)
     numeral, kopecks = matches[0]
-    number = _NUMBER.fullmatch(numeral.lstrip(" \u00a0\u2009\u202f"))
+    number = _NUMBER.fullmatch(numeral)
     if number is None:
-        return None
+        return None, True
     sign, integer, fraction = number.groups()
     if kopecks:
         if fraction or len(kopecks) > 2:
-            return None
+            return None, True
         fraction = "." + kopecks.zfill(2)
     compact = ("-" if sign in ("-", "−") else "") + re.sub(_SPACE, "", integer)
     compact += (fraction or "").replace(",", ".")
     try:
-        return Decimal(compact)
+        return Decimal(compact), False
     except InvalidOperation:
-        return None
+        return None, True
 
 
 def _observe(
@@ -80,8 +104,8 @@ def _observe(
 ) -> None:
     if not text.strip():
         return
-    amount = _text_amount(text, rub_column=rub_column)
-    if amount is None and (_EXPLICIT_RUB.search(text) or (rub_column and re.search(r"\d", text))):
+    amount, ambiguous = _text_amount(text, rub_column=rub_column)
+    if ambiguous:
         collected.issues.append(NativeIssue("ambiguous_rub_amount", locator=locator))
     collected.observations.append(
         Observation(text, locator, amount, "candidate" if amount is not None else None)
@@ -99,8 +123,6 @@ def _visible_pdf_box(page: Page) -> tuple[float, float, float, float]:
 
 
 def _pdf_text_lines(page: Page, visible_box: tuple[float, float, float, float]) -> list[dict]:
-    if page.rotation == 0 and visible_box == page.bbox:
-        return page.extract_text_lines(return_chars=False)
     left, top, right, bottom = visible_box
     chars = []
     positions = {}
@@ -136,6 +158,8 @@ def _pdf_text_lines(page: Page, visible_box: tuple[float, float, float, float]) 
         positions[id(item)] = visible_position if visible else None
         chars.append(item)
 
+    if not any(char["text"].strip() for char in chars):
+        return []
     lines = chars_to_textmap(chars).extract_text_lines()
     visible_lines = []
     for line in lines:

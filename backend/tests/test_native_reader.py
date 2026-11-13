@@ -7,7 +7,8 @@ import pytest
 from docx import Document
 
 from doccheck_backend.contracts.locators import PageLocator, ParagraphLocator, TableCellLocator
-from doccheck_backend.native_reader import read_native_document
+from doccheck_backend.native_reader import _text_amount, read_native_document
+from doccheck_backend.native_xlsx import _Cell, _sum_candidate
 
 _MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 _REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
@@ -165,9 +166,10 @@ def test_detects_workbook_external_link_without_reading_its_target(tmp_path):
     assert result.observations[0].amount_role == "candidate"
 
 
-def _minimal_pdf(path: Path, lines: list[str], *, page_attrs: bytes = b"") -> Path:
+def _minimal_pdf(path: Path, lines: list[str], *, page_attrs: bytes = b"", left: int = 30) -> Path:
     stream = "\n".join(
-        f"BT /F1 12 Tf 30 {150 - count * 20} Td ({line}) Tj ET" for count, line in enumerate(lines)
+        f"BT /F1 12 Tf {left} {150 - count * 20} Td ({line}) Tj ET"
+        for count, line in enumerate(lines)
     ).encode("ascii")
     objects = (
         b"<< /Type /Catalog /Pages 2 0 R >>",
@@ -251,6 +253,16 @@ def test_pdf_cropbox_partial_glyph_does_not_become_a_different_amount(tmp_path):
     assert [item.code for item in result.issues] == ["clipped_pdf_text"]
 
 
+@pytest.mark.parametrize("attrs", [b"", b"/CropBox [0 0 300 200]"])
+def test_default_pdf_boundary_also_checks_hidden_sign(tmp_path, attrs):
+    path = _minimal_pdf(tmp_path / "upload", ["-120,35 RUB"], page_attrs=attrs, left=-4)
+    result = read_native_document(path, "pdf")
+    (observation,) = result.observations
+    assert observation.amount is None
+    assert observation.raw_text.startswith("�")
+    assert [item.code for item in result.issues] == ["clipped_pdf_text"]
+
+
 @pytest.mark.parametrize("rotation", [0, 90, 180, 270])
 def test_pdf_cropbox_hides_whole_minus_without_observing_positive_value(tmp_path, rotation):
     path = _minimal_pdf(
@@ -321,6 +333,26 @@ def test_docx_monetary_tokens_preserve_sign_and_kopecks_or_report_ambiguity(tmp_
         ("ambiguous_rub_amount", 6),
         ("ambiguous_rub_amount", 7),
     ]
+
+
+def test_long_numeric_text_without_currency_does_not_produce_an_amount():
+    assert _text_amount("1 " * 40_000) == (None, False)
+
+
+def test_sum_reads_only_cells_in_the_referenced_rectangle():
+    class Sheet(dict):
+        def items(self):
+            pytest.fail("SUM should not scan all populated cells")
+
+        def get(self, key, default=None):
+            cells_read.append(key)
+            return super().get(key, default)
+
+    cells_read = []
+    value = _Cell("1.25", "n", Decimal("1.25"))
+    sheet = Sheet({"Z1": value, "AA2": value, "ZZ100": value})
+    assert _sum_candidate("A1", "=SUM(Z1:AA2)", sheet) == (Decimal("2.50"), ("Z1", "AA2"), None)
+    assert cells_read == ["Z1", "AA1", "Z2", "AA2"]
 
 
 @pytest.mark.parametrize("file_format", ["pdf", "docx", "xlsx"])
