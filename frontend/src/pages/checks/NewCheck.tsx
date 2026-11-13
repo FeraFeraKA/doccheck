@@ -36,6 +36,17 @@ function uploadErrorMessage(error: unknown): string {
 }
 
 export function NewCheck() {
+  if (import.meta.env.VITE_DOCCHECK_PUBLIC_DEMO === '1') {
+    return <div className="checks-upload">
+      <h1>Новая проверка</h1>
+      <p>В публичном демо доступны только готовые синтетические данные. Загрузка файлов доступна в локальной установке.</p>
+      <Link to={demoRunPath}>Открыть готовый синтетический результат</Link>
+    </div>;
+  }
+  return <UploadCheck />;
+}
+
+function UploadCheck() {
   const navigate = useNavigate();
   const nextFileId = useRef(0);
   const active = useRef<AbortController | null>(null);
