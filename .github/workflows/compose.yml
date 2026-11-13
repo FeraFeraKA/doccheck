@@ -5,6 +5,8 @@ on:
     paths:
       - compose.yaml
       - .dockerignore
+      - contracts/check-result.v1.synthetic.json
+      - docs/synthetic/nrt-89/inputs.json
       - .env.example
       - backend/**
       - frontend/**
@@ -13,6 +15,8 @@ on:
     paths:
       - compose.yaml
       - .dockerignore
+      - contracts/check-result.v1.synthetic.json
+      - docs/synthetic/nrt-89/inputs.json
       - .env.example
       - backend/**
       - frontend/**
@@ -61,10 +65,12 @@ jobs:
           COPY . .
           RUN set -eu; \
               for path in backend/pyproject.toml backend/src/doccheck_backend/api.py \
-                  frontend/package.json frontend/src/app/main.tsx; do \
+                  frontend/package.json frontend/src/app/main.tsx \
+                  contracts/check-result.v1.synthetic.json docs/synthetic/nrt-89/inputs.json; do \
                 test -f "$path" || { echo "Missing from context: $path"; exit 1; }; \
               done; \
-              for path in .git .env .env.example .env.compose-ci-sentinel docs data private \
+              for path in .git .env .env.example .env.compose-ci-sentinel docs/case docs/agents data private \
+                  docs/synthetic/nrt-89/inputs docs/synthetic/nrt-89/expectations \
                   holdout evaluation models backend/ml_module backend/tests frontend/node_modules \
                   frontend/tests frontend/src/compose-ci-sentinel.safetensors; do \
                 test ! -e "$path" || { echo "Unexpected in context: $path"; exit 1; }; \
