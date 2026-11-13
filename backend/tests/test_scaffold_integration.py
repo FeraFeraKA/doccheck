@@ -16,7 +16,6 @@ from uuid import uuid4
 import httpx
 import psycopg
 import pytest
-from psycopg import sql
 from sqlalchemy.engine import make_url
 
 BACKEND = Path(__file__).resolve().parents[1]
@@ -30,44 +29,6 @@ def process_environment(database_url: str) -> dict[str, str]:
         "SYNTHETIC_DELAY_SECONDS": "3",
         "WORKER_POLL_SECONDS": "0.05",
     }
-
-
-def run_migrations(environment: dict[str, str]) -> None:
-    completed = subprocess.run(
-        [sys.executable, "-m", "alembic", "upgrade", "head"],
-        cwd=BACKEND,
-        env=environment,
-        capture_output=True,
-        text=True,
-        timeout=30,
-        creationflags=NO_WINDOW,
-    )
-    assert completed.returncode == 0, completed.stderr
-
-
-@pytest.fixture
-def database_url() -> Iterator[str]:
-    """Only create/drop this test's random schema, never shared tables/databases."""
-    configured = os.environ.get("DOCCHECK_TEST_DATABASE_URL")
-    if not configured:
-        pytest.skip("Set DOCCHECK_TEST_DATABASE_URL to run real PostgreSQL integration")
-    base = make_url(configured)
-    if base.get_backend_name() != "postgresql":
-        pytest.fail("Integration tests require a real PostgreSQL database")
-    schema = f"nrt8_test_{uuid4().hex}"
-    admin_dsn = base.set(drivername="postgresql").render_as_string(hide_password=False)
-    with psycopg.connect(admin_dsn, autocommit=True) as connection:
-        connection.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
-    isolated = base.set(drivername="postgresql+psycopg").update_query_dict(
-        {"options": f"-csearch_path={schema}"}
-    )
-    try:
-        url = isolated.render_as_string(hide_password=False)
-        run_migrations(process_environment(url))
-        yield url
-    finally:
-        with psycopg.connect(admin_dsn, autocommit=True) as connection:
-            connection.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema)))
 
 
 @contextmanager
@@ -144,6 +105,7 @@ def wait_for_status(client: httpx.Client, job_id: str, expected: str, timeout: f
 
 
 def test_persistent_job_lifecycle_with_separate_worker_and_responsive_api(
+    run_migrations,
     database_url: str,
 ) -> None:
     with running_api(database_url) as client:
@@ -163,7 +125,7 @@ def test_persistent_job_lifecycle_with_separate_worker_and_responsive_api(
         assert client.get(f"/api/synthetic-jobs/{job_id}").json()["status"] == "queued"
 
     # Restart API and re-run initialization: the same PostgreSQL job must survive both.
-    run_migrations(process_environment(database_url))
+    run_migrations(database_url)
     with running_api(database_url) as client:
         assert client.get(f"/api/synthetic-jobs/{job_id}").json() == queued
         with running_process(

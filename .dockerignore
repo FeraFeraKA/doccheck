@@ -5,6 +5,7 @@
 !backend/.python-version
 !backend/alembic.ini
 !backend/src/doccheck_backend/*.py
+!backend/src/doccheck_backend/contracts/*.py
 !backend/migrations/env.py
 !backend/migrations/versions/*.py
 !frontend/Dockerfile
