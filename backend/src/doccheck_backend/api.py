@@ -1,6 +1,6 @@
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import aclosing, asynccontextmanager
-from typing import Annotated
+from typing import Annotated, BinaryIO
 from urllib.parse import quote
 from uuid import UUID
 
@@ -10,9 +10,9 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
-from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 from starlette.formparsers import MultiPartException, MultiPartParser
+from starlette.types import Receive, Scope, Send
 
 from doccheck_backend import run_reads
 from doccheck_backend.config import Settings
@@ -37,6 +37,28 @@ class _RunMultipartParser(MultiPartParser):
     def on_end(self) -> None:
         # The underlying parser can return finished parts without a closing boundary.
         self.complete = True
+
+
+class _OriginalFileResponse(StreamingResponse):
+    def __init__(self, stream: BinaryIO, size: int, name: str) -> None:
+        self._stream = stream
+        encoded = quote(name, safe="")
+        disposition = (
+            f'attachment; filename="{name}"'
+            if name == encoded
+            else f"attachment; filename*=utf-8''{encoded}"
+        )
+        super().__init__(
+            iter(lambda: stream.read(64 * 1024), b""),
+            media_type="application/octet-stream",
+            headers={"Content-Disposition": disposition, "Content-Length": str(size)},
+        )
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            self._stream.close()
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -177,18 +199,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         stream, size, name = run_reads.get_run_document(
             request.app.state.engine, request.app.state.upload_root, run_id, document_id
         )
-        encoded = quote(name, safe="")
-        disposition = (
-            f'attachment; filename="{name}"'
-            if name == encoded
-            else f"attachment; filename*=utf-8''{encoded}"
-        )
-        return StreamingResponse(
-            iter(lambda: stream.read(64 * 1024), b""),
-            media_type="application/octet-stream",
-            headers={"Content-Disposition": disposition, "Content-Length": str(size)},
-            background=BackgroundTask(stream.close),
-        )
+        return _OriginalFileResponse(stream, size, name)
 
     @application.get("/api/v0/runs/{run_id}/documents/{document_id}/fragments/{evidence_id}")
     def get_fragment(request: Request, run_id: str, document_id: str, evidence_id: str) -> Evidence:

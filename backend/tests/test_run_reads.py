@@ -1,15 +1,19 @@
+import asyncio
 import os
 import subprocess
 from datetime import UTC, datetime, timedelta
+from io import BytesIO
 from urllib.parse import quote
 from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
+from starlette.requests import ClientDisconnect
 from test_run_upload import DOCUMENT, REPORT, submit
 from test_run_worker import _synthetic_result
 
+from doccheck_backend import run_reads
 from doccheck_backend.api import create_app
 from doccheck_backend.config import Settings
 from doccheck_backend.contracts import CheckJob, CheckResult
@@ -325,3 +329,46 @@ def test_missing_database_uses_safe_v0_error(tmp_path):
     assert response.status_code == 503
     assert response.json()["code"] == "service_unavailable"
     assert "invalid-user" not in response.text
+
+
+@pytest.mark.parametrize("failure", ["read", "disconnect", "cancel"])
+def test_download_closes_original_when_streaming_stops(monkeypatch, tmp_path, failure):
+    class Original(BytesIO):
+        def read(self, size: int = -1) -> bytes:
+            if failure == "read":
+                raise OSError("test read error")
+            return super().read(size)
+
+    async def receive():
+        raise AssertionError("ASGI 2.4 detects disconnect on send")
+
+    sent = []
+
+    async def send(message):
+        sent.append(message["type"])
+        if message["type"] == "http.response.body":
+            if failure == "disconnect":
+                raise BrokenPipeError
+            if failure == "cancel":
+                raise asyncio.CancelledError
+
+    original = Original(b"data")
+    monkeypatch.setattr(run_reads, "get_run_document", lambda *args: (original, 4, "example.pdf"))
+    settings = Settings("postgresql+psycopg://localhost/doccheck_unused", upload_root=tmp_path)
+    application = create_app(settings)
+    with TestClient(application):
+        scope = {
+            "type": "http",
+            "asgi": {"version": "3.0", "spec_version": "2.4"},
+            "method": "GET",
+            "scheme": "http",
+            "path": f"{RUNS}/example/documents/original",
+            "headers": [],
+            "query_string": b"",
+        }
+        expected = asyncio.CancelledError if failure == "cancel" else ClientDisconnect
+        with pytest.raises(expected):
+            asyncio.run(application(scope, receive, send))
+
+    assert sent[0] == "http.response.start"
+    assert original.closed
