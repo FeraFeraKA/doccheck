@@ -35,6 +35,8 @@ _SPACE = rf"[{_SPACE_CHARS}]"
 _GROUP_SPACE = rf"[{_GROUP_SPACES}]"
 _SIGNS = "+−-"
 _LINE_BREAKS = "\r\n\v\f\u0085\u2028\u2029"
+_DIGITS = "0123456789"
+_NUMBER_CHARACTERS = _DIGITS + ".,"
 _NUMBER = re.compile(
     rf"(?P<sign>[+−-]?){_SPACE}*"
     rf"(?P<integer>[0-9]{{1,3}}(?:{_GROUP_SPACE}[0-9]{{3}})+|[0-9]+)"
@@ -76,36 +78,32 @@ def _token_space(char: str) -> bool:
     return char in _SPACE_CHARS + _LINE_BREAKS or category(char) == "Cf"
 
 
+def _numeric_run_character(char: str) -> bool:
+    return char in _NUMBER_CHARACTERS or _token_space(char)
+
+
 def _possible_kopecks(text: str, start: int) -> tuple[str, bool]:
     index = start
-    interrupted = False
     while index < len(text) and _token_space(text[index]):
-        interrupted |= text[index] not in _SPACE_CHARS
         index += 1
-    digits = index
-    while index < len(text) and text[index] in "0123456789":
-        index += 1
-    if index == digits:
+    token_start = index
+    if index == len(text) or text[index] not in _NUMBER_CHARACTERS + _SIGNS:
         return "", False
-    end = index
-    while index < len(text) and _token_space(text[index]):
-        interrupted |= text[index] not in _SPACE_CHARS
+    if text[index] in _SIGNS:
+        index += 1
+    token_end = index
+    while index < len(text) and _numeric_run_character(text[index]):
+        if text[index] in _NUMBER_CHARACTERS:
+            token_end = index + 1
         index += 1
     if _KOPECK_SUFFIX.match(text, index) is None:
         return "", False
-    return text[digits:end], interrupted
-
-
-def _interrupted_prefix(text: str, start: int) -> bool:
-    before = start
-    uncertain = False
-    while before and _token_space(text[before - 1]):
-        uncertain |= text[before - 1] not in _SPACE_CHARS
-        before -= 1
-    if not uncertain or not before:
-        return False
-    # A prior number or sign across a line break may be the beginning of the same amount.
-    return text[before - 1] in "0123456789" + _SIGNS or category(text[before - 1]) == "Pd"
+    # Validate the whole run, so a split or malformed kopeck group cannot disappear.
+    digits = text[token_start:token_end]
+    gap = text[start:token_start] + text[token_end:index]
+    return digits, not re.fullmatch(r"[0-9]{1,2}", digits) or any(
+        char not in _SPACE_CHARS for char in gap
+    )
 
 
 def _rub_tokens(text: str) -> list[tuple[str, str]]:
@@ -117,18 +115,15 @@ def _rub_tokens(text: str) -> list[tuple[str, str]]:
         last = end
         while last and _token_space(text[last - 1]):
             last -= 1
-        if not last or text[last - 1] not in "0123456789":
+        if not last or text[last - 1] not in _DIGITS:
             continue
         start = last
-        while start and (
-            text[start - 1] in "0123456789.," + _SPACE_CHARS or category(text[start - 1]) == "Cf"
-        ):
+        while start and _numeric_run_character(text[start - 1]):
             start -= 1
-        if start < end:
-            start = _preceding_symbol(text, start)
-        numeral = text[start:last].strip(_SPACE_CHARS)
-        if not numeral or numeral[-1] not in "0123456789":
-            continue
+        start = _preceding_symbol(text, start)
+        # A line break before the entire token is harmless. A break inside the
+        # numeric run or between its sign and digits is rejected by _NUMBER.
+        numeral = text[start:last].lstrip(_SPACE_CHARS + _LINE_BREAKS)
         # Punctuation attached to a label ends the prose, not the numeral.
         # A separator after a digit or before a fractional digit stays in the token.
         if (
@@ -138,10 +133,10 @@ def _rub_tokens(text: str) -> list[tuple[str, str]]:
             and text[start + 1] in _SPACE_CHARS
         ):
             start += 1
-            numeral = numeral[1:].lstrip(_SPACE_CHARS)
+            numeral = text[start:last].lstrip(_SPACE_CHARS)
         if (
             start
-            and text[start] not in _SPACE_CHARS
+            and text[start] not in _SPACE_CHARS + _LINE_BREAKS
             and (
                 text[start - 1].isalnum()
                 or text[start - 1] in "_./," + _SIGNS
@@ -150,11 +145,7 @@ def _rub_tokens(text: str) -> list[tuple[str, str]]:
         ):
             numeral = ""
         kopecks, interrupted = _possible_kopecks(text, currency.end())
-        if (
-            interrupted
-            or _interrupted_prefix(text, start)
-            or any(char not in _SPACE_CHARS for char in text[last:end])
-        ):
+        if interrupted or any(char not in _SPACE_CHARS for char in text[last:end]):
             numeral = ""
         matches.append((numeral, kopecks))
     return matches

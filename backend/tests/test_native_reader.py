@@ -406,6 +406,7 @@ def test_docx_does_not_accept_a_partial_monetary_token(tmp_path, text):
         ("Сумма — 123,45 руб.", "123.45"),
         ("Сумма: 1 руб.\t25 коп.", "1.25"),
         ("Сумма:\n123,45 руб.", "123.45"),
+        ("Сумма\n123,45 руб.", "123.45"),
     ],
 )
 def test_docx_keeps_complete_tokens_with_safe_separators(tmp_path, text, expected):
@@ -417,6 +418,32 @@ def test_docx_keeps_complete_tokens_with_safe_separators(tmp_path, text, expecte
     (observation,) = result.observations
     assert observation.amount == Decimal(expected)
     assert result.issues == ()
+
+
+@pytest.mark.parametrize("separator", ["\n", "\u200b", "\u2060", "\u200e"])
+def test_docx_rejects_all_interruption_positions_in_monetary_parts(tmp_path, separator):
+    parts = (
+        ("Удержано: ", "−1 234,56", " RUB"),
+        ("Сумма: ", "1,25", " RUB"),
+        ("Итого: 1 руб.", " 25 ", "коп."),
+    )
+    mutated = [
+        prefix + token[:index] + separator + token[index:] + suffix
+        for prefix, token, suffix in parts
+        for index in range(1, len(token))
+    ]
+    path = tmp_path / "upload"
+    document = Document()
+    for text in mutated:
+        document.add_paragraph(text)
+    document.save(path)
+    result = read_native_document(path, "docx")
+
+    assert [item.raw_text for item in result.observations] == mutated
+    assert all(item.amount is None for item in result.observations)
+    assert [(item.code, item.locator) for item in result.issues] == [
+        ("ambiguous_rub_amount", item.locator) for item in result.observations
+    ]
 
 
 @pytest.mark.parametrize(
