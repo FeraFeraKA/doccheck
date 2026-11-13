@@ -1,9 +1,10 @@
 """Read original OOXML numbers and a restricted local SUM without running Excel."""
 
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation, localcontext
 from pathlib import Path, PurePosixPath
+from typing import Literal
 from xml.etree.ElementTree import Element
 from zipfile import ZipFile
 
@@ -22,6 +23,7 @@ _SUM = re.compile(
     re.IGNORECASE,
 )
 _EXCEL_DECIMAL = re.compile(r"[+-]?[0-9]+(?:\.[0-9]+)?(?:[Ee][+-]?[0-9]+)?")
+_EXTERNAL_FORMULA = re.compile(r"\[[^\[\]]+\][^\[\]!(),]*!|\|.+!")
 _MAX_XML_PART = 64 * 1024**2
 _MAX_SUM_CELLS = 100_000
 
@@ -154,7 +156,7 @@ def _money_template(cells: dict[str, _Cell]) -> tuple[str, set[str]] | None:
 def _sum_candidate(
     address: str, formula: str, cells: dict[str, _Cell]
 ) -> tuple[Decimal | None, tuple[str, ...], str | None]:
-    if "[" in formula or "]" in formula or "|" in formula:
+    if _EXTERNAL_FORMULA.search(formula):
         return None, (), "external_formula_reference"
     match = _SUM.fullmatch(formula[1:])
     if match is None:
@@ -216,7 +218,7 @@ def _read_sheet(
                 cell.raw,
                 locator,
                 amount=amount,
-                amount_role="total" if amount is not None else None,
+                amount_role=_amount_role(address, amount, total, components, formula=True),
                 cached_value=cell.numeric,
                 component_locators=tuple(
                     SheetLocator(kind="sheet", sheet=title, range=key) for key in inputs
@@ -225,25 +227,14 @@ def _read_sheet(
         else:
             if cell.kind == "e" or (cell.kind == "n" and cell.numeric is None):
                 issues.append(NativeIssue("invalid_numeric_cell", locator=locator))
-            amount_role = None
-            if cell.numeric is not None:
-                if address == total and not components:
-                    amount_role = "total"
-                elif total == "B6" and address == "A6":
-                    amount_role = "basis"
-                elif address in components:
-                    amount_role = "component"
-                else:
-                    amount_role = "candidate"
-            observation = Observation(cell.raw, locator, cell.numeric, amount_role)
+            observation = Observation(
+                cell.raw,
+                locator,
+                cell.numeric,
+                _amount_role(address, cell.numeric, total, components),
+            )
         sheet_observations[address] = observation
 
-    # Preserve component observations, but do not present them as another total.
-    for observation in tuple(sheet_observations.values()):
-        for dependency in observation.component_locators:
-            if isinstance(dependency, SheetLocator) and dependency.range != total:
-                component = sheet_observations[dependency.range]
-                sheet_observations[dependency.range] = replace(component, amount_role="component")
     if total is not None and (
         total not in sheet_observations or sheet_observations[total].amount_role != "total"
     ):
@@ -254,6 +245,25 @@ def _read_sheet(
             )
         )
     observations.extend(sheet_observations.values())
+
+
+def _amount_role(
+    address: str,
+    amount: Decimal | None,
+    total: str | None,
+    components: set[str],
+    *,
+    formula: bool = False,
+) -> Literal["candidate", "component", "total", "basis"] | None:
+    if amount is None:
+        return None
+    if address == total and (formula or not components):
+        return "total"
+    if total == "B6" and address == "A6":
+        return "basis"
+    if address in components:
+        return "component"
+    return "candidate"
 
 
 def read_workbook(path: Path) -> NativeDocument:
@@ -267,6 +277,10 @@ def read_workbook(path: Path) -> NativeDocument:
         relations = {
             rel.attrib["Id"]: rel.attrib for rel in rels.findall(_PART_REL + "Relationship")
         }
+        if workbook.find(_SHEET + "externalReferences") is not None or any(
+            relation["Type"].endswith("/externalLink") for relation in relations.values()
+        ):
+            issues.append(NativeIssue("external_workbook_reference"))
         shared = []
         if "xl/sharedStrings.xml" in archive.namelist():
             shared = [

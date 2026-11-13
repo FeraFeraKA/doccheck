@@ -1,6 +1,7 @@
 from decimal import Decimal
 from pathlib import Path
-from zipfile import ZipFile
+from struct import pack_into
+from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
 from docx import Document
@@ -13,24 +14,35 @@ _REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 _PACKAGE = "http://schemas.openxmlformats.org/package/2006/relationships"
 
 
-def _workbook(path: Path, rows: str, *, extras: dict[str, str] | None = None) -> Path:
+def _workbook(path: Path, rows: str, *, external_link: bool = False) -> Path:
+    external_ref = (
+        '<externalReferences><externalReference r:id="rId2"/></externalReferences>'
+        if external_link
+        else ""
+    )
+    external_relation = (
+        f'<Relationship Id="rId2" Type="{_REL}/externalLink" '
+        'Target="externalLinks/externalLink1.xml"/>'
+        if external_link
+        else ""
+    )
     with ZipFile(path, "w") as archive:
         archive.writestr(
             "xl/workbook.xml",
             f'<workbook xmlns="{_MAIN}" xmlns:r="{_REL}">'
-            '<sheets><sheet name="Синтетика" sheetId="1" r:id="rId1"/></sheets></workbook>',
+            '<sheets><sheet name="Синтетика" sheetId="1" r:id="rId1"/></sheets>'
+            f"{external_ref}</workbook>",
         )
         archive.writestr(
             "xl/_rels/workbook.xml.rels",
             f'<Relationships xmlns="{_PACKAGE}"><Relationship Id="rId1" '
-            f'Type="{_REL}/worksheet" Target="worksheets/sheet1.xml"/></Relationships>',
+            f'Type="{_REL}/worksheet" Target="worksheets/sheet1.xml"/>'
+            f"{external_relation}</Relationships>",
         )
         archive.writestr(
             "xl/worksheets/sheet1.xml",
             f'<worksheet xmlns="{_MAIN}"><sheetData>{rows}</sheetData></worksheet>',
         )
-        for member, content in (extras or {}).items():
-            archive.writestr(member, content)
     return path
 
 
@@ -94,6 +106,7 @@ def test_invalid_cache_does_not_replace_recalculated_amount(tmp_path):
     [
         ("C6+C7", "unsupported_formula"),
         ("SUM([other.xlsx]S!A1:A2)", "external_formula_reference"),
+        ("SUM(Items[Amount])", "unsupported_formula"),
         ('WEBSERVICE("https://example.invalid/value")', "unsupported_formula"),
         ("SUM(C6:C6)", "unexpected_total_components"),
         ("SUM(C6:C8)", "unsupported_sum_input"),
@@ -120,18 +133,39 @@ def test_contributions_selects_assessed_amount_instead_of_base(tmp_path):
         tmp_path / "upload",
         f'<row r="1">{_text("A1", "Расчёт страховых взносов")}</row>'
         f'<row r="5">{heading}</row>'
-        '<row r="6"><c r="A6"><v>12000.00</v></c><c r="B6"><v>2813.08</v></c></row>',
+        '<row r="6"><c r="A6"><f>SUM(A7:A8)</f></c><c r="B6"><v>2813.08</v></c>'
+        '<c r="D6"><f>SUM(B6:B6)</f></c></row>'
+        '<row r="7"><c r="A7"><v>875.50</v></c></row>'
+        '<row r="8"><c r="A8"><v>11124.50</v></c></row>',
     )
     result = read_native_document(path, "xlsx")
     assert result.issues == ()
-    assert [
-        (item.locator.range, item.amount, item.amount_role)
+    assert {
+        item.locator.range: (item.amount, item.amount_role)
         for item in result.observations
         if item.amount is not None
-    ] == [("A6", Decimal("12000.00"), "basis"), ("B6", Decimal("2813.08"), "total")]
+    } == {
+        "A6": (Decimal("12000.00"), "basis"),
+        "B6": (Decimal("2813.08"), "total"),
+        "D6": (Decimal("2813.08"), "candidate"),
+        "A7": (Decimal("875.50"), "candidate"),
+        "A8": (Decimal("11124.50"), "candidate"),
+    }
 
 
-def _minimal_pdf(path: Path, lines: list[str]) -> Path:
+def test_detects_workbook_external_link_without_reading_its_target(tmp_path):
+    path = _workbook(
+        tmp_path / "upload",
+        '<row r="1"><c r="A1"><v>42</v></c></row>',
+        external_link=True,
+    )
+    result = read_native_document(path, "xlsx")
+    assert [item.code for item in result.issues] == ["external_workbook_reference"]
+    assert result.observations[0].amount == Decimal(42)
+    assert result.observations[0].amount_role == "candidate"
+
+
+def _minimal_pdf(path: Path, lines: list[str], *, page_attrs: bytes = b"") -> Path:
     stream = "\n".join(
         f"BT /F1 12 Tf 30 {150 - count * 20} Td ({line}) Tj ET" for count, line in enumerate(lines)
     ).encode("ascii")
@@ -139,7 +173,8 @@ def _minimal_pdf(path: Path, lines: list[str]) -> Path:
         b"<< /Type /Catalog /Pages 2 0 R >>",
         b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
         b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] "
-        b"/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+        + page_attrs
+        + b" /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
         b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
         b"<< /Length " + str(len(stream)).encode() + b" >>\nstream\n" + stream + b"\nendstream",
     )
@@ -180,6 +215,42 @@ def test_pdf_without_text_is_not_an_empty_success(tmp_path):
     assert [(issue.code, issue.page) for issue in result.issues] == [("no_native_text", 1)]
 
 
+@pytest.mark.parametrize(
+    ("rotation", "expected_box"),
+    [
+        (0, (0.093, 0.157, 0.561, 0.500)),
+        (90, (0.500, 0.093, 0.843, 0.561)),
+        (180, (0.439, 0.500, 0.907, 0.843)),
+        (270, (0.157, 0.439, 0.500, 0.907)),
+    ],
+)
+def test_pdf_cropbox_excludes_hidden_text_and_normalizes_rotated_box(
+    tmp_path, rotation, expected_box
+):
+    path = _minimal_pdf(
+        tmp_path / "upload",
+        ["Hidden: 20,10 RUB", "Visible: 30,15 RUB"],
+        page_attrs=f"/CropBox [10 110 225 145] /Rotate {rotation}".encode(),
+    )
+    result = read_native_document(path, "pdf")
+    assert result.issues == ()
+    (amount,) = result.observations
+    assert amount.raw_text == "Visible: 30,15 RUB"
+    assert amount.amount == Decimal("30.15")
+    assert amount.locator.page == 1 and amount.locator.line == 1
+    assert amount.locator.bbox == pytest.approx(expected_box, abs=0.002)
+
+
+def test_pdf_cropbox_partial_glyph_does_not_become_a_different_amount(tmp_path):
+    path = _minimal_pdf(
+        tmp_path / "upload", ["-120,35 RUB"], page_attrs=b"/CropBox [32 125 225 170]"
+    )
+    result = read_native_document(path, "pdf")
+    (observation,) = result.observations
+    assert observation.amount is None
+    assert [item.code for item in result.issues] == ["clipped_pdf_text"]
+
+
 def test_docx_paragraph_table_and_nonamount_numbers_keep_real_addresses(tmp_path):
     path = tmp_path / "upload"
     doc = Document()
@@ -200,6 +271,39 @@ def test_docx_paragraph_table_and_nonamount_numbers_keep_real_addresses(tmp_path
     assert table_cell.locator == TableCellLocator(kind="table_cell", table=1, row=2, cell=2)
 
 
+def test_docx_monetary_tokens_preserve_sign_and_kopecks_or_report_ambiguity(tmp_path):
+    path = tmp_path / "upload"
+    doc = Document()
+    texts = (
+        "Сумма: −1 234,56 руб.",
+        "Удержано: - 9,75 руб.",
+        "Итого: 1 руб. 25 коп.",
+        "Сумма: − 1 рубль 5 копеек.",
+        "Сумма: 12 34,56 руб.",
+        "Сумма: 1 руб. 125 коп.",
+        "Сумма: 1,23 руб. 25 коп.",
+    )
+    for text in texts:
+        doc.add_paragraph(text)
+    doc.save(path)
+    result = read_native_document(path, "docx")
+    assert [item.raw_text for item in result.observations] == list(texts)
+    assert [item.amount for item in result.observations] == [
+        Decimal("-1234.56"),
+        Decimal("-9.75"),
+        Decimal("1.25"),
+        Decimal("-1.05"),
+        None,
+        None,
+        None,
+    ]
+    assert [(issue.code, issue.locator.paragraph) for issue in result.issues] == [
+        ("ambiguous_rub_amount", 5),
+        ("ambiguous_rub_amount", 6),
+        ("ambiguous_rub_amount", 7),
+    ]
+
+
 @pytest.mark.parametrize("file_format", ["pdf", "docx", "xlsx"])
 def test_corrupt_and_missing_files_return_structured_error(tmp_path, file_format):
     broken = tmp_path / "broken"
@@ -208,3 +312,19 @@ def test_corrupt_and_missing_files_return_structured_error(tmp_path, file_format
         result = read_native_document(path, file_format)
         assert not result.observations
         assert [issue.code for issue in result.issues] == ["native_read_error"]
+
+
+@pytest.mark.parametrize("file_format", ["docx", "xlsx"])
+def test_invalid_deflate_in_ooxml_returns_file_diagnostic(tmp_path, file_format):
+    path = tmp_path / "upload"
+    first_member = "xl/workbook.xml" if file_format == "xlsx" else "[Content_Types].xml"
+    with ZipFile(path, "w", compression=ZIP_DEFLATED) as archive:
+        archive.writestr(first_member, "Compressed file contents")
+    payload = bytearray(path.read_bytes())
+    # Leave the central directory and local header intact, invalidate the deflate stream.
+    pack_into("B", payload, 30 + len(first_member.encode()), 0x07)
+    path.write_bytes(payload)
+
+    result = read_native_document(path, file_format)
+    assert result.observations == ()
+    assert [item.code for item in result.issues] == ["native_read_error"]
