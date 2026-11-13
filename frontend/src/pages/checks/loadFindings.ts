@@ -66,14 +66,17 @@ function date(value: unknown): string {
   return item;
 }
 
-function nullableDecimal(value: unknown, unit: string): string | null {
-  if (value === null) return null;
+function decimal(value: unknown, unit: string): string {
   const item = text(value);
   const pattern = unit === 'RUB'
     ? /^(?!-0+\.00(?![\s\S]))-?\d+\.\d{2}(?![\s\S])/
     : /^-?\d+(?:\.\d+)?(?![\s\S])/;
   if (!pattern.test(item)) throw new InvalidFindingsResponse();
   return item;
+}
+
+function nullableDecimal(value: unknown, unit: string): string | null {
+  return value === null ? null : decimal(value, unit);
 }
 
 function optionalIndex(value: unknown): number | null {
@@ -123,6 +126,15 @@ function issue(value: unknown) {
   return { id: text(item.id), code: text(item.code), message: text(item.message) };
 }
 
+function primaryIssue(value: unknown): ReviewResult['summary']['primary_issues'][number] {
+  const item = record(value);
+  return {
+    ...issue(item),
+    evidence_refs: list(item.evidence_refs, text),
+    file_error_refs: item.file_error_refs === undefined ? [] : list(item.file_error_refs, text),
+  };
+}
+
 function document(value: unknown): ReviewResult['documents'][number] {
   const item = record(value);
   const decision = record(item.decision);
@@ -140,17 +152,41 @@ function document(value: unknown): ReviewResult['documents'][number] {
   };
 }
 
+function calculation(value: unknown, unit: string): Row['calculation'] {
+  const item = record(value);
+  if (item.operation != null && item.operation !== 'sum') throw new InvalidFindingsResponse();
+
+  return {
+    policy_id: text(item.policy_id),
+    operation: item.operation ?? null,
+    formula: text(item.formula),
+    components: list(item.components, (entry) => {
+      const component = record(entry);
+      return {
+        amount: decimal(component.amount, unit),
+        amount_refs: list(component.amount_refs, text),
+        contract_refs: list(component.contract_refs, text),
+        period_refs: list(component.period_refs, text),
+        article_refs: list(component.article_refs, text),
+        identity_refs: component.identity_refs === undefined ? [] : list(component.identity_refs, text),
+        relation_reason: text(component.relation_reason),
+      };
+    }),
+  };
+}
+
 function row(value: unknown): Row {
   const item = record(value);
   const unit = text(item.unit);
   const completeness = record(item.completeness);
-  const calculation = record(item.calculation);
   return {
     id: text(item.id),
     label: text(item.label),
+    unit,
     status: choice(item.status, ['verified', 'discrepancy', 'unverified']),
     reported_value: nullableDecimal(item.reported_value, unit),
     expected_value: nullableDecimal(item.expected_value, unit),
+    observed_evidence_sum: nullableDecimal(item.observed_evidence_sum, unit),
     delta: nullableDecimal(item.delta, unit),
     reported_evidence_refs: list(item.reported_evidence_refs, text),
     reasons: list(item.reasons, (value) => {
@@ -163,10 +199,8 @@ function row(value: unknown): Row {
       reason: text(completeness.reason),
       evidence_refs: list(completeness.evidence_refs, text),
     },
-    calculation: {
-      formula: text(calculation.formula),
-      components: list(calculation.components, (value) => ({ amount_refs: list(record(value).amount_refs, text) })),
-    },
+    calculation: calculation(item.calculation, unit),
+    root_issue_id: item.root_issue_id === null ? null : text(item.root_issue_id),
   };
 }
 
@@ -207,7 +241,7 @@ function decodeFindings(value: unknown, runId: string): RunFindings {
           unverified: integer(counts.unverified, 0),
         },
         conclusion: text(summary.conclusion),
-        primary_issues: list(summary.primary_issues, issue),
+        primary_issues: list(summary.primary_issues, primaryIssue),
       },
     },
   };

@@ -27,9 +27,22 @@ it('читает результат с меткой синтетики, осно
   expect(findings.result.rows[0]).toMatchObject({
     reported_value: '150.50',
     expected_value: '120.50',
+    observed_evidence_sum: '120.50',
+    unit: 'RUB',
     delta: '30.00',
     status: 'discrepancy',
-    calculation: { components: [{ amount_refs: ['amount-1'] }, { amount_refs: ['amount-2'] }] },
+    calculation: {
+      operation: 'sum',
+      policy_id: 'demo-sum/1',
+      components: [{
+        amount: '60.25',
+        amount_refs: ['amount-1'],
+        contract_refs: ['contract'],
+        period_refs: ['period'],
+        article_refs: ['article'],
+        relation_reason: 'Операция в строке 6 совпала по договору, периоду и статье',
+      }, { amount: '60.25', amount_refs: ['amount-2'] }],
+    },
   });
   expect(findings.result.rows[1]).toMatchObject({
     reported_value: '0.00',
@@ -42,6 +55,64 @@ it('читает результат с меткой синтетики, осно
     expect.objectContaining({ decision: expect.objectContaining({ state: 'exclude' }) }),
     expect.objectContaining({ errors: [expect.objectContaining({ code: 'unreadable_source' })] }),
   ]));
+});
+
+it('сохраняет цепочку от непроверенного показателя до ошибки источника', async () => {
+  stubFetch(Response.json(example.result));
+  const { result } = await loadFindings(id);
+
+  const row = result.rows.find((item) => item.id === 'row-b');
+  expect(row?.root_issue_id).toBe('issue-b');
+  const issue = result.summary.primary_issues.find((item) => item.id === row?.root_issue_id);
+  expect(issue).toMatchObject({
+    code: 'unreadable_source',
+    file_error_refs: ['scan-read-error'],
+    evidence_refs: [],
+  });
+  const errors = result.documents.flatMap((document) => document.errors);
+  expect(errors.find((error) => error.id === issue?.file_error_refs?.[0])).toMatchObject({
+    id: 'scan-read-error',
+    code: 'unreadable_source',
+  });
+  expect(result.summary.primary_issues.find((item) => item.id === 'issue-a')).toMatchObject({
+    file_error_refs: [],
+    evidence_refs: ['report-a', 'amount-1', 'amount-2'],
+  });
+});
+
+it('сохраняет наблюдаемую сумму при неполном комплекте и неизвестном ожидаемом значении', async () => {
+  const [first, ...otherRows] = example.result.rows;
+  const response = {
+    ...example.result,
+    rows: [{
+      ...first,
+      observed_evidence_sum: first.calculation.components[0].amount,
+      expected_value: null,
+      delta: null,
+      status: 'unverified',
+      completeness: { ...first.completeness, state: 'incomplete', reason: 'Не хватает одной операции', evidence_refs: [] },
+      calculation: { ...first.calculation, components: first.calculation.components.slice(0, 1) },
+      reasons: [{ code: 'missing_evidence', message: 'Одна операция не подтверждена', evidence_refs: [] }],
+      root_issue_id: null,
+    }, ...otherRows],
+    summary: {
+      ...example.result.summary,
+      counts: { verified: 0, discrepancy: 0, unverified: 2 },
+      primary_issues: example.result.summary.primary_issues.filter((issue) => issue.id !== 'issue-a'),
+      conclusion: 'Оба показателя остаются непроверенными.',
+    },
+  };
+  stubFetch(Response.json(response));
+
+  const { result } = await loadFindings(id);
+  expect(result.rows[0]).toMatchObject({
+    status: 'unverified',
+    unit: 'RUB',
+    observed_evidence_sum: '60.25',
+    expected_value: null,
+    delta: null,
+    calculation: { components: [{ amount: '60.25', amount_refs: ['amount-1'] }] },
+  });
 });
 
 it('разбирает все четыре вида адресов и сохраняет различимые фрагменты PDF', async () => {

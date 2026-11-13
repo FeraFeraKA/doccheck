@@ -39,6 +39,11 @@ interface ReviewIssue {
   message: string;
 }
 
+interface PrimaryReviewIssue extends ReviewIssue {
+  evidence_refs: string[];
+  file_error_refs?: string[];
+}
+
 interface ReviewDocument {
   id: string;
   name: string;
@@ -47,17 +52,37 @@ interface ReviewDocument {
   errors: ReviewIssue[];
 }
 
+interface ReviewComponent {
+  amount: string;
+  amount_refs: string[];
+  contract_refs: string[];
+  period_refs: string[];
+  article_refs: string[];
+  identity_refs?: string[];
+  relation_reason: string;
+}
+
+interface ReviewCalculation {
+  policy_id: string;
+  formula: string;
+  operation?: string | null;
+  components: ReviewComponent[];
+}
+
 interface ReviewRow {
   id: string;
   label: string;
   status: string;
+  unit: string;
   reported_value: string | null;
   expected_value: string | null;
+  observed_evidence_sum: string | null;
   delta: string | null;
   reported_evidence_refs: string[];
   reasons: { code: string; message: string; evidence_refs: string[] }[];
   completeness: { state: string; basis: string; reason: string; evidence_refs: string[] };
-  calculation?: { formula: string; components: { amount_refs: string[] }[] } | null;
+  calculation: ReviewCalculation;
+  root_issue_id: string | null;
 }
 
 // Fields used by the transferred screens. The API client's decoder validates
@@ -70,7 +95,7 @@ export interface ReviewResult {
   summary: {
     counts: { verified: number; discrepancy: number; unverified: number };
     conclusion: string;
-    primary_issues: ReviewIssue[];
+    primary_issues: PrimaryReviewIssue[];
   };
 }
 
