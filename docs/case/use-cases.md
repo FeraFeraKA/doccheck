@@ -1,7 +1,7 @@
 # Два сценария сверки на синтетическом комплекте
 
 [NRT-48](https://linear.app/andreiakimov/issue/NRT-48/dva-use-case-s-vhodom-i-ozhidaemym-rezultatom)
-· База `30beb0cd6b6a60fe933d1fd405601b3c2cc6b6fa`.
+· База `f2781e1acd818a35593a1f4d8545a42cd9cb1ed2`.
 
 ## Подготовка
 
@@ -58,10 +58,16 @@ seed `890041`. В [списке входов](../synthetic/nrt-89/inputs.json) �
 1. Возьмите тот же комплект. Замените только `inputs/04_act.pdf` производным
    `inputs/truncated_act.pdf` из сценария `truncated_pdf` в
    [NRT-40](https://linear.app/andreiakimov/issue/NRT-40/negativnye-fajly-i-scenarii-nepolnogo-komplekta).
-   В рабочей копии [PR #58](https://github.com/VCyberPunk2077/doccheck/pull/58)
-   выполните из корня
-   `python research/negative-fixtures/generate.py --output data/nrt-40-qa`.
-   На указанной выше базе генератора ещё нет. [Генератор NRT-40](https://github.com/VCyberPunk2077/doccheck/blob/cbb69dc25aeae910ffd08439ca6b71271669b335/research/negative-fixtures/generate.py)
+   На указанной базе генератора ещё нет. Откройте отдельную рабочую копию
+   на коммите `cbb69dc25aeae910ffd08439ca6b71271669b335` из [PR #58](https://github.com/VCyberPunk2077/doccheck/pull/58).
+   Из её корня запустите команду с `uv` и Python 3.12. Она установит
+   `openpyxl` и её зависимость `et-xmlfile` закреплённых версий во временное окружение.
+   Папка вывода должна быть новой. [Генератор NRT-40](https://github.com/VCyberPunk2077/doccheck/blob/cbb69dc25aeae910ffd08439ca6b71271669b335/research/negative-fixtures/generate.py)
+
+   ```sh
+   uv run --python 3.12 --no-project --with openpyxl==3.1.5 --with et-xmlfile==2.0.0 python research/negative-fixtures/generate.py --output data/nrt-40-qa
+   ```
+
    Для этого запуска берите только `data/nrt-40-qa/inputs/truncated_act.pdf`.
    Состав остальных 22 файлов и параметры КФЗ сохраняются.
 2. Ожидаемый результат при рабочем адаптере — отдельная ошибка чтения для
