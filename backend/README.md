@@ -134,6 +134,26 @@ uv run --frozen python -m doccheck_backend.run_worker --processor my_local_adapt
 загрузки адаптера завершает команду до захвата заданий. Опция `--once`
 ограничивает процесс одним заданием.
 
+### Отдельный документный worker в Compose
+
+Обычный `docker compose up --build --wait` запускает синтетический worker.
+Сохранённые пакеты ждут отдельного сервиса `document-worker`. Когда доверенный
+адаптер установлен в локальном образе с backend DocCheck, задайте в `.env`
+`DOCCHECK_DOCUMENT_WORKER_IMAGE` с его именем и `DOCCHECK_DOCUMENT_PROCESSOR`
+в форме `module:callable`. Из корня репозитория запустите сервис явно.
+
+```sh
+docker compose up --build --wait
+docker compose --profile document-worker up -d document-worker
+docker compose logs document-worker
+```
+
+Профиль использует ту же БД и том пакетов в режиме чтения. При пустом или
+неимпортируемом `DOCCHECK_DOCUMENT_PROCESSOR` worker завершается до захвата
+заданий. Базовый образ содержит вход `run_worker`. Образ с рабочим адаптером
+и его зависимости подготавливаются отдельно после NRT-94. Тестовый адаптер
+остаётся в `backend/tests/` и исключён из контекста сборки.
+
 Обработчик получает `StoredRun` и каталог файлов пакета. `report_document_id`
 указывает на КФЗ в манифесте. `scope` содержит явно заданную область или
 `None`, когда область определяет обработчик. В этом случае в PostgreSQL
@@ -227,6 +247,11 @@ CI `backend.yml` предоставляет PostgreSQL и запускает HTT
 - `GET /api/v0/runs/{run_id}/findings` возвращает сохранённый результат.
   Для незавершённого задания и задания без результата возвращается `409`
   с кодом `result_pending` или `run_failed`.
+- `GET /api/v0/runs/{run_id}/exports/xlsx` выгружает тот же сохранённый
+  результат как вложение XLSX. В книге есть итог и показатели сверки, адреса
+  доказательств и сведения о документах. Суммы выгружаются текстом с исходной
+  точностью. Пустые денежные ячейки обозначают неизвестные значения.
+  Для незавершённого задания и задания без результата действуют те же `409`.
 - `GET /api/v0/runs/{run_id}/documents/{document_id}` скачивает оригинал
   из пакета указанной проверки. Путь
   `/api/v0/runs/{run_id}/documents/{document_id}/fragments/{evidence_id}`

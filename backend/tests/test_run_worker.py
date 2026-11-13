@@ -418,6 +418,56 @@ def successful_test_processor(run, directory):
     )
 
 
+def failing_test_processor(run, directory):
+    raise RuntimeError("private test adapter detail")
+
+
+@pytest.mark.parametrize("succeeds", [True, False])
+def test_explicit_processor_cli_exposes_saved_outcome(queue, tmp_path, database_url, succeeds):
+    run_id = _enqueue(queue, infer_scope=True)
+    location = f"/api/v0/runs/{run_id}"
+    assert queue.get(location).json()["status"] == "queued"
+    assert queue.get(f"{location}/findings").json()["code"] == "result_pending"
+
+    function = "successful_test_processor" if succeeds else "failing_test_processor"
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "doccheck_backend.run_worker",
+            "--once",
+            "--processor",
+            f"test_run_worker:{function}",
+        ],
+        env={
+            **os.environ,
+            "DATABASE_URL": database_url,
+            "DOCCHECK_UPLOAD_ROOT": str(tmp_path),
+            "PYTHONPATH": os.path.dirname(__file__),
+        },
+        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert completed.returncode == 0, completed.stderr
+    state = queue.get(location).json()
+    findings = queue.get(f"{location}/findings")
+    if succeeds:
+        assert state["status"] == "completed"
+        assert state["error"] is None
+        assert findings.status_code == 200
+        assert findings.json()["run_id"] == str(run_id)
+        assert findings.json()["synthetic"] is True
+        assert findings.json()["rows"] == []
+    else:
+        assert state["status"] == "failed"
+        assert state["error"]["code"] == "processing_failed"
+        assert findings.status_code == 409
+        assert findings.json()["code"] == "run_failed"
+        assert "private test adapter detail" not in completed.stderr + findings.text
+
+
 def test_restart_marks_abandoned_claim_failed(engine, queue, tmp_path, database_url):
     abandoned = _enqueue(queue)
     waiting = _enqueue(queue)
