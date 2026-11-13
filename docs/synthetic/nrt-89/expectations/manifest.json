@@ -1,0 +1,734 @@
+{
+  "synthetic": true,
+  "schema_version": "fixture-1",
+  "seed": 890041,
+  "contract": "SYN-00890041-КФ/47",
+  "company": "ООО «Синтетическая лаборатория 00890041»",
+  "period_start": "2036-06-01",
+  "period_end": "2036-10-31",
+  "documents": [
+    {
+      "id": "02_payroll_06",
+      "file": "inputs/02_payroll_06.xlsx",
+      "kind": "Расчетная ведомость заработной платы",
+      "format": "xlsx",
+      "acquisition": "native",
+      "category": "payroll",
+      "number": "SYN-00890041-02_PAYROLL_06",
+      "contract": "SYN-00890041-КФ/47",
+      "date": "2036-06-30",
+      "period_start": "2036-06-01",
+      "period_end": "2036-06-30",
+      "company": "ООО «Синтетическая лаборатория 00890041»",
+      "counterparty": "ООО «Синтез Поставщик 00890041-01»",
+      "tax_id": "SYN-INN-00890041-01",
+      "amount": "184535.84",
+      "items": [
+        {
+          "article_code": "9101",
+          "label": "Начисление по окладу",
+          "amount": "108851.36",
+          "basis": "Учебный табель"
+        },
+        {
+          "article_code": "9102",
+          "label": "Доплата за проект",
+          "amount": "75684.48",
+          "basis": "Учебное распоряжение"
+        }
+      ],
+      "scope": "included",
+      "partial": false
+    },
+    {
+      "id": "03_insurance_06",
+      "file": "inputs/03_insurance_06.xlsx",
+      "kind": "Ведомость начисленных страховых взносов",
+      "format": "xlsx",
+      "acquisition": "native",
+      "category": "insurance",
+      "number": "SYN-00890041-03_INSURANCE_06",
+      "contract": "SYN-00890041-КФ/47",
+      "date": "2036-06-30",
+      "period_start": "2036-06-01",
+      "period_end": "2036-06-30",
+      "company": "ООО «Синтетическая лаборатория 00890041»",
+      "counterparty": "ООО «Синтез Поставщик 00890041-02»",
+      "tax_id": "SYN-INN-00890041-02",
+      "amount": "46234.93",
+      "items": [
+        {
+          "label": "Страховые взносы",
+          "amount": "46234.93"
+        }
+      ],
+      "scope": "included",
+      "partial": false,
+      "accrual_base": "184535.84",
+      "article_code": "9201",
+      "comment": "Учебные начисления за месяц"
+    },
+    {
+      "id": "02_payroll_07",
+      "file": "inputs/02_payroll_07.xlsx",
+      "kind": "Расчетная ведомость заработной платы",
+      "format": "xlsx",
+      "acquisition": "native",
+      "category": "payroll",
+      "number": "SYN-00890041-02_PAYROLL_07",
+      "contract": "SYN-00890041-КФ/47",
+      "date": "2036-07-31",
+      "period_start": "2036-07-01",
+      "period_end": "2036-07-31",
+      "company": "ООО «Синтетическая лаборатория 00890041»",
+      "counterparty": "ООО «Синтез Поставщик 00890041-03»",
+      "tax_id": "SYN-INN-00890041-03",
+      "amount": "222913.26",
+      "items": [
+        {
+          "article_code": "9101",
+          "label": "Начисление по окладу",
+          "amount": "157618.02",
+          "basis": "Учебный табель"
+        },
+        {
+          "article_code": "9102",
+          "label": "Доплата за проект",
+          "amount": "65295.24",
+          "basis": "Учебное распоряжение"
+        }
+      ],
+      "scope": "included",
+      "partial": false
+    },
+    {
+      "id": "03_insurance_07",
+      "file": "inputs/03_insurance_07.xlsx",
+      "kind": "Ведомость начисленных страховых взносов",
+      "format": "xlsx",
+      "acquisition": "native",
+      "category": "insurance",
+      "number": "SYN-00890041-03_INSURANCE_07",
+      "contract": "SYN-00890041-КФ/47",
+      "date": "2036-07-31",
+      "period_start": "2036-07-01",
+      "period_end": "2036-07-31",
+      "company": "ООО «Синтетическая лаборатория 00890041»",
+      "counterparty": "ООО «Синтез Поставщик 00890041-04»",
+      "tax_id": "SYN-INN-00890041-04",
+      "amount": "58557.79",
+      "items": [
+        {
+          "label": "Страховые взносы",
+          "amount": "58557.79"
+        }
+      ],
+      "scope": "included",
+      "partial": false,
+      "accrual_base": "222913.26",
+      "article_code": "9201",
+      "comment": "Учебные начисления за месяц"
+    },
+    {
+      "id": "02_payroll_08",
+      "file": "inputs/02_payroll_08.xlsx",
+      "kind": "Расчетная ведомость заработной платы",
+      "format": "xlsx",
+      "acquisition": "native",
+      "category": "payroll",
+      "number": "SYN-00890041-02_PAYROLL_08",
+      "contract": "SYN-00890041-КФ/47",
+      "date": "2036-08-31",
+      "period_start": "2036-08-01",
+      "period_end": "2036-08-31",
+      "company": "ООО «Синтетическая лаборатория 00890041»",
+      "counterparty": "ООО «Синтез Поставщик 00890041-05»",
+      "tax_id": "SYN-INN-00890041-05",
+      "amount": "217293.49",
+      "items": [
+        {
+          "article_code": "9101",
+          "label": "Начисление по окладу",
+          "amount": "135488.69",
+          "basis": "Учебный табель"
+        },
+        {
+          "article_code": "9102",
+          "label": "Доплата за проект",
+          "amount": "81804.80",
+          "basis": "Учебное распоряжение"
+        }
+      ],
+      "scope": "included",
+      "partial": false
+    },
+    {
+      "id": "03_insurance_08",
+      "file": "inputs/03_insurance_08.xlsx",
+      "kind": "Ведомость начисленных страховых взносов",
+      "format": "xlsx",
+      "acquisition": "native",
+      "category": "insurance",
+      "number": "SYN-00890041-03_INSURANCE_08",
+      "contract": "SYN-00890041-КФ/47",
+      "date": "2036-08-31",
+      "period_start": "2036-08-01",
+      "period_end": "2036-08-31",
+      "company": "ООО «Синтетическая лаборатория 00890041»",
+      "counterparty": "ООО «Синтез Поставщик 00890041-06»",
+      "tax_id": "SYN-INN-00890041-06",
+      "amount": "59885.86",
+      "items": [
+        {
+          "label": "Страховые взносы",
+          "amount": "59885.86"
+        }
+      ],
+      "scope": "included",
+      "partial": false,
+      "accrual_base": "217293.49",
+      "article_code": "9201",
+      "comment": "Учебные начисления за месяц"
+    },
+    {
+      "id": "02_payroll_09",
+      "file": "inputs/02_payroll_09.xlsx",
+      "kind": "Расчетная ведомость заработной платы",
+      "format": "xlsx",
+      "acquisition": "native",
+      "category": "payroll",
+      "number": "SYN-00890041-02_PAYROLL_09",
+      "contract": "SYN-00890041-КФ/47",
+      "date": "2036-09-30",
+      "period_start": "2036-09-01",
+      "period_end": "2036-09-30",
+      "company": "ООО «Синтетическая лаборатория 00890041»",
+      "counterparty": "ООО «Синтез Поставщик 00890041-07»",
+      "tax_id": "SYN-INN-00890041-07",
+      "amount": "177288.54",
+      "items": [
+        {
+          "article_code": "9101",
+          "label": "Начисление по окладу",
+          "amount": "125667.62",
+          "basis": "Учебный табель"
+        },
+        {
+          "article_code": "9102",
+          "label": "Доплата за проект",
+          "amount": "51620.92",
+          "basis": "Учебное распоряжение"
+        }
+      ],
+      "scope": "included",
+      "partial": false
+    },
+    {
+      "id": "03_insurance_09",
+      "file": "inputs/03_insurance_09.xlsx",
+      "kind": "Ведомость начисленных страховых взносов",
+      "format": "xlsx",
+      "acquisition": "native",
+      "category": "insurance",
+      "number": "SYN-00890041-03_INSURANCE_09",
+      "contract": "SYN-00890041-КФ/47",
+      "date": "2036-09-30",
+      "period_start": "2036-09-01",
+      "period_end": "2036-09-30",
+      "company": "ООО «Синтетическая лаборатория 00890041»",
+      "counterparty": "ООО «Синтез Поставщик 00890041-08»",
+      "tax_id": "SYN-INN-00890041-08",
+      "amount": "69069.57",
+      "items": [
+        {
+          "label": "Страховые взносы",
+          "amount": "69069.57"
+        }
+      ],
+      "scope": "included",
+      "partial": false,
+      "accrual_base": "177288.54",
+      "article_code": "9201",
+      "comment": "Учебные начисления за месяц"
+    },
+    {
+      "id": "02_payroll_10",
+      "file": "inputs/02_payroll_10.xlsx",
+      "kind": "Расчетная ведомость заработной платы",
+      "format": "xlsx",
+      "acquisition": "native",
+      "category": "payroll",
+      "number": "SYN-00890041-02_PAYROLL_10",
+      "contract": "SYN-00890041-КФ/47",
+      "date": "2036-10-31",
+      "period_start": "2036-10-01",
+      "period_end": "2036-10-31",
+      "company": "ООО «Синтетическая лаборатория 00890041»",
+      "counterparty": "ООО «Синтез Поставщик 00890041-09»",
+      "tax_id": "SYN-INN-00890041-09",
+      "amount": "184173.24",
+      "items": [
+        {
+          "article_code": "9101",
+          "label": "Начисление по окладу",
+          "amount": "140138.53",
+          "basis": "Учебный табель"
+        },
+        {
+          "article_code": "9102",
+          "label": "Доплата за проект",
+          "amount": "44034.71",
+          "basis": "Учебное распоряжение"
+        }
+      ],
+      "scope": "included",
+      "partial": false
+    },
+    {
+      "id": "03_insurance_10",
+      "file": "inputs/03_insurance_10.xlsx",
+      "kind": "Ведомость начисленных страховых взносов",
+      "format": "xlsx",
+      "acquisition": "native",
+      "category": "insurance",
+      "number": "SYN-00890041-03_INSURANCE_10",
+      "contract": "SYN-00890041-КФ/47",
+      "date": "2036-10-31",
+      "period_start": "2036-10-01",
+      "period_end": "2036-10-31",
+      "company": "ООО «Синтетическая лаборатория 00890041»",
+      "counterparty": "ООО «Синтез Поставщик 00890041-10»",
+      "tax_id": "SYN-INN-00890041-10",
+      "amount": "63792.22",
+      "items": [
+        {
+          "label": "Страховые взносы",
+          "amount": "63792.22"
+        }
+      ],
+      "scope": "included",
+      "partial": false,
+      "accrual_base": "184173.24",
+      "article_code": "9201",
+      "comment": "Учебные начисления за месяц"
+    },
+    {
+      "id": "04_act",
+      "file": "inputs/04_act.pdf",
+      "kind": "Акт оказанных услуг",
+      "format": "pdf",
+      "acquisition": "native",
+      "category": "production_overhead",
+      "number": "SYN-00890041-04_ACT",
+      "contract": "SYN-00890041-КФ/47",
+      "date": "2036-06-30",
+      "period_start": "2036-06-01",
+      "period_end": "2036-06-30",
+      "company": "ООО «Синтетическая лаборатория 00890041»",
+      "counterparty": "ООО «Синтез Поставщик 00890041-11»",
+      "tax_id": "SYN-INN-00890041-11",
+      "amount": "76376.71",
+      "items": [
+        {
+          "label": "Объем по документу",
+          "amount": "76376.71"
+        }
+      ],
+      "scope": "included",
+      "partial": false
+    },
+    {
+      "id": "05_invoice_act",
+      "file": "inputs/05_invoice_act.pdf",
+      "kind": "Счет-акт",
+      "format": "pdf",
+      "acquisition": "scan",
+      "category": "production_overhead",
+      "number": "SYN-00890041-05_INVOICE_ACT",
+      "contract": "SYN-00890041-КФ/47",
+      "date": "2036-07-31",
+      "period_start": "2036-07-01",
+      "period_end": "2036-07-31",
+      "company": "ООО «Синтетическая лаборатория 00890041»",
+      "counterparty": "ООО «Синтез Поставщик 00890041-12»",
+      "tax_id": "SYN-INN-00890041-12",
+      "amount": "73917.50",
+      "items": [
+        {
+          "label": "Объем по документу",
+          "amount": "73917.50"
+        }
+      ],
+      "scope": "included",
+      "partial": false
+    },
+    {
+      "id": "06_memo",
+      "file": "inputs/06_memo.docx",
+      "kind": "Служебная записка",
+      "format": "docx",
+      "acquisition": "native",
+      "category": "production_overhead",
+      "number": "SYN-00890041-06_MEMO",
+      "contract": "SYN-00890041-КФ/47",
+      "date": "2036-08-31",
+      "period_start": "2036-08-01",
+      "period_end": "2036-08-31",
+      "company": "ООО «Синтетическая лаборатория 00890041»",
+      "counterparty": "ООО «Синтез Поставщик 00890041-13»",
+      "tax_id": "SYN-INN-00890041-13",
+      "amount": "5326.98",
+      "items": [
+        {
+          "label": "Объем по документу",
+          "amount": "5326.98"
+        }
+      ],
+      "scope": "included",
+      "partial": false
+    },
+    {
+      "id": "07_transfer",
+      "file": "inputs/07_transfer.pdf",
+      "kind": "Универсальный передаточный документ",
+      "format": "pdf",
+      "acquisition": "native",
+      "category": "production_overhead",
+      "number": "SYN-00890041-07_TRANSFER",
+      "contract": "SYN-00890041-КФ/47",
+      "date": "2036-09-30",
+      "period_start": "2036-09-01",
+      "period_end": "2036-09-30",
+      "company": "ООО «Синтетическая лаборатория 00890041»",
+      "counterparty": "ООО «Синтез Поставщик 00890041-14»",
+      "tax_id": "SYN-INN-00890041-14",
+      "amount": "59389.14",
+      "items": [
+        {
+          "label": "Объем по документу",
+          "amount": "59389.14"
+        }
+      ],
+      "scope": "included",
+      "partial": false
+    },
+    {
+      "id": "08_admin_act",
+      "file": "inputs/08_admin_act.pdf",
+      "kind": "Акт оказанных услуг",
+      "format": "pdf",
+      "acquisition": "native",
+      "category": "general_admin",
+      "number": "SYN-00890041-08_ADMIN_ACT",
+      "contract": "SYN-00890041-КФ/47",
+      "date": "2036-06-30",
+      "period_start": "2036-06-01",
+      "period_end": "2036-06-30",
+      "company": "ООО «Синтетическая лаборатория 00890041»",
+      "counterparty": "ООО «Синтез Поставщик 00890041-15»",
+      "tax_id": "SYN-INN-00890041-15",
+      "amount": "45611.31",
+      "items": [
+        {
+          "label": "Объем по документу",
+          "amount": "45611.31"
+        }
+      ],
+      "scope": "included",
+      "partial": false
+    },
+    {
+      "id": "09_admin_act",
+      "file": "inputs/09_admin_act.pdf",
+      "kind": "Акт оказанных услуг",
+      "format": "pdf",
+      "acquisition": "scan",
+      "category": "general_admin",
+      "number": "SYN-00890041-09_ADMIN_ACT",
+      "contract": "SYN-00890041-КФ/47",
+      "date": "2036-07-31",
+      "period_start": "2036-07-01",
+      "period_end": "2036-07-31",
+      "company": "ООО «Синтетическая лаборатория 00890041»",
+      "counterparty": "ООО «Синтез Поставщик 00890041-16»",
+      "tax_id": "SYN-INN-00890041-16",
+      "amount": "70665.23",
+      "items": [
+        {
+          "label": "Объем по документу",
+          "amount": "70665.23"
+        }
+      ],
+      "scope": "included",
+      "partial": false
+    },
+    {
+      "id": "10_admin_copy",
+      "file": "inputs/10_admin_copy.pdf",
+      "kind": "Акт оказанных услуг",
+      "format": "pdf",
+      "acquisition": "scan",
+      "category": "general_admin",
+      "number": "SYN-00890041-09_ADMIN_ACT",
+      "contract": "SYN-00890041-КФ/47",
+      "date": "2036-07-31",
+      "period_start": "2036-07-01",
+      "period_end": "2036-07-31",
+      "company": "ООО «Синтетическая лаборатория 00890041»",
+      "counterparty": "ООО «Синтез Поставщик 00890041-16»",
+      "tax_id": "SYN-INN-00890041-16",
+      "amount": "70665.23",
+      "items": [
+        {
+          "label": "Объем по документу",
+          "amount": "70665.23"
+        }
+      ],
+      "scope": "included",
+      "partial": false,
+      "duplicate_of": "09_admin_act"
+    },
+    {
+      "id": "11_calculation",
+      "file": "inputs/11_calculation.docx",
+      "kind": "Справка расчет",
+      "format": "docx",
+      "acquisition": "native",
+      "category": "general_admin",
+      "number": "SYN-00890041-11_CALCULATION",
+      "contract": "SYN-00890041-КФ/47",
+      "date": "2036-08-31",
+      "period_start": "2036-08-01",
+      "period_end": "2036-08-31",
+      "company": "ООО «Синтетическая лаборатория 00890041»",
+      "counterparty": "ООО «Синтез Поставщик 00890041-18»",
+      "tax_id": "SYN-INN-00890041-18",
+      "amount": "9083.19",
+      "items": [
+        {
+          "label": "Объем по документу",
+          "amount": "9083.19"
+        }
+      ],
+      "scope": "included",
+      "partial": false
+    },
+    {
+      "id": "12_communication",
+      "file": "inputs/12_communication.png",
+      "kind": "Акт оказанных услуг связи",
+      "format": "png",
+      "acquisition": "scan",
+      "category": "general_admin",
+      "number": "SYN-00890041-12_COMMUNICATION",
+      "contract": "SYN-00890041-КФ/47",
+      "date": "2036-09-30",
+      "period_start": "2036-09-01",
+      "period_end": "2036-09-30",
+      "company": "ООО «Синтетическая лаборатория 00890041»",
+      "counterparty": "ООО «Синтез Поставщик 00890041-19»",
+      "tax_id": "SYN-INN-00890041-19",
+      "amount": "43515.32",
+      "items": [
+        {
+          "label": "Объем по документу",
+          "amount": "43515.32"
+        }
+      ],
+      "scope": "included",
+      "partial": false
+    },
+    {
+      "id": "13_transfer",
+      "file": "inputs/13_transfer.pdf",
+      "kind": "Универсальный передаточный документ",
+      "format": "pdf",
+      "acquisition": "native",
+      "category": "general_admin",
+      "number": "SYN-00890041-13_TRANSFER",
+      "contract": "SYN-00890041-КФ/93",
+      "date": "2036-09-30",
+      "period_start": "2036-09-01",
+      "period_end": "2036-09-30",
+      "company": "ООО «Синтетическая лаборатория 00890041»",
+      "counterparty": "ООО «Синтез Поставщик 00890041-20»",
+      "tax_id": "SYN-INN-00890041-20",
+      "amount": "30670.02",
+      "items": [
+        {
+          "label": "Объем по документу",
+          "amount": "30670.02"
+        }
+      ],
+      "scope": "other_contract",
+      "partial": false
+    },
+    {
+      "id": "14_admin_act",
+      "file": "inputs/14_admin_act.pdf",
+      "kind": "Акт организационных услуг",
+      "format": "pdf",
+      "acquisition": "native",
+      "category": "general_admin",
+      "number": "SYN-00890041-14_ADMIN_ACT",
+      "contract": "SYN-00890041-КФ/47",
+      "date": "2036-11-30",
+      "period_start": "2036-11-01",
+      "period_end": "2036-11-30",
+      "company": "ООО «Синтетическая лаборатория 00890041»",
+      "counterparty": "ООО «Синтез Поставщик 00890041-21»",
+      "tax_id": "SYN-INN-00890041-21",
+      "amount": "53156.08",
+      "items": [
+        {
+          "label": "Объем по документу",
+          "amount": "53156.08"
+        }
+      ],
+      "scope": "other_period",
+      "partial": false
+    },
+    {
+      "id": "15_admin_act",
+      "file": "inputs/15_admin_act.pdf",
+      "kind": "Акт оказанных услуг",
+      "format": "pdf",
+      "acquisition": "native",
+      "category": "general_admin",
+      "number": "SYN-00890041-15_ADMIN_ACT",
+      "contract": "SYN-00890041-КФ/47",
+      "date": "2036-10-31",
+      "period_start": "2036-10-01",
+      "period_end": "2036-10-31",
+      "company": "ООО «Синтетическая лаборатория 00890041»",
+      "counterparty": "ООО «Синтез Поставщик 00890041-22»",
+      "tax_id": "SYN-INN-00890041-22",
+      "amount": "58195.10",
+      "items": [
+        {
+          "label": "Объем по документу",
+          "amount": "58195.10"
+        }
+      ],
+      "scope": "included",
+      "partial": true
+    }
+  ],
+  "rows": [
+    {
+      "id": "payroll",
+      "label": "Оплата труда",
+      "reported_amount": "986204.37",
+      "expected_status": "verified",
+      "expected_amount": "986204.37",
+      "available_subtotal": "986204.37",
+      "delta": "0.00",
+      "completeness": "complete",
+      "reason": "complete_document_set",
+      "included_documents": [
+        "02_payroll_06",
+        "02_payroll_07",
+        "02_payroll_08",
+        "02_payroll_09",
+        "02_payroll_10"
+      ],
+      "excluded_documents": []
+    },
+    {
+      "id": "insurance",
+      "label": "Страховые взносы",
+      "reported_amount": "297880.85",
+      "expected_status": "discrepancy",
+      "expected_amount": "297540.37",
+      "available_subtotal": "297540.37",
+      "delta": "340.48",
+      "completeness": "complete",
+      "reason": "reported_total_differs",
+      "included_documents": [
+        "03_insurance_06",
+        "03_insurance_07",
+        "03_insurance_08",
+        "03_insurance_09",
+        "03_insurance_10"
+      ],
+      "excluded_documents": []
+    },
+    {
+      "id": "production_overhead",
+      "label": "Общепроизводственные расходы",
+      "reported_amount": "215010.33",
+      "expected_status": "verified",
+      "expected_amount": "215010.33",
+      "available_subtotal": "215010.33",
+      "delta": "0.00",
+      "completeness": "complete",
+      "reason": "complete_document_set",
+      "included_documents": [
+        "04_act",
+        "05_invoice_act",
+        "06_memo",
+        "07_transfer"
+      ],
+      "excluded_documents": []
+    },
+    {
+      "id": "general_admin",
+      "label": "Общехозяйственные расходы",
+      "reported_amount": "227070.15",
+      "expected_status": "unverified",
+      "expected_amount": null,
+      "available_subtotal": "227070.15",
+      "delta": null,
+      "completeness": "incomplete",
+      "reason": "partial_document_set",
+      "included_documents": [
+        "08_admin_act",
+        "09_admin_act",
+        "11_calculation",
+        "12_communication",
+        "15_admin_act"
+      ],
+      "excluded_documents": [
+        "10_admin_copy",
+        "13_transfer",
+        "14_admin_act"
+      ]
+    },
+    {
+      "id": "other",
+      "label": "Прочие расходы",
+      "reported_amount": "13910.05",
+      "expected_status": "unverified",
+      "expected_amount": null,
+      "available_subtotal": null,
+      "delta": null,
+      "completeness": "incomplete",
+      "reason": "missing_supporting_documents",
+      "included_documents": [],
+      "excluded_documents": []
+    }
+  ],
+  "report": {
+    "id": "01_kfz",
+    "file": "inputs/01_kfz.pdf",
+    "role": "report",
+    "format": "pdf",
+    "acquisition": "scan",
+    "sha256": "6aed30d62b1336b9965be3f1f5a7c7fdad04304c0090a09b8532f9e685a508b8"
+  },
+  "coverage": [
+    "verified",
+    "discrepancy",
+    "unverified",
+    "duplicate",
+    "other_period",
+    "other_contract",
+    "partial_sum"
+  ],
+  "provenance": {
+    "source": "All fixture values are generated from the seed without source data or an answer book",
+    "layout": "Payroll and insurance worksheets match the source cell addresses; other formats await structural review",
+    "acceptance": "Andrei checks the remaining layouts and absence of coinciding substantive values locally",
+    "purpose": "Public regression fixture, not independent holdout or application output"
+  }
+}
