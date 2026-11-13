@@ -343,6 +343,23 @@ class ResultRow(ContractModel):
                     },
                 },
                 {
+                    "if": {"properties": {"status": {"const": "discrepancy"}}},
+                    "then": {"properties": {"reasons": {"minItems": 1}}},
+                },
+                {
+                    "if": {"properties": {"reported_value": {"type": "string"}}},
+                    "then": {"properties": {"reported_evidence_refs": {"minItems": 1}}},
+                },
+                {
+                    "if": {
+                        "properties": {
+                            "calculation": {"properties": {"components": {"minItems": 1}}}
+                        }
+                    },
+                    "then": {"properties": {"observed_evidence_sum": {"type": "string"}}},
+                    "else": {"properties": {"observed_evidence_sum": {"type": "null"}}},
+                },
+                {
                     "if": {
                         "properties": {
                             "completeness": {
@@ -356,7 +373,6 @@ class ResultRow(ContractModel):
                     "if": {"properties": {"expected_value": {"type": "string"}}},
                     "then": {
                         "properties": {
-                            "observed_evidence_sum": {"type": "string"},
                             "calculation": {
                                 "required": ["operation"],
                                 "properties": {

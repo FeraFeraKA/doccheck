@@ -929,6 +929,65 @@
         {
           "if": {
             "properties": {
+              "status": {
+                "const": "discrepancy"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "reasons": {
+                "minItems": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "reported_value": {
+                "type": "string"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "reported_evidence_refs": {
+                "minItems": 1
+              }
+            }
+          }
+        },
+        {
+          "else": {
+            "properties": {
+              "observed_evidence_sum": {
+                "type": "null"
+              }
+            }
+          },
+          "if": {
+            "properties": {
+              "calculation": {
+                "properties": {
+                  "components": {
+                    "minItems": 1
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "observed_evidence_sum": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
               "completeness": {
                 "properties": {
                   "state": {
@@ -959,9 +1018,6 @@
           },
           "then": {
             "properties": {
-              "observed_evidence_sum": {
-                "type": "string"
-              },
               "calculation": {
                 "properties": {
                   "operation": {

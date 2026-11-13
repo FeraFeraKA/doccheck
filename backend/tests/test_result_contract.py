@@ -43,6 +43,29 @@ def test_checked_in_schema_matches_models_and_example_round_trips(payload: dict)
 
 
 @pytest.mark.parametrize(
+    ("row", "field", "value"),
+    [
+        (1, "observed_evidence_sum", "0.00"),
+        (0, "reported_evidence_refs", []),
+        (0, "reasons", []),
+    ],
+)
+def test_draft_2020_12_rejects_inconsistent_row_fields(
+    payload: dict, row: int, field: str, value: object
+) -> None:
+    jsonschema = pytest.importorskip("jsonschema")
+    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
+    validator = jsonschema.Draft202012Validator(schema)
+    validator.check_schema(schema)
+    validator.validate(payload)
+    payload["result"]["rows"][row][field] = value
+    with pytest.raises(jsonschema.ValidationError):
+        validator.validate(payload)
+    with pytest.raises(ValidationError):
+        CheckJob.model_validate(payload)
+
+
+@pytest.mark.parametrize(
     "value", [1, 1.2, True, "1", "1.2", "-0.00", "1,20", "1e2", "NaN", "1.00\n"]
 )
 def test_rub_requires_a_decimal_string_in_kopecks(payload: dict, value: object) -> None:
