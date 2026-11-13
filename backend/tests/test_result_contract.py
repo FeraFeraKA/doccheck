@@ -335,6 +335,46 @@ def test_component_scope_rejects_unreferenced_conflicting_readings(
     assert CheckJob.model_validate(payload).result.rows[0].status == "unverified"
 
 
+@pytest.mark.parametrize(
+    ("kind", "alternative"),
+    [
+        ("contract", "OTHER"),
+        ("period", {"start": None, "end": "2025-02-20"}),
+        ("article", "DEMO-B"),
+    ],
+)
+def test_component_scope_follows_pdf_aliases_without_joining_distinct_fragments(
+    payload: dict, kind: str, alternative: object
+) -> None:
+    result = payload["result"]
+    result["documents"][1]["format"] = "pdf"
+    for line, item in enumerate(result["evidence"][2:], start=1):
+        item["locator"] = {"kind": "page", "page": 1, "line": line}
+    selected = next(item for item in result["evidence"] if item["kind"] == kind)
+    selected_line = selected["locator"]["line"]
+    second_line = 20
+    for line in (selected_line, second_line):
+        result["evidence"].append(
+            {
+                **selected,
+                "id": f"scope-box-{line}",
+                "locator": {"kind": "page", "page": 1, "line": line, "bbox": [0.1, 0.1, 0.3, 0.2]},
+            }
+        )
+    other = {
+        **selected,
+        "id": "unreferenced-scope-reading",
+        "locator": {"kind": "page", "page": 1, "line": second_line},
+        "normalized_value": alternative,
+    }
+    result["evidence"].append(other)
+    with pytest.raises(ValidationError, match="component scope evidence must agree"):
+        CheckJob.model_validate(payload)
+
+    other["locator"]["bbox"] = [0.5, 0.1, 0.7, 0.2]
+    assert CheckJob.model_validate(payload).result is not None
+
+
 def test_period_readings_can_omit_different_bounds_if_compatible(payload: dict) -> None:
     evidence = payload["result"]["evidence"]
     observed = evidence[5]
