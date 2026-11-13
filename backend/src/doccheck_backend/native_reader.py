@@ -35,7 +35,6 @@ _SPACE = rf"[{_SPACE_CHARS}]"
 _GROUP_SPACE = rf"[{_GROUP_SPACES}]"
 _SIGNS = "+−-"
 _LINE_BREAKS = "\r\n\v\f\u0085\u2028\u2029"
-_AMOUNT_SPACING = rf"[{_SPACE_CHARS}{_LINE_BREAKS}]"
 _NUMBER = re.compile(
     rf"(?P<sign>[+−-]?){_SPACE}*"
     rf"(?P<integer>[0-9]{{1,3}}(?:{_GROUP_SPACE}[0-9]{{3}})+|[0-9]+)"
@@ -43,11 +42,8 @@ _NUMBER = re.compile(
 )
 _CURRENCY = r"(?:₽|руб(?:лей|ля|ль|\.)?|RUB|р\.)"
 _KOPECKS = r"коп(?:еек|ейки|ейка|\.)?"
-_RUB_TOKEN = re.compile(
-    rf"{_CURRENCY}"
-    rf"(?:({_AMOUNT_SPACING}*)([0-9]+)({_AMOUNT_SPACING}*){_KOPECKS}(?!\w)|(?!\w))",
-    re.IGNORECASE,
-)
+_RUB_TOKEN = re.compile(rf"{_CURRENCY}(?=\d|\W|$)", re.IGNORECASE)
+_KOPECK_SUFFIX = re.compile(rf"{_KOPECKS}(?!\w)", re.IGNORECASE)
 _MONEY_HEADER = re.compile(r"^(?:сумма|стоимость)\s*[,\s(]+(?:руб\.?|₽|rub)\)?$", re.I)
 
 
@@ -76,6 +72,42 @@ def _preceding_symbol(text: str, start: int) -> int:
     return start - 1
 
 
+def _token_space(char: str) -> bool:
+    return char in _SPACE_CHARS + _LINE_BREAKS or category(char) == "Cf"
+
+
+def _possible_kopecks(text: str, start: int) -> tuple[str, bool]:
+    index = start
+    interrupted = False
+    while index < len(text) and _token_space(text[index]):
+        interrupted |= text[index] not in _SPACE_CHARS
+        index += 1
+    digits = index
+    while index < len(text) and text[index] in "0123456789":
+        index += 1
+    if index == digits:
+        return "", False
+    end = index
+    while index < len(text) and _token_space(text[index]):
+        interrupted |= text[index] not in _SPACE_CHARS
+        index += 1
+    if _KOPECK_SUFFIX.match(text, index) is None:
+        return "", False
+    return text[digits:end], interrupted
+
+
+def _interrupted_prefix(text: str, start: int) -> bool:
+    before = start
+    uncertain = False
+    while before and _token_space(text[before - 1]):
+        uncertain |= text[before - 1] not in _SPACE_CHARS
+        before -= 1
+    if not uncertain or not before:
+        return False
+    # A prior number or sign across a line break may be the beginning of the same amount.
+    return text[before - 1] in "0123456789" + _SIGNS or category(text[before - 1]) == "Pd"
+
+
 def _rub_tokens(text: str) -> list[tuple[str, str]]:
     matches = []
     # Each reverse scan stops at the first non-numeric character. Runs between currency
@@ -83,9 +115,7 @@ def _rub_tokens(text: str) -> list[tuple[str, str]]:
     for currency in _RUB_TOKEN.finditer(text):
         end = currency.start()
         last = end
-        while last and (
-            text[last - 1] in _SPACE_CHARS + _LINE_BREAKS or category(text[last - 1]) == "Cf"
-        ):
+        while last and _token_space(text[last - 1]):
             last -= 1
         if not last or text[last - 1] not in "0123456789":
             continue
@@ -119,19 +149,14 @@ def _rub_tokens(text: str) -> list[tuple[str, str]]:
             )
         ):
             numeral = ""
-        if start and text[start - 1] in _LINE_BREAKS:
-            before = start - 1
-            while before and (
-                text[before - 1] in _SPACE_CHARS + _LINE_BREAKS
-                or category(text[before - 1]) == "Cf"
-            ):
-                before -= 1
-            if before and (text[before - 1] in _SIGNS or category(text[before - 1]) == "Pd"):
-                numeral = ""
-        unit_gaps = text[last:end] + (currency[1] or "") + (currency[3] or "")
-        if any(char not in _SPACE_CHARS for char in unit_gaps):
+        kopecks, interrupted = _possible_kopecks(text, currency.end())
+        if (
+            interrupted
+            or _interrupted_prefix(text, start)
+            or any(char not in _SPACE_CHARS for char in text[last:end])
+        ):
             numeral = ""
-        matches.append((numeral, currency[2] or ""))
+        matches.append((numeral, kopecks))
     return matches
 
 

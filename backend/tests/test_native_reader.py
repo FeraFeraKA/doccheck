@@ -380,6 +380,9 @@ def test_docx_keeps_explicit_signs_and_distinguishes_label_dashes(tmp_path, text
         "Сумма: 123,45\nруб.",
         "Сумма: 1 руб.\n25 коп.",
         "Сумма: 1 руб. 25\nкоп.",
+        "Сумма: 1\n234,56 RUB",
+        "Сумма: 1 руб.\u200b25 коп.",
+        "Сумма: 1 руб. 25\u2060коп.",
     ],
 )
 def test_docx_does_not_accept_a_partial_monetary_token(tmp_path, text):
@@ -399,7 +402,11 @@ def test_docx_does_not_accept_a_partial_monetary_token(tmp_path, text):
 
 @pytest.mark.parametrize(
     ("text", "expected"),
-    [("Сумма — 123,45 руб.", "123.45"), ("Сумма: 1 руб.\t25 коп.", "1.25")],
+    [
+        ("Сумма — 123,45 руб.", "123.45"),
+        ("Сумма: 1 руб.\t25 коп.", "1.25"),
+        ("Сумма:\n123,45 руб.", "123.45"),
+    ],
 )
 def test_docx_keeps_complete_tokens_with_safe_separators(tmp_path, text, expected):
     path = tmp_path / "upload"
