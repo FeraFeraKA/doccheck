@@ -1,0 +1,181 @@
+{
+  "version": 1,
+  "source_commit": "e5af8d6a28ccb0fb686ec667c25cfdf9ae3e5174",
+  "files": [
+    {
+      "path": "examples/00_README_набор_данных.docx",
+      "role": "readme",
+      "format": "docx",
+      "representation": "native",
+      "sha256": "8f7c38832619df72afbee308702136243f82fa50144c861556c16276e1cfcff8"
+    },
+    {
+      "path": "examples/00_README_набор_данных.txt",
+      "role": "readme",
+      "format": "txt",
+      "representation": "native",
+      "sha256": "55e3d2373f9789569f10b830544138af6912ecc07edc4644a903943a377537da"
+    },
+    {
+      "path": "examples/01_Карточка_учета_фактических_затрат_этап_3.pdf",
+      "role": "report",
+      "format": "pdf",
+      "representation": "scan",
+      "sha256": "ce359d6555133959447a807c9018b548abc58093549d522824a773c8bd533881"
+    },
+    {
+      "path": "examples/02_01_Ведомость_ЗП_Январь_2026.xlsx",
+      "role": "supporting",
+      "format": "xlsx",
+      "representation": "native",
+      "sha256": "62f872d337bad62f114138cccf10b8f8a29496f9c8508786a127d87ecac1044c"
+    },
+    {
+      "path": "examples/02_02_Ведомость_ЗП_Февраль_2026.xlsx",
+      "role": "supporting",
+      "format": "xlsx",
+      "representation": "native",
+      "sha256": "65f0d64f7c523fbcd1d070def13c6a79f08d5ca24eda1a663d27c34d001cee57"
+    },
+    {
+      "path": "examples/02_03_Ведомость_ЗП_Март_2026.xlsx",
+      "role": "supporting",
+      "format": "xlsx",
+      "representation": "native",
+      "sha256": "e26ce6d5707460e38f8ccdc16987de747af4271143f5fddc25cf46a4d4fa49cd"
+    },
+    {
+      "path": "examples/02_04_Ведомость_ЗП_Апрель_2026.xlsx",
+      "role": "supporting",
+      "format": "xlsx",
+      "representation": "native",
+      "sha256": "4dbde5e18bae8f9497f5112393a90c1a63d48984d5b718a37579bc64a5e86203"
+    },
+    {
+      "path": "examples/02_05_Ведомость_ЗП_Май_2026.xlsx",
+      "role": "supporting",
+      "format": "xlsx",
+      "representation": "native",
+      "sha256": "661b84d04c3762dcbcf39b7d5919d1ed5198b1b93cbe9af002cdf50b99414b7f"
+    },
+    {
+      "path": "examples/03_01_Страховые_взносы_Январь_2026.xlsx",
+      "role": "supporting",
+      "format": "xlsx",
+      "representation": "native",
+      "sha256": "9fd1f6f279a39d3b968a9cf1bb10f8f2e3dea59d30b14f806bdd5a918c515681"
+    },
+    {
+      "path": "examples/03_02_Страховые_взносы_Февраль_2026.xlsx",
+      "role": "supporting",
+      "format": "xlsx",
+      "representation": "native",
+      "sha256": "449f191293d58062a09d94105b60bbaa01b139784a850b676c55b2b342a37ee3"
+    },
+    {
+      "path": "examples/03_03_Страховые_взносы_Март_2026.xlsx",
+      "role": "supporting",
+      "format": "xlsx",
+      "representation": "native",
+      "sha256": "d3637b956dc279df0f2c4a542d626329b081f69d34792bc2353724cb15ce17d6"
+    },
+    {
+      "path": "examples/03_04_Страховые_взносы_Апрель_2026.xlsx",
+      "role": "supporting",
+      "format": "xlsx",
+      "representation": "native",
+      "sha256": "8366b0f94c902ce7c417f58ebc292a9cad32120e12e1bc36b500dddd85738f01"
+    },
+    {
+      "path": "examples/03_05_Страховые_взносы_Май_2026.xlsx",
+      "role": "supporting",
+      "format": "xlsx",
+      "representation": "native",
+      "sha256": "4d85e8189509f8e022811b9a59fd77444de0b8d40f90634554fd4da7db01850f"
+    },
+    {
+      "path": "examples/04_Акт_118_28-01-2026.pdf",
+      "role": "supporting",
+      "format": "pdf",
+      "representation": "scan",
+      "sha256": "72b559a2fb31d170af34995d90dc857d7e5c592a1a5ac81f2e2ee1ac9bba6314"
+    },
+    {
+      "path": "examples/05_Счет-акт_174_25-02-2026.pdf",
+      "role": "supporting",
+      "format": "pdf",
+      "representation": "native",
+      "sha256": "f910291d1cb6f0cc81f70f82b83749ccab90550d25c385fb2b3648784df7133f"
+    },
+    {
+      "path": "examples/06_Служебная_записка_КЛ-31.docx",
+      "role": "supporting",
+      "format": "docx",
+      "representation": "native",
+      "sha256": "a182c39acb1c0ac7c70acdbcbd3673f137066c75688d5a12ea2065913986d3f9"
+    },
+    {
+      "path": "examples/07_УПД_0426-77.pdf",
+      "role": "supporting",
+      "format": "pdf",
+      "representation": "native",
+      "sha256": "3696e26b291e0c8c0d2f3b28e7ed6cda5cc0dbb4d02e6a72125f1f45a24d7b9b"
+    },
+    {
+      "path": "examples/08_Акт_ИА-15_31-01-2026.pdf",
+      "role": "supporting",
+      "format": "pdf",
+      "representation": "scan",
+      "sha256": "1c504079a079f590d20b818ab391c4d6b282f722c1ea6efb556d210809bc5c3a"
+    },
+    {
+      "path": "examples/09_Акт_ADM-27_27-02-2026.pdf",
+      "role": "supporting",
+      "format": "pdf",
+      "representation": "native",
+      "sha256": "edc5b8c46087baa9a6f6fb3bc480ff6825cab13dd9e34ab5207c8c7b2e84e868"
+    },
+    {
+      "path": "examples/10_Акт_ADM-27_копия.pdf",
+      "role": "supporting",
+      "format": "pdf",
+      "representation": "native",
+      "sha256": "edc5b8c46087baa9a6f6fb3bc480ff6825cab13dd9e34ab5207c8c7b2e84e868"
+    },
+    {
+      "path": "examples/11_Справка_ИТ_03-26.docx",
+      "role": "supporting",
+      "format": "docx",
+      "representation": "native",
+      "sha256": "2ed235ea9fbb7da93c74811183e189e9f6e97c0e57712f6c697b24fae0782f9a"
+    },
+    {
+      "path": "examples/12_Акт_связь_0426.png",
+      "role": "supporting",
+      "format": "png",
+      "representation": "image",
+      "sha256": "6dce01ad27765e3ceefb50f02937089b835a40b17aa232cd266eb4b8f85ca768"
+    },
+    {
+      "path": "examples/13_УПД_УПР-55.pdf",
+      "role": "supporting",
+      "format": "pdf",
+      "representation": "native",
+      "sha256": "21e67e393ffe5826bd6216b5fd5e342cb5bc094a175838f042272106155195fe"
+    },
+    {
+      "path": "examples/14_Акт_ОРГ-0603.pdf",
+      "role": "supporting",
+      "format": "pdf",
+      "representation": "native",
+      "sha256": "984848ffdc3c9575b03a3f31a2d643f210b7269df5729febac671400ba8cd3f8"
+    },
+    {
+      "path": "examples/15_Акт_ADM-75_15-05-2026.pdf",
+      "role": "supporting",
+      "format": "pdf",
+      "representation": "scan",
+      "sha256": "a243091ed00007b6b2ef267cd79d2bcc41fd1e37a69a060b0527aa5c292d040c"
+    }
+  ]
+}
