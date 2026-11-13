@@ -47,7 +47,7 @@ _RUB_UNITS = ("рублей", "рубля", "рубль", "руб.", "руб", "
 _KOPECK_UNITS = ("копеек", "копейки", "копейка", "коп.", "коп")
 _RUB_START = re.compile(r"[рr₽]", re.IGNORECASE)
 _NON_AMOUNT_LABEL = re.compile(
-    r"^\s*(?:код\s+статьи|договор|контракт|номер\s+документа|ИНН|КПП|дата)\b",
+    r"^\s*(?:код\s+статьи|договор|контракт|номер\s+документа|ИНН|КПП|дата|contract)\b",
     re.IGNORECASE,
 )
 _MONEY_HEADER = re.compile(r"^(?:сумма|стоимость)\s*[,\s(]+(?:руб\.?|₽|rub)\)?$", re.I)
@@ -384,9 +384,11 @@ def _wrapped_pdf_lines(lines: list[dict], dividers: list) -> set[int]:
                 _rub_tokens(before)
                 and any(not numeral and cents for numeral, cents in _rub_tokens(joined))
             )
-        if not (kopecks or (decimals and _rub_tokens(tail))):
+        tail_amounts = _rub_tokens(tail) if decimals and not kopecks else []
+        if not (kopecks or tail_amounts):
             continue
-        if decimals and not kopecks:
+        alignment: Literal["left", "either"] = "either" if kopecks else "left"
+        if tail_amounts:
             if _NON_AMOUNT_LABEL.match(before):
                 continue
             # Numeric suffixes of identifiers (e.g. 31-001) are not amounts.
@@ -399,7 +401,16 @@ def _wrapped_pdf_lines(lines: list[dict], dividers: list) -> set[int]:
                 continue
             if not any(char in _DIGITS + _SIGNS for char in before[start:]):
                 continue
-        if not _adjacent_pdf_lines(previous, current, alignment="either" if kopecks else "left"):
+            if len(tail_amounts) == 1:
+                numeral, _ = tail_amounts[0]
+                prefix = before[start:].lstrip(_SPACE_CHARS)
+                # A shared right edge alone does not connect table rows. Require the
+                # line to start with a continuation of a decimal, grouped integer or sign.
+                if numeral and tail.startswith(numeral):
+                    gap = "" if prefix.endswith(tuple(".," + _SIGNS)) else " "
+                    if _NUMBER.fullmatch(prefix + gap + numeral):
+                        alignment = "either"
+        if not _adjacent_pdf_lines(previous, current, alignment=alignment):
             continue
         if _split_by_divider(previous, current, dividers):
             continue

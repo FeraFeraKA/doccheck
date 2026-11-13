@@ -171,13 +171,19 @@ def _minimal_pdf(path: Path, lines: list[str], *, page_attrs: bytes = b"", left:
         f"BT /F1 12 Tf {left} {150 - count * 20} Td ({line}) Tj ET"
         for count, line in enumerate(lines)
     ).encode("ascii")
+    return _single_page_pdf(path, stream, page_attrs=page_attrs)
+
+
+def _single_page_pdf(
+    path: Path, stream: bytes, *, page_attrs: bytes = b"", font: bytes = b"Helvetica"
+) -> Path:
     objects = (
         b"<< /Type /Catalog /Pages 2 0 R >>",
         b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
         b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] "
         + page_attrs
         + b" /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
-        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /" + font + b" >>",
         b"<< /Length " + str(len(stream)).encode() + b" >>\nstream\n" + stream + b"\nendstream",
     )
     output = bytearray(b"%PDF-1.4\n")
@@ -215,6 +221,40 @@ def test_pdf_without_text_is_not_an_empty_success(tmp_path):
     result = read_native_document(path, "pdf")
     assert result.observations == ()
     assert [(issue.code, issue.page) for issue in result.issues] == [("no_native_text", 1)]
+
+
+@pytest.mark.parametrize(
+    ("first", "second", "right", "divider", "expected"),
+    [
+        ("Service charge for this invoice: 123,", "45 RUB", 280, False, None),
+        ("Service charge for this invoice: 123", "456 RUB", 280, False, None),
+        ("Service charge for this invoice: -123", "456,78 RUB", 280, False, None),
+        ("Service charge for this invoice: 123", "45 RUB", 280, False, "45"),
+        ("Service charge for this invoice: 123,", "45 RUB", 280, True, "45"),
+        ("Service charge for this invoice: 123", "456 RUB", 280, True, "456"),
+        ("Service charge for this invoice: 123,", "45 RUB", 120, False, "45"),
+        ("Contract: 123", "456 RUB", 280, False, "456"),
+        ("Service charge for this invoice: 123", "Fee: 456 RUB", 280, False, "456"),
+    ],
+)
+def test_right_aligned_pdf_requires_a_compatible_numeric_continuation(
+    tmp_path, first, second, right, divider, expected
+):
+    stream = (
+        f"BT /F1 12 Tf {280 - len(first) * 7.2:.3f} 150 Td ({first}) Tj ET\n"
+        f"BT /F1 12 Tf {right - len(second) * 7.2:.3f} 134 Td ({second}) Tj ET\n"
+    )
+    if divider:
+        stream += "10 144 m 295 144 l S\n"
+    path = _single_page_pdf(tmp_path / "upload", stream.encode("ascii"), font=b"Courier")
+    result = read_native_document(path, "pdf")
+
+    assert [item.raw_text for item in result.observations] == [first, second]
+    assert result.observations[0].amount is None
+    assert result.observations[1].amount == (Decimal(expected) if expected else None)
+    assert [(issue.code, issue.locator.line) for issue in result.issues] == (
+        [("ambiguous_rub_amount", 2)] if expected is None else []
+    )
 
 
 def test_pdf_wrapped_amounts_are_unknown_without_joining_other_lines():
