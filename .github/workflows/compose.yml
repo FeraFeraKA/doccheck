@@ -59,14 +59,16 @@ jobs:
           FROM python:3.12.12-slim-trixie@sha256:f3fa41d74a768c2fce8016b98c191ae8c1bacd8f1152870a3f9f87d350920b7c
           WORKDIR /context
           COPY . .
-          RUN test -f backend/pyproject.toml && test -f frontend/package.json \
-              && test ! -e .git && test ! -e .env && test ! -e .env.example \
-              && test ! -e .env.compose-ci-sentinel && test ! -e docs \
-              && test ! -e data && test ! -e private && test ! -e holdout \
-              && test ! -e evaluation && test ! -e models \
-              && test ! -e backend/ml_module && test ! -e backend/tests \
-              && test ! -e frontend/node_modules && test ! -e frontend/tests \
-              && test ! -e frontend/src/compose-ci-sentinel.safetensors
+          RUN set -eu; \
+              for path in backend/pyproject.toml backend/src/doccheck_backend/api.py \
+                  frontend/package.json frontend/src/app/main.tsx; do \
+                test -f "$path" || { echo "Missing from context: $path"; exit 1; }; \
+              done; \
+              for path in .git .env .env.example .env.compose-ci-sentinel docs data private \
+                  holdout evaluation models backend/ml_module backend/tests frontend/node_modules \
+                  frontend/tests frontend/src/compose-ci-sentinel.safetensors; do \
+                test ! -e "$path" || { echo "Unexpected in context: $path"; exit 1; }; \
+              done
           DOCKERFILE
       - name: Build and start Compose
         run: |

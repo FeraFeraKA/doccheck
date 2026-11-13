@@ -1,18 +1,12 @@
 **
-!backend/
 !backend/Dockerfile
 !backend/pyproject.toml
 !backend/uv.lock
 !backend/.python-version
 !backend/alembic.ini
-!backend/src/
-!backend/src/doccheck_backend/
 !backend/src/doccheck_backend/*.py
-!backend/migrations/
 !backend/migrations/env.py
-!backend/migrations/versions/
 !backend/migrations/versions/*.py
-!frontend/
 !frontend/Dockerfile
 !frontend/package.json
 !frontend/pnpm-lock.yaml
@@ -21,8 +15,6 @@
 !frontend/vite.config.ts
 !frontend/index.html
 !frontend/nginx.conf
-!frontend/src/
-!frontend/src/**/
 !frontend/src/**/*.ts
 !frontend/src/**/*.tsx
 !frontend/src/**/*.css
