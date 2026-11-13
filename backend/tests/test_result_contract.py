@@ -94,8 +94,10 @@ def test_xlsx_range_of_one_cell_has_the_same_address_as_the_cell() -> None:
 )
 def test_accepted_source_formats(payload: dict, file_format: str, locator: dict) -> None:
     payload["result"]["documents"][0]["format"] = file_format
-    for item in payload["result"]["evidence"][:2]:
-        item["locator"] = locator
+    first, second = payload["result"]["evidence"][:2]
+    index = {"page": "line", "paragraph": "paragraph", "table_cell": "row"}[locator["kind"]]
+    first["locator"] = locator
+    second["locator"] = {**locator, index: locator[index] + 1}
     assert CheckJob.model_validate(payload).result is not None
 
 
@@ -209,6 +211,115 @@ def test_completed_job_cannot_hide_file_errors(payload: dict) -> None:
 def test_primary_issue_can_only_reference_a_recorded_file_error(payload: dict) -> None:
     payload["result"]["summary"]["primary_issues"][1]["file_error_refs"] = ["missing-error"]
     with pytest.raises(ValidationError, match="must refer to file errors"):
+        CheckJob.model_validate(payload)
+
+
+@pytest.mark.parametrize("referenced", [True, False])
+@pytest.mark.parametrize("conflict", [{"normalized_value": "600.25"}, {"unit": "USD"}])
+def test_component_readings_must_agree_at_the_canonical_address(
+    payload: dict, referenced: bool, conflict: dict
+) -> None:
+    result = payload["result"]
+    reading = {**result["evidence"][2], **conflict, "id": "ambiguous"}
+    reading["locator"] = {**reading["locator"], "range": "C6:C6"}
+    result["evidence"].append(reading)
+    if referenced:
+        result["rows"][0]["calculation"]["components"][0]["amount_refs"].append("ambiguous")
+    with pytest.raises(ValidationError, match="component evidence must agree"):
+        CheckJob.model_validate(payload)
+
+
+def test_conflicting_report_readings_can_be_retained_with_unknown_value(payload: dict) -> None:
+    result = payload["result"]
+    row = result["rows"][0]
+    reading = {
+        **result["evidence"][0],
+        "id": "ambiguous-report",
+        "normalized_value": "151.50",
+        "locator": {**result["evidence"][0]["locator"], "line": 2},
+    }
+    result["evidence"].append(reading)
+    with pytest.raises(ValidationError, match="reported evidence must agree"):
+        CheckJob.model_validate(payload)
+    row.update(status="unverified", reported_value=None, delta=None, root_issue_id=None)
+    row["reported_evidence_refs"].append("ambiguous-report")
+    row["reasons"] = [
+        {
+            "code": "conflicting_readings",
+            "message": "Неоднозначная сумма отчёта",
+            "evidence_refs": ["report-a", "ambiguous-report"],
+        }
+    ]
+    result["summary"]["counts"].update(discrepancy=0, unverified=2)
+    assert CheckJob.model_validate(payload).result.rows[0].reported_value is None
+
+
+def test_conflicting_component_can_be_retained_outside_calculation(payload: dict) -> None:
+    result = payload["result"]
+    row = result["rows"][0]
+    result["evidence"].append(
+        {**result["evidence"][2], "id": "ambiguous-amount", "normalized_value": "600.25"}
+    )
+    row["calculation"]["components"].pop(0)
+    row.update(
+        status="unverified",
+        observed_evidence_sum="60.25",
+        expected_value=None,
+        delta=None,
+        root_issue_id=None,
+    )
+    row["completeness"].update(state="incomplete", evidence_refs=["amount-2"])
+    row["reasons"] = [
+        {
+            "code": "conflicting_readings",
+            "message": "Неоднозначное чтение суммы",
+            "evidence_refs": ["amount-1", "ambiguous-amount"],
+        }
+    ]
+    result["summary"]["counts"].update(discrepancy=0, unverified=2)
+    assert CheckJob.model_validate(payload).result.rows[0].observed_evidence_sum == "60.25"
+
+
+def test_report_cannot_establish_the_scope_of_a_supporting_operation(payload: dict) -> None:
+    evidence = payload["result"]["evidence"]
+    for index, item in enumerate(evidence[4:], start=1):
+        item.update(document_id="report", locator={"kind": "page", "page": 1, "line": index})
+    with pytest.raises(ValidationError, match="report alone cannot establish"):
+        CheckJob.model_validate(payload)
+
+
+def test_separate_scope_source_requires_matching_addressed_identity(payload: dict) -> None:
+    result = payload["result"]
+    result["documents"].append(
+        {
+            **result["documents"][1],
+            "id": "scope-source",
+            "name": "synthetic-scope.xlsx",
+            "sha256": "4" * 64,
+        }
+    )
+    for item in result["evidence"][4:]:
+        item["document_id"] = "scope-source"
+    with pytest.raises(ValidationError, match="shared source identity"):
+        CheckJob.model_validate(payload)
+    for document in ("ledger", "scope-source"):
+        result["evidence"].append(
+            {
+                "id": f"{document}-identity",
+                "document_id": document,
+                "kind": "document_identity",
+                "raw_value": "DEMO-ACT-1",
+                "normalized_value": "DEMO-ACT-1",
+                "unit": None,
+                "method": "native",
+                "locator": {"kind": "sheet", "sheet": "Синтетика", "range": "A1"},
+            }
+        )
+    for component in result["rows"][0]["calculation"]["components"]:
+        component["identity_refs"] = ["ledger-identity", "scope-source-identity"]
+    assert CheckJob.model_validate(payload).result is not None
+    result["evidence"][-1]["normalized_value"] = "DEMO-ACT-2"
+    with pytest.raises(ValidationError, match="shared source identity"):
         CheckJob.model_validate(payload)
 
 

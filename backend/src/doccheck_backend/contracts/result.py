@@ -23,6 +23,7 @@ DecimalText = Annotated[str, StringConstraints(strict=True, pattern=_DECIMAL_PAT
 _RUB_SCHEMA = {"type": "string", "pattern": _RUB_PATTERN.pattern}
 _DECIMAL_FIELDS = ("reported_value", "expected_value", "observed_evidence_sum", "delta")
 _COMPLETED_JOB_STATES = ("completed", "completed_with_issues")
+AmountReadings = dict[tuple[str, AddressKey], set[tuple[str | None, Decimal]]]
 Digest = Annotated[
     str, StringConstraints(strict=True, pattern=re.compile(r"^[0-9a-f]{64}(?![\s\S])"))
 ]
@@ -215,6 +216,7 @@ class Component(ContractModel):
     contract_refs: RequiredRefs
     period_refs: RequiredRefs
     article_refs: RequiredRefs
+    identity_refs: list[Text] = Field(default_factory=list)
     relation_reason: Text
 
 
@@ -428,8 +430,9 @@ class CheckResult(ContractModel):
                 or original.duplicate_of is not None
             ):
                 raise ValueError("a byte copy must reference a representative with the same digest")
+        readings = _index_readings(self.evidence)
         for row in self.rows:
-            self._check_row_refs(row, report, documents, evidence)
+            self._check_row_refs(row, report, documents, evidence, readings)
             if row.root_issue_id is not None and row.root_issue_id not in primary:
                 raise ValueError("row root issue must refer to a primary issue in this result")
         for issue in self.summary.primary_issues:
@@ -448,16 +451,15 @@ class CheckResult(ContractModel):
         report: SourceDocument,
         documents: dict[str, SourceDocument],
         evidence: dict[str, Evidence],
+        readings: AmountReadings,
     ) -> None:
         observed = _require_refs(row.reported_evidence_refs, evidence, "reported_value")
         if any(item.document_id != report.id for item in observed):
             raise ValueError("reported evidence must come from the selected report")
         if observed and not _is_admitted(report):
             raise ValueError("reported evidence requires an admitted report")
-        if row.reported_value is not None and not any(
-            _matching_amount(item, row.unit, row.reported_value) for item in observed
-        ):
-            raise ValueError("reported evidence must confirm the reported value and unit")
+        if row.reported_value is not None:
+            _check_amount_readings(observed, row.unit, row.reported_value, readings, "reported")
         if row.completeness.basis == "dataset_fixture" and not self.synthetic:
             raise ValueError("dataset fixture coverage requires a synthetic result")
         coverage = _require_refs(row.completeness.evidence_refs, evidence)
@@ -472,9 +474,7 @@ class CheckResult(ContractModel):
         used_line_only: set[tuple[str, int, int]] = set()
         for component in row.calculation.components:
             amounts = _require_refs(component.amount_refs, evidence, "amount")
-            self._check_component_scope(component, row, documents, evidence)
-            if not any(_matching_amount(item, row.unit, component.amount) for item in amounts):
-                raise ValueError("amount evidence must confirm the component value and unit")
+            _check_amount_readings(amounts, row.unit, component.amount, readings, "component")
             addresses: set[tuple[str, AddressKey]] = set()
             lines: set[tuple[str, int, int]] = set()
             line_only: set[tuple[str, int, int]] = set()
@@ -490,6 +490,7 @@ class CheckResult(ContractModel):
                     lines.add(line)
                     if ("line", locator.page, locator.line) in keys:
                         line_only.add(line)
+            self._check_component_scope(component, row, amounts, documents, evidence)
             if used_addresses & addresses or used_line_only & lines or line_only & used_lines:
                 raise ValueError("an amount evidence address must not be counted twice in a row")
             used_addresses.update(addresses)
@@ -500,6 +501,7 @@ class CheckResult(ContractModel):
         self,
         component: Component,
         row: ResultRow,
+        amounts: list[Evidence],
         documents: dict[str, SourceDocument],
         evidence: dict[str, Evidence],
     ) -> None:
@@ -510,6 +512,34 @@ class CheckResult(ContractModel):
             not _is_admitted(documents[item.document_id]) for item in contracts + periods + articles
         ):
             raise ValueError("component scope requires admitted documents")
+        sources = {item.document_id for item in amounts}
+        identity = _require_refs(component.identity_refs, evidence, "document_identity")
+        if any(
+            not _is_admitted(documents[item.document_id])
+            or documents[item.document_id].role != "support"
+            for item in identity
+        ):
+            raise ValueError("component identity requires admitted supporting documents")
+        identities: dict[str, set[str]] = {}
+        for item in identity:
+            if isinstance(item.normalized_value, str):
+                identities.setdefault(item.document_id, set()).add(item.normalized_value)
+        common_identity = (
+            set.intersection(*(identities.get(source, set()) for source in sources))
+            if identity
+            else set()
+        )
+        if len(sources) > 1 and not common_identity:
+            raise ValueError("multiple amount sources require a shared source identity")
+        scope_evidence = contracts + periods + articles
+        for item in scope_evidence:
+            if documents[item.document_id].role != "support":
+                raise ValueError("the report alone cannot establish the scope of a component")
+        separate_sources = {item.document_id for item in scope_evidence} - sources
+        for source in separate_sources:
+            common_identity &= identities.get(source, set())
+        if separate_sources and not common_identity:
+            raise ValueError("separate scope evidence requires a shared source identity")
         if any(item.normalized_value != self.scope.contract_number for item in contracts):
             raise ValueError("contract evidence contradicts the selected contract")
         for item in periods:
@@ -529,9 +559,50 @@ def _is_admitted(document: SourceDocument) -> bool:
     return document.decision.state == "include" and document.parse_status in ("parsed", "partial")
 
 
-def _matching_amount(item: Evidence, unit: str, amount: str) -> bool:
-    value = item.normalized_value
-    return isinstance(value, str) and item.unit == unit and Decimal(value) == Decimal(amount)
+def _reading_keys(item: Evidence) -> set[tuple[str, AddressKey]]:
+    return {(item.document_id, key) for key in item.locator.address_keys()}
+
+
+def _index_readings(evidence: list[Evidence]) -> AmountReadings:
+    readings: AmountReadings = {}
+    for item in evidence:
+        if item.kind in ("amount", "reported_value") and isinstance(item.normalized_value, str):
+            value = (item.unit, Decimal(item.normalized_value))
+            for key in _reading_keys(item):
+                readings.setdefault(key, set()).add(value)
+            locator = item.locator
+            if isinstance(locator, PageLocator) and locator.line is not None:
+                line = (item.document_id, ("page_line", locator.page, locator.line))
+                readings.setdefault(line, set()).add(value)
+    return readings
+
+
+def _check_amount_readings(
+    evidence: list[Evidence],
+    unit: str,
+    amount: str,
+    readings: AmountReadings,
+    role: Literal["reported", "component"],
+) -> None:
+    expected = {(unit, Decimal(amount))}
+    message = f"{role} evidence must agree on value and unit at its canonical address"
+    if not evidence:
+        raise ValueError(message)
+    for item in evidence:
+        keys = _reading_keys(item)
+        if any(readings.get(key) != expected for key in keys):
+            raise ValueError(message)
+        locator = item.locator
+        if isinstance(locator, PageLocator) and locator.line is not None:
+            line = (item.document_id, ("line", locator.page, locator.line))
+            # Line-only evidence must agree with all readings for that line.
+            key = (
+                (item.document_id, ("page_line", locator.page, locator.line))
+                if line in keys
+                else line
+            )
+            if key in readings and readings[key] != expected:
+                raise ValueError(message)
 
 
 def _check_locator(format_: FileFormat | None, locator: Locator) -> None:

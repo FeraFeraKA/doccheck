@@ -207,6 +207,14 @@
           "title": "Article Refs",
           "type": "array"
         },
+        "identity_refs": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Identity Refs",
+          "type": "array"
+        },
         "relation_reason": {
           "minLength": 1,
           "title": "Relation Reason",
