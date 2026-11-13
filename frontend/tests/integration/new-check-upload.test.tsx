@@ -25,7 +25,7 @@ function pick(label: string, files: File[]) {
 
 function selectPacket() {
   pick('Выберите КФЗ', [new File(['synthetic report'], 'report.pdf')]);
-  fireEvent.click(screen.getByRole('button', { name: 'Далее' }));
+  fireEvent.click(screen.getByRole('button', { name: /^Первичные документы$/ }));
   pick('Выберите первичные документы', [
     new File(['synthetic second'], 'B.xlsx'),
     new File(['synthetic first'], 'A.docx'),

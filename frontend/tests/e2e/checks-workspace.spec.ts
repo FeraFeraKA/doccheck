@@ -7,13 +7,17 @@ test('the accountant opens the synthetic reconciliation and sees discrepancies a
     if (new URL(request.url()).pathname.startsWith('/api/')) apiRequests.push(request.url());
   });
 
-  await page.goto('/checks/new');
+  await page.goto('/');
   await expect(page.getByRole('group', { name: 'Роль интерфейса' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Аспирант' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Бухгалтер' })).toHaveCount(0);
-  await expect(page.getByLabel('Выберите КФЗ')).toBeVisible();
-  await expect(page.getByText(/собирает сводные значения из первичных документов/)).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Далее' })).toBeDisabled();
+  await expect(page.getByRole('heading', { name: 'Новая проверка' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Выбрать файл' })).toBeVisible();
+  await expect(page.getByRole('navigation', { name: 'Основная навигация' })
+    .getByRole('link', { name: 'Новая проверка' })).toHaveAttribute('aria-current', 'page');
+  await expect(page.getByRole('link', { name: 'Журнал действий' })).toHaveCount(0);
+  await expect(page.getByText('Добавьте отчёт и подтверждающие документы для сверки.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Первичные документы', exact: true })).toBeDisabled();
   await page.getByRole('link', { name: 'Открыть готовый синтетический результат' }).click();
 
   const discrepancy = page.getByRole('row').filter({ hasText: 'Синтетическая статья A' });
@@ -65,7 +69,7 @@ test('the upload wizard selects files without secure-context APIs', async ({ pag
     buffer: Buffer.from('%PDF-1.4 synthetic example'),
   });
   await expect(page.getByText('example.pdf', { exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Далее' })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Первичные документы', exact: true })).toBeEnabled();
 });
 
 test('the accountant distinguishes missing files, invalid selection and unknown checks', async ({ page }) => {
@@ -75,23 +79,23 @@ test('the accountant distinguishes missing files, invalid selection and unknown 
     next_cursor: null,
   } }));
   await page.goto('/checks/new');
-  await expect(page.getByText('КФЗ пока не выбрана.')).toBeVisible();
+  await expect(page.getByText('Перетащите отчёт сюда')).toBeVisible();
   await page.getByLabel('Выберите КФЗ').setInputFiles({
     name: 'empty.pdf',
     mimeType: 'application/pdf',
     buffer: Buffer.alloc(0),
   });
   await expect(page.getByRole('alert')).toHaveText('Добавьте непустые PDF, DOCX, XLSX или PNG.');
-  await expect(page.getByRole('button', { name: 'Далее' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Первичные документы', exact: true })).toBeDisabled();
 
   await page.getByLabel('Выберите КФЗ').setInputFiles({
     name: 'report.pdf',
     mimeType: 'application/pdf',
     buffer: Buffer.from('%PDF-1.4 synthetic report'),
   });
-  await page.getByRole('button', { name: 'Далее' }).click();
+  await page.getByRole('button', { name: 'Первичные документы', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Отправить на проверку' })).toBeDisabled();
-  await expect(page.getByText('Первичные документы пока не выбраны.')).toBeVisible();
+  await expect(page.getByText('Перетащите документы сюда')).toBeVisible();
 
   await page.goto('/checks/unknown/conclusion');
   await expect(page.getByRole('heading', { name: 'Проверка не найдена' })).toBeVisible();

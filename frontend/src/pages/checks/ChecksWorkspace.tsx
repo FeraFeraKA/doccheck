@@ -1,21 +1,20 @@
-import { NavLink, Outlet } from 'react-router';
+import { Link, Outlet } from 'react-router';
+import { Sidebar } from './Sidebar';
 import './workspace.css';
+import './accountant-workspace.css';
 
 export function ChecksWorkspace() {
-
   return (
-    <div className="checks-workspace">
-      <aside className="checks-sidebar">
-        <NavLink className="checks-brand" to="/checks/new">doccheck</NavLink>
-        <nav aria-label="Основная навигация">
-          <NavLink to="/checks/new">Новая проверка</NavLink>
-          <NavLink to="/checks" end>Обзор проверок</NavLink>
-          <NavLink to="/log">Журнал действий</NavLink>
-        </nav>
-      </aside>
-      <main className="checks-content">
-        <Outlet />
-      </main>
+    <div className="checks-workspace accountant-workspace">
+      <Sidebar />
+      <div className="app-content">
+        <main className="app-main checks-content">
+          <div className="page-content">
+            <Outlet />
+            <Link className="mobile-system-status-link" to="/system-status">Проверка системы</Link>
+          </div>
+        </main>
+      </div>
     </div>
   );
 }
