@@ -338,10 +338,9 @@ def _wrapped_pdf_lines(lines: list[dict]) -> set[int]:
         cx0, cy0, cx1, cy1 = current["reading_box"]
         height = max(py1 - py0, cy1 - cy0)
         overlap = min(px1, cx1) - max(px0, cx0)
+        aligned = abs(cx0 - px0) <= 1.5 * height or (kopecks and abs(cx1 - px1) <= height / 2)
         if not (
-            0 < cy0 - py0 <= 1.8 * height
-            and overlap >= 0.5 * min(px1 - px0, cx1 - cx0)
-            and abs(cx0 - px0) <= 1.5 * height
+            0 < cy0 - py0 <= 1.8 * height and overlap >= 0.5 * min(px1 - px0, cx1 - cx0) and aligned
         ):
             continue
         interrupted.add(index + (0 if kopecks else 1))
