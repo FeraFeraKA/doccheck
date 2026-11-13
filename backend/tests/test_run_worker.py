@@ -37,8 +37,8 @@ def queue(database_url, tmp_path):
         yield client
 
 
-def _enqueue(queue):
-    response = submit(queue, uuid4())
+def _enqueue(queue, *, infer_scope=False):
+    response = submit(queue, uuid4(), data={}) if infer_scope else submit(queue, uuid4())
     assert response.status_code == 202
     return UUID(response.json()["run_id"])
 
@@ -79,7 +79,16 @@ def _synthetic_result(run: StoredRun, *, partial: bool = False) -> CheckResult:
             "schema_version": RESULT_SCHEMA_VERSION,
             "run_id": str(run.id),
             "synthetic": True,
-            "scope": run.scope,
+            "scope": run.scope
+            if run.scope is not None
+            else {
+                # Synthetic adapter output, independent of the upload request.
+                "report_document_id": run.report_document_id,
+                "contract_number": "INFERRED-SYNTHETIC",
+                "period_start": "2025-03-01",
+                "period_end": "2025-03-31",
+                "report_row_locator": {"kind": "page", "page": 1, "line": 2},
+            },
             "versions": {
                 "code_revision": "test",
                 "rules_version": "test",
@@ -133,6 +142,100 @@ def test_persists_processor_outcome(engine, queue, tmp_path, partial):
     assert stored.created_at <= stored.started_at <= stored.finished_at
 
 
+def test_accepts_inferred_scope_and_serves_saved_result(engine, queue, tmp_path):
+    run_id = _enqueue(queue, infer_scope=True)
+
+    def process(run, directory):
+        assert run.scope is None
+        assert run.report_document_id == run.documents[0]["id"]
+        assert (directory / run.report_document_id).read_bytes() == REPORT[1][1]
+        return successful_test_processor(run, directory)
+
+    assert run_document_worker(engine, tmp_path, process, once=True)
+    saved = _read_run(engine, run_id)
+    assert saved.status == "completed"
+    assert saved.scope == {}
+    assert saved.result["scope"]["report_document_id"] == saved.documents[0]["id"]
+    assert saved.result["scope"]["contract_number"] == "INFERRED-SYNTHETIC"
+    assert queue.get(f"/api/v0/runs/{run_id}").json()["status"] == "completed"
+    assert queue.get(f"/api/v0/runs/{run_id}/findings").json() == saved.result
+
+
+def test_rejects_inferred_scope_for_a_different_report(engine, queue, tmp_path):
+    run_id = _enqueue(queue, infer_scope=True)
+
+    def process(run, directory):
+        result = _synthetic_result(run)
+        result.documents[0].role = "support"
+        result.documents[1].role = "report"
+        result.scope.report_document_id = result.documents[1].id
+        return CheckJob(run_id=str(run.id), status="completed", result=result, error=None)
+
+    assert run_document_worker(engine, tmp_path, process, once=True)
+    saved = _read_run(engine, run_id)
+    assert saved.status == "failed"
+    assert saved.result is None
+    assert saved.error["code"] == "processing_failed"
+
+
+def test_rejects_inferred_address_for_a_falsely_relabelled_report(engine, queue, tmp_path):
+    run_id = _enqueue(queue, infer_scope=True)
+
+    def process(run, directory):
+        data = _synthetic_result(run).model_dump(mode="json")
+        # This result validates against its own format and keeps all original IDs and hashes.
+        data["documents"][0]["format"] = "xlsx"
+        data["scope"]["report_row_locator"] = {"kind": "sheet", "sheet": "Synthetic", "range": "A1"}
+        return CheckJob(
+            run_id=str(run.id),
+            status="completed",
+            result=CheckResult.model_validate(data),
+            error=None,
+        )
+
+    assert run_document_worker(engine, tmp_path, process, once=True)
+    saved = _read_run(engine, run_id)
+    assert saved.status == "failed"
+    assert saved.result is None
+    assert saved.error["code"] == "processing_failed"
+
+
+def test_keeps_unsupported_format_as_a_partial_file_error(engine, queue, tmp_path):
+    run_id = _enqueue(queue, infer_scope=True)
+
+    def process(run, directory):
+        data = _synthetic_result(run, partial=True).model_dump(mode="json")
+        unsupported = data["documents"][1]
+        unsupported["format"] = None
+        unsupported["errors"][0]["code"] = "unsupported_format"
+        return CheckJob(
+            run_id=str(run.id),
+            status="completed_with_issues",
+            result=CheckResult.model_validate(data),
+            error=None,
+        )
+
+    assert run_document_worker(engine, tmp_path, process, once=True)
+    saved = _read_run(engine, run_id)
+    assert saved.status == "completed_with_issues"
+    assert saved.result["documents"][1]["format"] is None
+
+
+def test_rejects_changed_explicit_scope(engine, queue, tmp_path):
+    run_id = _enqueue(queue)
+
+    def process(run, directory):
+        result = _synthetic_result(run)
+        result.scope.contract_number = "NOT-THE-UPLOADED-CONTRACT"
+        return CheckJob(run_id=str(run.id), status="completed", result=result, error=None)
+
+    assert run_document_worker(engine, tmp_path, process, once=True)
+    saved = _read_run(engine, run_id)
+    assert saved.status == "failed"
+    assert saved.result is None
+    assert saved.error["code"] == "processing_failed"
+
+
 def test_processor_failure_records_safe_error(engine, queue, tmp_path, caplog):
     run_id = _enqueue(queue)
 
@@ -169,8 +272,9 @@ def test_partial_outcome_keeps_safe_top_level_indicator(engine, queue, tmp_path)
     assert "private" not in repr(stored.error)
 
 
-def test_rejects_result_for_a_different_document_version(engine, queue, tmp_path):
-    run_id = _enqueue(queue)
+@pytest.mark.parametrize("infer_scope", [False, True])
+def test_rejects_result_for_a_different_document_version(engine, queue, tmp_path, infer_scope):
+    run_id = _enqueue(queue, infer_scope=infer_scope)
 
     def process(run, directory):
         result = _synthetic_result(run)

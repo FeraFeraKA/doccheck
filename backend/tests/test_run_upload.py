@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
+from hashlib import sha256
 from pathlib import Path
 from tempfile import SpooledTemporaryFile
 from uuid import UUID, uuid4
@@ -22,6 +23,7 @@ FIELDS = {
 }
 REPORT = ("report", ("../../report.pdf", b"%PDF-1.4 synthetic report"))
 DOCUMENT = ("documents", ("support.png", b"\x89PNG\r\n\x1a\nsynthetic document"))
+LEGACY_DIGEST = "0dd717792c2b0eb48d899c6de63ec77b1984c2da4556768ba787d42f35a9542f"
 
 
 def submit(client, key, data=FIELDS, files=(REPORT, DOCUMENT)):
@@ -56,6 +58,8 @@ def test_create_replay_and_conflict(database_url, tmp_path):
             assert row["id"] == UUID(run_id)
             assert row["scope"]["report_document_id"] == row["documents"][0]["id"]
             assert row["scope"]["report_row_locator"]["line"] == 3
+            # Digest produced by the original upload implementation for these fixture bytes.
+            assert row["request_digest"] == LEGACY_DIGEST
             assert [doc["role"] for doc in row["documents"]] == ["report", "supporting"]
             assert list(root.iterdir()) == [root / run_id]
             for file, item in zip((REPORT, DOCUMENT), row["documents"], strict=True):
@@ -65,10 +69,48 @@ def test_create_replay_and_conflict(database_url, tmp_path):
         engine.dispose()
 
 
+def test_files_only_upload_replay_and_conflict(database_url, tmp_path):
+    root = tmp_path / "runs"
+    key = uuid4()
+    with TestClient(create_app(Settings(database_url, upload_root=root))) as client:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            created, replay = executor.map(lambda _: submit(client, key, data={}), range(2))
+        assert created.status_code == replay.status_code == 202
+        assert created.json() == replay.json()
+        run_id = created.json()["run_id"]
+        assert created.headers["Location"] == replay.headers["Location"] == f"/api/v0/runs/{run_id}"
+        assert client.get(f"/api/v0/runs/{run_id}").json()["progress"] == {
+            "processed_documents": 0,
+            "total_documents": 2,
+        }
+        assert client.get(f"/api/v0/runs/{run_id}/findings").json()["code"] == "result_pending"
+
+        assert submit(client, key).status_code == 409
+        changed = ("documents", ("support.png", DOCUMENT[1][1] + b" changed"))
+        assert submit(client, key, data={}, files=(REPORT, changed)).status_code == 409
+        with client.app.state.engine.connect() as connection:
+            row = connection.execute(select(Run.__table__)).mappings().one()
+        assert row["id"] == UUID(run_id)
+        assert row["scope"] == {}
+        assert [doc["role"] for doc in row["documents"]] == ["report", "supporting"]
+        assert list(root.iterdir()) == [root / run_id]
+        for upload, document in zip((REPORT, DOCUMENT), row["documents"], strict=True):
+            content = upload[1][1]
+            assert document["sha256"] == sha256(content).hexdigest()
+            assert (root / run_id / document["id"]).read_bytes() == content
+
+
 @pytest.mark.parametrize(
     ("data", "files", "status", "code"),
     [
         ({**FIELDS, "period_start": "2025-02-01"}, (REPORT, DOCUMENT), 422, "invalid_input"),
+        ({"contract_number": "DEMO-1"}, (REPORT, DOCUMENT), 422, "invalid_input"),
+        (
+            {name: value for name, value in FIELDS.items() if name != "report_row_locator"},
+            (REPORT, DOCUMENT),
+            422,
+            "invalid_input",
+        ),
         ({**FIELDS, "report_row_locator": "null"}, (REPORT, DOCUMENT), 422, "invalid_input"),
         (FIELDS, (REPORT,), 422, "invalid_input"),
         (FIELDS, (REPORT, ("documents", ("empty.png", b""))), 422, "invalid_input"),
