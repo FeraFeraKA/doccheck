@@ -512,6 +512,127 @@ def test_conflicting_component_can_be_retained_outside_calculation(payload: dict
     assert CheckJob.model_validate(payload).result.rows[0].observed_evidence_sum == "60.25"
 
 
+@pytest.mark.parametrize("status", ["verified", "discrepancy"])
+def test_complete_coverage_cannot_rely_on_conflicting_amount(payload: dict, status: str) -> None:
+    result = payload["result"]
+    row = result["rows"][0]
+    amount = result["evidence"][2]
+    conflict = {**amount, "id": "conflicting-coverage", "normalized_value": "900.50"}
+    result["evidence"].append(conflict)
+    row["calculation"]["components"].pop(0)
+    row.update(observed_evidence_sum="60.25", expected_value="60.25", delta="90.25")
+    if status == "verified":
+        result["evidence"][0]["normalized_value"] = "60.25"
+        row.update(
+            status="verified", reported_value="60.25", delta="0.00", root_issue_id=None, reasons=[]
+        )
+        result["summary"]["counts"].update(verified=1, discrepancy=0)
+    with pytest.raises(ValidationError, match="complete coverage evidence must agree"):
+        CheckJob.model_validate(payload)
+
+    row.update(status="unverified", expected_value=None, delta=None, root_issue_id=None)
+    row["completeness"].update(state="incomplete")
+    row["reasons"] = [
+        {
+            "code": "conflicting_readings",
+            "message": "Конфликт чтений обязательного слагаемого",
+            "evidence_refs": [amount["id"], conflict["id"]],
+        }
+    ]
+    result["summary"]["counts"].update(verified=0, discrepancy=0, unverified=2)
+    checked = CheckJob.model_validate(payload).result.rows[0]
+    assert checked.status == "unverified" and checked.observed_evidence_sum == "60.25"
+    assert checked.expected_value is None and checked.delta is None
+    assert checked.reasons[0].evidence_refs == [amount["id"], conflict["id"]]
+
+
+def test_complete_coverage_requires_a_precise_address_on_an_ambiguous_pdf_line(
+    payload: dict,
+) -> None:
+    result = payload["result"]
+    row = result["rows"][0]
+    result["documents"][1]["format"] = "pdf"
+    first, second = result["evidence"][2:4]
+    for line, item in enumerate(result["evidence"][4:], start=20):
+        item["locator"] = {"kind": "page", "page": 1, "line": line}
+    first["locator"] = {"kind": "page", "page": 1, "line": 5, "fragment_id": "one"}
+    second["locator"] = {**first["locator"], "fragment_id": "two"}
+    ambiguous = {
+        **first,
+        "id": "coverage-line-only",
+        "locator": {"kind": "page", "page": 1, "line": 5},
+    }
+    result["evidence"].append(ambiguous)
+    assert CheckJob.model_validate(payload).result is not None
+    row["completeness"]["evidence_refs"].append(ambiguous["id"])
+    with pytest.raises(ValidationError, match="requires a precise evidence address"):
+        CheckJob.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("index", "alternative"),
+    [
+        (4, "OTHER"),
+        (5, {"start": None, "end": "2025-02-20"}),
+        (6, "DEMO-B"),
+    ],
+)
+def test_complete_coverage_checks_requisites_it_cites(
+    payload: dict, index: int, alternative: object
+) -> None:
+    result = payload["result"]
+    row = result["rows"][0]
+    observed = {
+        **result["evidence"][index],
+        "id": "coverage-requisite",
+        "locator": {"kind": "sheet", "sheet": "Синтетика", "range": "A10"},
+    }
+    result["evidence"].extend(
+        [observed, {**observed, "id": "alternate-reading", "normalized_value": alternative}]
+    )
+    assert CheckJob.model_validate(payload).result is not None
+    row["completeness"]["evidence_refs"].append(observed["id"])
+    with pytest.raises(ValidationError, match="complete coverage evidence must agree"):
+        CheckJob.model_validate(payload)
+
+
+def test_complete_coverage_preserves_compatible_partial_period_and_independent_basis(
+    payload: dict,
+) -> None:
+    result = payload["result"]
+    row = result["rows"][0]
+    result["evidence"].extend(
+        [
+            {
+                **result["evidence"][5],
+                "id": "profile-start",
+                "locator": {"kind": "sheet", "sheet": "Синтетика", "range": "A10"},
+                "normalized_value": {"start": "2025-02-01", "end": None},
+            },
+            {
+                **result["evidence"][5],
+                "id": "profile-end",
+                "locator": {"kind": "sheet", "sheet": "Синтетика", "range": "A10"},
+                "normalized_value": {"start": None, "end": "2025-02-28"},
+            },
+            {
+                **result["evidence"][2],
+                "id": "unrelated-a",
+                "locator": {"kind": "sheet", "sheet": "Синтетика", "range": "C10"},
+            },
+            {
+                **result["evidence"][2],
+                "id": "unrelated-b",
+                "locator": {"kind": "sheet", "sheet": "Синтетика", "range": "C10"},
+                "normalized_value": "900.50",
+            },
+        ]
+    )
+    row["completeness"]["evidence_refs"] = ["profile-start", "profile-end"]
+    checked = CheckJob.model_validate(payload).result.rows[0]
+    assert checked.completeness.state == "complete" and checked.expected_value == "120.50"
+
+
 def test_report_cannot_establish_the_scope_of_a_supporting_operation(payload: dict) -> None:
     evidence = payload["result"]["evidence"]
     for index, item in enumerate(evidence[4:], start=1):

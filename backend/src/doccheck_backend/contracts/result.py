@@ -251,7 +251,11 @@ class _EvidenceIndex:
             )
         return self.readings[kind, self.groups[evidence_id]]
 
-    def period_bounds(self, evidence_id: str) -> DateBounds:
+    def period_bounds(
+        self,
+        evidence_id: str,
+        message: str = "component scope evidence must agree at its canonical address",
+    ) -> DateBounds:
         # An absent bound does not contradict an observed bound.
         dates = [
             value for _, value in self.values(evidence_id, "period") if isinstance(value, tuple)
@@ -261,7 +265,7 @@ class _EvidenceIndex:
         start = next(iter(starts), None)
         end = next(iter(ends), None)
         if len(starts) > 1 or len(ends) > 1 or (start and end and start > end):
-            raise ValueError("component scope evidence must agree at its canonical address")
+            raise ValueError(message)
         return start, end
 
 
@@ -557,6 +561,14 @@ class CheckResult(ContractModel):
             if used_groups & groups:
                 raise ValueError("an amount evidence address must not be counted twice in a row")
             used_groups.update(groups)
+        if row.completeness.state == "complete":
+            message = "complete coverage evidence must agree at its canonical address"
+            for item in coverage:
+                kind, _ = _reading(item)
+                if kind == "period":
+                    addresses.period_bounds(item.id, message)
+                elif len(addresses.values(item.id, kind)) != 1:
+                    raise ValueError(message)
 
     def _check_component_scope(
         self,
