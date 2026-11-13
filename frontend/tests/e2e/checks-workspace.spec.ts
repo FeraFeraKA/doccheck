@@ -354,3 +354,16 @@ test('the selected stored evidence opens its own original and address', async ({
     '/api/v0/runs/run-with-source/documents/ledger/fragments?evidence_id=amount-1',
   ]));
 });
+
+test('the wizard keeps the example link inside the tablet viewport', async ({ page }) => {
+  for (const width of [701, 768]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto('/');
+
+    const example = page.getByRole('link', { name: 'Открыть готовый синтетический результат' });
+    await expect(example).toBeInViewport({ ratio: 1 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(width);
+  }
+  await page.getByRole('link', { name: 'Открыть готовый синтетический результат' }).click();
+  await expect(page.getByRole('heading', { name: 'Синтетическая сверка' })).toBeVisible();
+});

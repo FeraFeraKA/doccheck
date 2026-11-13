@@ -225,6 +225,7 @@
 }
 .upload-card-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-start;
   justify-content: space-between;
   gap: 20px;
@@ -527,7 +528,6 @@
   }
   .upload-empty p { font-size: 13px; }
   .accountant-workspace .upload-card h2 { font-size: 24px; }
-  .upload-card-header { flex-wrap: wrap; }
   .upload-card-header .upload-example { padding: 0; font-size: 12px; }
   .app-sidebar .system-status-link { display: none; }
   .app-main .mobile-system-status-link { display: inline-block; margin: 32px 0 0; }
