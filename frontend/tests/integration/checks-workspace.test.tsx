@@ -134,3 +134,52 @@ it('показывает абзац и ячейку таблицы DOCX в сп�
     expect(screen.getByText(location, { selector: 'dd' })).toBeVisible();
   }
 });
+
+it('показывает доказательства слагаемых при заявлении пользователя о полноте', async () => {
+  const loadRun = async (): Promise<RunDetails> => {
+    const demo = await loadDemoRun('synthetic-example');
+    if (!demo?.result) throw new Error('Не найден синтетический результат');
+    const result = demo.result;
+    const [first, ...otherRows] = result.rows;
+    const verifiedRow = {
+      ...first,
+      reported_value: first.expected_value,
+      delta: '0.00',
+      status: 'verified',
+      root_issue_id: null,
+      completeness: {
+        state: 'complete',
+        basis: 'user_declaration',
+        reason: 'Пользователь подтвердил полноту пакета',
+        evidence_refs: [],
+      },
+      reasons: [],
+    };
+
+    return {
+      ...demo,
+      result: {
+        ...result,
+        rows: [verifiedRow, ...otherRows],
+        evidence: result.evidence.map((item) => item.id === 'report-a'
+          ? { ...item, raw_value: '120,50', normalized_value: first.expected_value }
+          : item),
+        summary: {
+          ...result.summary,
+          counts: { verified: 1, discrepancy: 0, unverified: 1 },
+          primary_issues: result.summary.primary_issues.filter(({ id }) => id !== 'issue-a'),
+        },
+      },
+    };
+  };
+
+  render(<MemoryRouter initialEntries={['/checks/declared']}>
+    <Routes><Route path="/checks/:id" element={<CheckDetail view="table" loadRun={loadRun} />} /></Routes>
+  </MemoryRouter>);
+
+  const select = await screen.findByRole('combobox', { name: 'Доказательство' });
+  expect(within(select).getByRole('option', { name: /Лист «Синтетика», C6/ })).toBeVisible();
+  expect(within(select).getByRole('option', { name: /Лист «Синтетика», C7/ })).toBeVisible();
+  fireEvent.change(select, { target: { value: 'amount-2' } });
+  expect(screen.getByText('Лист «Синтетика», C7', { selector: 'dd' })).toBeVisible();
+});

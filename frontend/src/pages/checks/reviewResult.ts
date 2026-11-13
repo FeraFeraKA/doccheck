@@ -42,7 +42,7 @@ type ReviewRow = Pick<FixtureResult['rows'][number],
   reported_value: string | null;
   expected_value: string | null;
   delta: string | null;
-  calculation?: { formula: string } | null;
+  calculation?: { formula: string; components: { amount_refs: string[] }[] } | null;
 };
 
 // This projection covers the existing displays. The API adapter will
@@ -61,10 +61,11 @@ export const statusLabels: Record<string, string> = {
   unverified: 'Не проверен',
 };
 
-export function formatMoney(value: string | null) {
+export function formatDecimal(value: string | null) {
   if (value === null) return '—';
   const [integer, decimals] = value.split('.');
-  return integer.replace(/\B(?=(\d{3})+(?!\d))/g, '\u00a0') + ',' + decimals;
+  const grouped = integer.replace(/\B(?=(\d{3})+(?!\d))/g, '\u00a0');
+  return decimals === undefined ? grouped : `${grouped},${decimals}`;
 }
 
 export function formatLocation(locator: SourceAddress) {

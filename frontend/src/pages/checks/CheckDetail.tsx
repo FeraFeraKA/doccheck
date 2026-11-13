@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link, NavLink, useParams } from 'react-router';
 import { loadDemoRun, runStatusLabels } from './checkData';
 import type { RunDetails } from './checkData';
-import { formatLocation, formatMoney, statusLabels } from './reviewResult';
+import { formatDecimal, formatLocation, statusLabels } from './reviewResult';
 import type { ReviewResult } from './reviewResult';
 import { useCheckData } from './useCheckData';
 
@@ -96,6 +96,7 @@ function Reconciliation({ result }: { result: ReviewResult }) {
   const row = rows.find(({ id }) => id === selectedId);
   const refs = new Set([
     ...row?.reported_evidence_refs ?? [],
+    ...row?.calculation?.components.flatMap((component) => component.amount_refs) ?? [],
     ...row?.reasons.flatMap((reason) => reason.evidence_refs) ?? [],
     ...row?.completeness.evidence_refs ?? [],
   ]);
@@ -119,9 +120,9 @@ function Reconciliation({ result }: { result: ReviewResult }) {
                   setSelectedId(item.id);
                   setEvidenceId(undefined);
                 }}>{item.label}</button></td>
-                <td>{formatMoney(item.reported_value)}</td>
-                <td>{formatMoney(item.expected_value)}</td>
-                <td>{formatMoney(item.delta)}</td>
+                <td>{formatDecimal(item.reported_value)}</td>
+                <td>{formatDecimal(item.expected_value)}</td>
+                <td>{formatDecimal(item.delta)}</td>
                 <td><span className="checks-status" data-status={item.status}>{statusLabels[item.status]}</span></td>
               </tr>
             ))}</tbody>
