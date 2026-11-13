@@ -42,7 +42,8 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [report, documents, contract_number, period_start, period_end]
+              required:
+                [report, documents, contract_number, period_start, period_end, report_row_locator]
               properties:
                 report:
                   format: binary
@@ -56,6 +57,21 @@ paths:
                 contract_number: {type: string, minLength: 1}
                 period_start: {type: string, format: date}
                 period_end: {type: string, format: date}
+                report_row_locator:
+                  type: string
+                  contentMediaType: application/json
+                  contentSchema:
+                    allOf:
+                      - $ref: './check-result.v1.schema.json#/$defs/Scope/properties/report_row_locator'
+                      - type: object
+                  description: |
+                    JSON-объект адреса выбранной строки, переданный в текстовом поле
+                    FormData. Адрес обязателен. Значение null недопустимо.
+                    Сервер проверяет синтаксис JSON, модель Locator и соответствие
+                    типа адреса формату КФЗ. Для повтора сравнивается нормализованный
+                    адрес, включая канонический диапазон XLSX. Порядок ключей и пробелы
+                    в JSON не участвуют в сравнении.
+                  examples: ['{"kind":"page","page":1,"table_row":4,"table_column":2}']
       responses:
         '202':
           description: Пакет сохранён, исходное состояние queued.
@@ -131,10 +147,10 @@ paths:
       summary: Получить состояние и техническую ошибку задания
       responses:
         '200':
-          description: Состояние сохранённого задания. Ошибка может быть у failed или completed_with_issues.
+          description: Состояние сохранённого задания, техническая ошибка и прогресс по файлам.
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/RunSummary'}
+              schema: {$ref: '#/components/schemas/RunState'}
         '404': {$ref: '#/components/responses/NotFound'}
         '503': {$ref: '#/components/responses/Unavailable'}
   /api/v0/runs/{run_id}/findings:
@@ -272,6 +288,43 @@ components:
           anyOf:
             - $ref: './check-result.v1.schema.json#/$defs/Issue'
             - type: 'null'
+    RunState:
+      allOf:
+        - $ref: '#/components/schemas/RunSummary'
+        - type: object
+          required: [progress]
+          properties:
+            progress:
+              description: |
+                Число документов, для которых завершилась обработка. КФЗ входит
+                в total_documents. Обработанные файлы с ошибками и исключённые
+                файлы также считаются завершёнными. У queued счётчик равен 0.
+                Для completed и completed_with_issues оба счётчика равны.
+                При failed возвращается последнее достоверное значение.
+                Если оно недоступно, возвращается null. Во время processing null
+                означает, что можно показать ход работы без числового индикатора.
+                processed_documents не превышает total_documents.
+              type: [object, 'null']
+              required: [processed_documents, total_documents]
+              properties:
+                processed_documents: {type: integer, minimum: 0}
+                total_documents: {type: integer, minimum: 2, maximum: 101}
+          allOf:
+            - if:
+                properties:
+                  status: {const: queued}
+              then:
+                properties:
+                  progress:
+                    type: object
+                    properties:
+                      processed_documents: {const: 0}
+            - if:
+                properties:
+                  status: {enum: [completed, completed_with_issues]}
+              then:
+                properties:
+                  progress: {type: object}
     ApiError:
       type: object
       required: [code, message]
