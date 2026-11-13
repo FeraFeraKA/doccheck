@@ -1,0 +1,73 @@
+import { expect, test } from '@playwright/test';
+
+test('the accountant opens the synthetic reconciliation and sees discrepancies and sources', async ({ page }) => {
+  const apiRequests: string[] = [];
+  page.on('request', (request) => {
+    if (new URL(request.url()).pathname.startsWith('/api/')) apiRequests.push(request.url());
+  });
+
+  await page.goto('/checks/new');
+  await expect(page.getByText('Синтетический режим · файлы остаются в браузере')).toBeVisible();
+  await expect(page.getByRole('group', { name: 'Роль интерфейса' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Аспирант' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Бухгалтер' })).toHaveCount(0);
+  await expect(page.getByLabel('Выберите КФЗ')).toBeVisible();
+  await expect(page.getByText(/собирает сводные значения из первичных документов/)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Далее' })).toBeDisabled();
+  await page.getByRole('button', { name: 'Загрузить пример' }).click();
+  await expect(page.getByText('01_kfz.pdf')).toBeVisible();
+  await page.getByRole('button', { name: 'Далее' }).click();
+  await expect(page.getByLabel('Выберите первичные документы')).toBeVisible();
+  await page.getByRole('button', { name: 'Загрузить пример' }).click();
+  await expect(page.getByText('02_payroll_06.xlsx')).toBeVisible();
+  await page.getByRole('link', { name: 'Открыть готовый синтетический результат' }).click();
+
+  const discrepancy = page.getByRole('row').filter({ hasText: 'Синтетическая статья A' });
+  await expect(discrepancy.getByRole('cell', { name: 'Расхождение', exact: true })).toBeVisible();
+  await expect(discrepancy.getByRole('cell', { name: '30,00', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Возможные причины расхождений' })).toBeVisible();
+  await expect(page.getByText(/В этом примере таких гипотез нет/)).toBeVisible();
+
+  const row = page.getByRole('row').filter({ hasText: 'Синтетическая статья B' });
+  await expect(row.getByRole('cell', { name: '0,00', exact: true })).toBeVisible();
+  await expect(row.getByRole('cell', { name: '—', exact: true })).toHaveCount(2);
+  await page.getByLabel('Доказательство').selectOption('amount-1');
+  await expect(page.getByText('Лист «Синтетика», C6', { exact: true })).toBeVisible();
+  await row.getByRole('button').click();
+  await expect(page.getByText('Страница 1, строка 4, столбец 2', { exact: true })).toBeVisible();
+
+  await page.getByRole('link', { name: 'Исключения' }).click();
+  await expect(page.getByText('Действия бухгалтера недоступны в синтетическом режиме.')).toBeVisible();
+  await expect(page.getByText('Ошибка чтения', { exact: true })).toBeVisible();
+  await page.reload();
+  await expect(page.getByText('Действия бухгалтера недоступны в синтетическом режиме.')).toBeVisible();
+  await expect(page.getByText('Ошибка чтения', { exact: true })).toBeVisible();
+  expect(apiRequests).toEqual([]);
+});
+
+for (const width of [320, 390]) {
+  test(`reconciliation shows the discrepancy count on entry at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.goto('/checks');
+    await page.getByRole('link', { name: 'Синтетическая сверка' }).click();
+
+    await expect(page.getByText('Расхождения: 1', { exact: true })).toBeInViewport({ ratio: 1 });
+    await expect(page.getByRole('heading', { name: 'Показатели' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Исключения' })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+  });
+}
+
+test('the upload wizard selects files without secure-context APIs', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(window.crypto, 'randomUUID', { value: undefined });
+  });
+  await page.goto('/checks/new');
+  await page.getByLabel('Выберите КФЗ').setInputFiles({
+    name: 'example.pdf',
+    mimeType: 'application/pdf',
+    buffer: Buffer.from('%PDF-1.4 synthetic example'),
+  });
+  await expect(page.getByText('example.pdf', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Далее' })).toBeEnabled();
+});
