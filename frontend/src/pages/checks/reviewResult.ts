@@ -1,7 +1,3 @@
-import type fixture from '../../../../contracts/check-result.v1.synthetic.json';
-
-type FixtureResult = typeof fixture.result;
-
 interface PageAddress {
   page: number;
   table_row?: number | null;
@@ -30,29 +26,52 @@ interface TableCellAddress {
 
 type SourceAddress = PageAddress | SheetAddress | ParagraphAddress | TableCellAddress;
 
-type SourceEvidence = Pick<FixtureResult['evidence'][number], 'id' | 'document_id'> & {
+interface SourceEvidence {
+  id: string;
+  document_id: string;
   locator: SourceAddress;
   raw_value: string | null;
-};
+}
 
-type ReviewDocument = Pick<FixtureResult['documents'][number], 'id' | 'name' | 'role' | 'decision' | 'errors'>;
+interface ReviewIssue {
+  id: string;
+  code: string;
+  message: string;
+}
 
-type ReviewRow = Pick<FixtureResult['rows'][number],
-  'id' | 'label' | 'status' | 'reported_evidence_refs' | 'reasons' | 'completeness'> & {
+interface ReviewDocument {
+  id: string;
+  name: string;
+  role: string;
+  decision: { state: string; reason_code: string; message: string; evidence_refs: string[] };
+  errors: ReviewIssue[];
+}
+
+interface ReviewRow {
+  id: string;
+  label: string;
+  status: string;
   reported_value: string | null;
   expected_value: string | null;
   delta: string | null;
+  reported_evidence_refs: string[];
+  reasons: { code: string; message: string; evidence_refs: string[] }[];
+  completeness: { state: string; basis: string; reason: string; evidence_refs: string[] };
   calculation?: { formula: string; components: { amount_refs: string[] }[] } | null;
-};
+}
 
-// This projection covers the existing displays. The API adapter will
-// validate responses against the versioned contract before passing them here.
+// Fields used by the transferred screens. The API client's decoder validates
+// this projection before handing a server result to a caller.
 export interface ReviewResult {
-  scope: Pick<FixtureResult['scope'], 'contract_number' | 'period_start' | 'period_end'>;
+  scope: { contract_number: string; period_start: string; period_end: string };
   documents: ReviewDocument[];
   evidence: SourceEvidence[];
   rows: ReviewRow[];
-  summary: Pick<FixtureResult['summary'], 'counts' | 'conclusion' | 'primary_issues'>;
+  summary: {
+    counts: { verified: number; discrepancy: number; unverified: number };
+    conclusion: string;
+    primary_issues: ReviewIssue[];
+  };
 }
 
 export const statusLabels: Record<string, string> = {
