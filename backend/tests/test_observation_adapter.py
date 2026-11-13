@@ -81,6 +81,60 @@ def test_mixed_input_is_scan_without_discarding_per_fragment_origin(module_path,
     assert next(item for item in record.candidates if item.field == "amount").sources == (scan,)
 
 
+def test_model_number_conflict_keeps_address_only_on_the_source_number(module_path, tmp_path):
+    document = _document(tmp_path)
+    source = replace(document.observations[0], method="ocr")
+    disputed = replace(document, observations=(source,), prediction={"doc_number": "999"})
+    (record,) = identify_documents([disputed], synthetic=True).documents
+    numbers = {item.value: item for item in record.candidates if item.field == "doc_number"}
+
+    assert record.number_status == "source_model_conflict"
+    assert record.number_requires_review
+    assert numbers["321"].sources == (source,)
+    assert numbers["999"].sources == () and numbers["999"].source_ambiguous
+
+
+def test_unambiguous_issuer_response_can_omit_candidate_list(module_path, tmp_path):
+    document = _document(tmp_path)
+    issuer = SourceObservation(
+        "Исполнитель: ООО «Синтетика»", PageLocator(kind="page", page=1, line=3), "native"
+    )
+    supplied = replace(document, observations=(*document.observations, issuer))
+    (record,) = identify_documents([supplied], synthetic=True).documents
+    (candidate,) = tuple(item for item in record.candidates if item.field == "issuer")
+
+    assert record.issuer_status == "explicit_source_role"
+    assert candidate.value == "ООО «Синтетика»"
+    assert candidate.sources == (issuer,)
+
+
+def test_module_compound_needs_actual_line_adjacency_for_addresses(module_path, tmp_path):
+    document = _document(tmp_path)
+    label = SourceObservation(
+        "Договор", PageLocator(kind="page", page=1, bbox=(0.1, 0.2, 0.3, 0.4)), "native"
+    )
+    number = SourceObservation(
+        "12-345", PageLocator(kind="page", page=1, bbox=(0.8, 0.8, 0.9, 0.9)), "native"
+    )
+    (record,) = identify_documents(
+        [replace(document, observations=(label, number))], synthetic=True
+    ).documents
+    contract = next(item for item in record.candidates if item.field == "contract_number")
+    assert contract.value == "12-345"
+    assert contract.sources == () and contract.source_ambiguous
+
+    addressed = (
+        replace(label, locator=PageLocator(kind="page", page=1, line=7)),
+        replace(number, locator=PageLocator(kind="page", page=1, line=8)),
+    )
+    (record,) = identify_documents(
+        [replace(document, observations=addressed)], synthetic=True
+    ).documents
+    contract = next(item for item in record.candidates if item.field == "contract_number")
+    assert contract.value == "12-345"
+    assert contract.sources == addressed and not contract.source_ambiguous
+
+
 def test_real_module_preserves_exact_byte_groups_and_per_file_errors(module_path, tmp_path):
     valid = _document(tmp_path, "valid")
     duplicate = _document(tmp_path, "duplicate")

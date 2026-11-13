@@ -228,6 +228,34 @@ def _required_text(value: object) -> str:
     return value
 
 
+def _cell_position(locator: SheetLocator) -> tuple[int, int] | None:
+    cell = re.fullmatch(r"([A-Z]+)([0-9]+)", locator.range)
+    if cell is None:
+        return None
+    column = 0
+    for letter in cell[1]:
+        column = column * 26 + ord(letter) - ord("A") + 1
+    return column, int(cell[2])
+
+
+def _adjacent(first: SourceObservation, second: SourceObservation) -> bool:
+    if first.method != second.method:
+        return False
+    left, right = first.locator, second.locator
+    if isinstance(left, PageLocator) and isinstance(right, PageLocator):
+        return left.page == right.page and left.line is not None and right.line == left.line + 1
+    if isinstance(left, SheetLocator) and isinstance(right, SheetLocator):
+        if left.sheet != right.sheet:
+            return False
+        previous, following = _cell_position(left), _cell_position(right)
+        return previous is not None and following in (
+            (previous[0] + 1, previous[1]),
+            (previous[0], previous[1] + 1),
+        )
+    # The identity module has no DOCX structure. Keep its compounds as candidates.
+    return False
+
+
 def _evidence_sources(
     value: object,
     prepared: _Prepared,
@@ -248,6 +276,10 @@ def _evidence_sources(
             sources.append(matches[0])
         elif len(matches) != 1:
             ambiguous = True
+    if len(evidence) > 1 and (
+        ambiguous or any(not _adjacent(left, right) for left, right in zip(sources, sources[1:]))
+    ):
+        return (), True
     return tuple(sources), ambiguous
 
 
@@ -261,6 +293,26 @@ def _candidate(
         raise IdentityResponseError("Invalid candidate value")
     sources, ambiguous = _evidence_sources(evidence, prepared)
     return IdentityCandidate(field, value, sources, ambiguous)
+
+
+def _number_candidates(number: dict[str, object], prepared: _Prepared) -> list[IdentityCandidate]:
+    readings = [_mapping(item) for item in _array(number.get("candidates"))]
+    selected_value = number.get("value")
+    matching_evidence = [
+        item.get("evidence")
+        for item in readings
+        if selected_value is not None and item.get("value") == selected_value
+    ]
+    # The module's selected evidence can describe an earlier source reading during a conflict.
+    selected_evidence = matching_evidence[0] if len(matching_evidence) == 1 else None
+    selected = _candidate("doc_number", selected_value, selected_evidence, prepared)
+    if selected_value is not None and len(matching_evidence) != 1 and number.get("evidence"):
+        selected = IdentityCandidate(selected.field, selected.value, (), True)
+    alternatives = [
+        _candidate("doc_number", item.get("value"), item.get("evidence"), prepared)
+        for item in readings
+    ]
+    return [selected, *(item for item in alternatives if item != selected)]
 
 
 def _record(raw: dict[str, object], prepared: _Prepared) -> DocumentIdentity:
@@ -287,18 +339,16 @@ def _record(raw: dict[str, object], prepared: _Prepared) -> DocumentIdentity:
         for field, value in source_facts.items()
         if facts.get(field) != value
     )
-    candidates.extend(
-        _candidate(field, obj.get("value"), obj.get("evidence"), prepared)
-        for field, obj in (("doc_number", number), ("doc_type", doc_type), ("issuer", issuer))
+    candidates.extend(_number_candidates(number, prepared))
+    candidates.append(
+        _candidate("doc_type", doc_type.get("value"), doc_type.get("evidence"), prepared)
     )
-    for candidate_field, obj in (("doc_number", number), ("issuer", issuer)):
-        for reading in _array(obj.get("candidates")):
-            candidate = _mapping(reading)
-            item = _candidate(
-                candidate_field, candidate.get("value"), candidate.get("evidence"), prepared
-            )
-            if item not in candidates:
-                candidates.append(item)
+    candidates.append(_candidate("issuer", issuer.get("value"), issuer.get("evidence"), prepared))
+    for reading in _array(issuer.get("candidates", [])):
+        candidate = _mapping(reading)
+        item = _candidate("issuer", candidate.get("value"), candidate.get("evidence"), prepared)
+        if item not in candidates:
+            candidates.append(item)
     candidates.append(
         _candidate("issuer_tax_id", issuer.get("tax_id"), issuer.get("tax_id_evidence"), prepared)
     )
