@@ -103,8 +103,8 @@ def verify_xlsx(path: Path, doc: dict) -> str:
 
 
 def verify(directory: Path) -> dict:
-    public = json.loads((directory / "inputs.json").read_text())
-    manifest = json.loads((directory / "expectations/manifest.json").read_text())
+    public = json.loads((directory / "inputs.json").read_text(encoding="utf-8"))
+    manifest = json.loads((directory / "expectations/manifest.json").read_text(encoding="utf-8"))
     assert public["synthetic"] is True and manifest["synthetic"] is True
     assert set(public) == {"synthetic", "files"}
     inputs = public["files"]
