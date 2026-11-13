@@ -1,14 +1,16 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { Link, MemoryRouter, Route, Routes } from 'react-router';
-import { expect, it, vi } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { CheckDetail, ChecksOverview } from '../../src/pages/checks';
 import { loadDemoRun } from '../../src/pages/checks/checkData';
 import type { RunDetails } from '../../src/pages/checks/checkData';
 
+afterEach(() => vi.unstubAllGlobals());
+
 it('различает загрузку истории, ошибку и пустой список после повтора', async () => {
   const loadHistory = vi.fn()
     .mockRejectedValueOnce(new Error('Скрытая техническая причина'))
-    .mockResolvedValueOnce({ entries: [] });
+    .mockResolvedValueOnce({ entries: [], nextCursor: null });
 
   render(<MemoryRouter><ChecksOverview loadHistory={loadHistory} /></MemoryRouter>);
 
@@ -17,6 +19,61 @@ it('различает загрузку истории, ошибку и пуст
   expect(screen.queryByText('Скрытая техническая причина')).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Повторить' }));
   expect(await screen.findByText('Проверок пока нет.')).toBeVisible();
+});
+
+it('открывает сохранённый запуск из истории и показывает терминальное состояние', async () => {
+  const summary = {
+    run_id: 'saved-run', status: 'queued', created_at: '2026-11-13T12:00:00Z', error: null,
+  };
+  const fetchMock = vi.fn<typeof fetch>()
+    .mockResolvedValueOnce(Response.json({ items: [summary], next_cursor: null }))
+    .mockResolvedValueOnce(Response.json({
+      ...summary, progress: { processed_documents: 0, total_documents: 2 },
+    }))
+    .mockResolvedValueOnce(Response.json({
+      ...summary, status: 'failed', progress: null,
+      error: { code: 'test_failure', message: 'Безопасная причина остановки' },
+    }));
+  vi.stubGlobal('fetch', fetchMock);
+
+  render(<MemoryRouter initialEntries={['/checks']}>
+    <Routes>
+      <Route path="/checks" element={<ChecksOverview />} />
+      <Route path="/checks/:id" element={<CheckDetail view="table" />} />
+    </Routes>
+  </MemoryRouter>);
+
+  expect(screen.getByRole('link', { name: 'Синтетическая сверка' })).toBeVisible();
+  fireEvent.click(await screen.findByRole('link', { name: 'Проверка saved-run' }));
+  expect(await screen.findByText('Обработано документов: 0 из 2')).toBeVisible();
+  expect(await screen.findByRole('alert')).toHaveTextContent('Безопасная причина остановки');
+  expect(screen.getByRole('status')).toHaveTextContent('Завершилась ошибкой');
+  expect(fetchMock.mock.calls.map(([path]) => path)).toEqual([
+    '/api/v0/runs', '/api/v0/runs/saved-run', '/api/v0/runs/saved-run',
+  ]);
+  expect(screen.queryByText('Синтетическая сверка · готовый пример')).not.toBeInTheDocument();
+});
+
+it('после ошибки получения состояния повторяет запрос для текущей ссылки', async () => {
+  const fetchMock = vi.fn<typeof fetch>()
+    .mockRejectedValueOnce(new TypeError('network unavailable'))
+    .mockResolvedValueOnce(Response.json({
+      run_id: 'saved-run', status: 'completed_with_issues', created_at: '2026-11-13T12:00:00Z',
+      error: { code: 'test_issue', message: 'Проверка завершилась с замечаниями' },
+      progress: { processed_documents: 2, total_documents: 2 },
+    }));
+  vi.stubGlobal('fetch', fetchMock);
+
+  render(<MemoryRouter initialEntries={['/checks/saved-run']}>
+    <Routes><Route path="/checks/:id" element={<CheckDetail view="table" />} /></Routes>
+  </MemoryRouter>);
+
+  expect(await screen.findByRole('alert')).toHaveTextContent('Не удалось получить состояние проверки.');
+  fireEvent.click(screen.getByRole('button', { name: 'Повторить' }));
+  expect(await screen.findByText('Результат проверки недоступен.')).toBeVisible();
+  expect(screen.getByRole('status')).toHaveTextContent('Завершена с замечаниями');
+  expect(screen.getByRole('alert')).toHaveTextContent('Проверка завершилась с замечаниями');
+  expect(fetchMock).toHaveBeenCalledTimes(2);
 });
 
 it('показывает прогресс задания без готового результата и игнорирует ответ для старого ID', async () => {
