@@ -4,7 +4,7 @@ from typing import Annotated, BinaryIO
 from urllib.parse import quote
 from uuid import UUID
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response, StreamingResponse
@@ -67,6 +67,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         configured = settings or Settings.from_env()
         application.state.upload_root = configured.upload_root
+        application.state.public_demo = configured.public_demo
         application.state.engine = create_database_engine(configured.database_url)
         try:
             yield
@@ -109,7 +110,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         return await request_validation_exception_handler(request, exc)
 
-    @application.post("/api/v0/runs", status_code=202)
+    def require_document_runs(request: Request) -> None:
+        if request.app.state.public_demo:
+            raise run_reads.RunReadError(
+                503, "service_unavailable", "Операции с документами доступны в локальной установке"
+            )
+
+    document_runs = APIRouter(prefix="/api/v0/runs", dependencies=[Depends(require_document_runs)])
+
+    @document_runs.post("", status_code=202)
     async def post_run(request: Request) -> JSONResponse:
         try:
             media_type = request.headers.get("content-type", "").partition(";")[0].strip().lower()
@@ -177,22 +186,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             headers={"Location": f"/api/v0/runs/{run_id}"},
         )
 
-    @application.get("/api/v0/runs")
+    @document_runs.get("")
     def list_runs(
         request: Request, limit: Annotated[int, Query(ge=1, le=100)] = 20, cursor: str | None = None
     ) -> run_reads.RunPage:
         return run_reads.list_runs(request.app.state.engine, limit, cursor)
 
-    @application.get("/api/v0/runs/{run_id}")
+    @document_runs.get("/{run_id}")
     def get_run(request: Request, run_id: str) -> run_reads.RunState:
         return run_reads.get_run_state(request.app.state.engine, run_id)
 
-    @application.get("/api/v0/runs/{run_id}/findings")
+    @document_runs.get("/{run_id}/findings")
     def get_findings(request: Request, run_id: str) -> CheckResult:
         return run_reads.get_run_findings(request.app.state.engine, run_id)
 
-    @application.get(
-        "/api/v0/runs/{run_id}/exports/xlsx",
+    @document_runs.get(
+        "/{run_id}/exports/xlsx",
         response_class=Response,
         responses={200: {"content": {XLSX_MEDIA_TYPE: {}}}},
     )
@@ -214,8 +223,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             },
         )
 
-    @application.get(
-        "/api/v0/runs/{run_id}/documents/{document_id}",
+    @document_runs.get(
+        "/{run_id}/documents/{document_id}",
         response_class=StreamingResponse,
         responses={200: {"content": {"application/octet-stream": {}}}},
     )
@@ -225,7 +234,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         return _OriginalFileResponse(stream, size, name)
 
-    @application.get("/api/v0/runs/{run_id}/documents/{document_id}/fragments/{evidence_id}")
+    @document_runs.get("/{run_id}/documents/{document_id}/fragments/{evidence_id}")
     def get_fragment(request: Request, run_id: str, document_id: str, evidence_id: str) -> Evidence:
         return run_reads.get_run_fragment(
             request.app.state.engine,
@@ -236,7 +245,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             path_segment=True,
         )
 
-    @application.get("/api/v0/runs/{run_id}/documents/{document_id}/fragments")
+    @document_runs.get("/{run_id}/documents/{document_id}/fragments")
     def get_fragment_by_id(
         request: Request,
         run_id: str,
@@ -250,6 +259,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             document_id,
             evidence_id,
         )
+
+    application.include_router(document_runs)
 
     @application.get("/health", response_model=HealthResponse)
     def health(request: Request) -> HealthResponse:
