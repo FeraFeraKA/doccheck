@@ -39,7 +39,35 @@ git diff --check
 
 ## Планируемый стек
 
-Frontend: React, TypeScript, Vite, React Router, Zustand, Tailwind CSS и собственные компоненты; менеджер пакетов — pnpm. Подробности и статус настройки — в [frontend/README.md](frontend/README.md). Backend: Python/FastAPI, SQLAlchemy, Alembic, отдельный Python worker и PostgreSQL. Миграция создаёт схему синтетических заданий. По целевой архитектуре оригиналы хранятся локально, PostgreSQL хранит задания, метаданные и результаты. Redis и внешний LLM для MVP не требуются. Docker Compose остаётся отдельной задачей NRT-41.
+Frontend: React, TypeScript, Vite, React Router, Zustand, Tailwind CSS и собственные компоненты. Менеджер пакетов — pnpm. Backend: Python/FastAPI, SQLAlchemy, Alembic, отдельный Python worker и PostgreSQL. Миграция создаёт схему синтетических заданий. По целевой архитектуре оригиналы хранятся локально, PostgreSQL хранит задания, метаданные и результаты.
+
+## Запуск каркаса через Docker Compose
+
+Нужны запущенный Docker Engine с Linux-контейнерами и Docker Compose с
+поддержкой `up --wait`. Скопируйте `.env.example` в `.env`, если файла ещё
+нет, и задайте `DOCCHECK_DB_PASSWORD` случайной строкой из букв и цифр,
+например 32 шестнадцатеричными символами. Затем из корня репозитория:
+
+```sh
+docker compose up --build --wait
+```
+
+Откройте [http://127.0.0.1:8080](http://127.0.0.1:8080) и создайте
+синтетическое задание. Если порт занят, задайте `DOCCHECK_PORT` в `.env`.
+PostgreSQL проходит проверку готовности, затем отдельный сервис `migrate`
+применяет миграцию перед запуском API и worker.
+
+```sh
+docker compose ps --all
+docker compose down
+docker compose up --wait
+```
+
+Обычный `down` сохраняет задания в именованном volume PostgreSQL.
+`docker compose down --volumes` удалит данные этого проекта. Первичная
+сборка получает закреплённые образы и зависимости из реестров. GPU, OCR и
+реальный inference относятся к оставшейся части NRT-41.
+Подробности конфигурации и версии — в [документации backend](backend/README.md).
 
 ## Ответственность
 

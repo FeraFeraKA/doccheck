@@ -5,6 +5,44 @@ NRT-8 добавляет FastAPI, PostgreSQL и **отдельный Python work
 сверка здесь не выполняются. [Переданный ML-модуль](ml_module/README.md) остаётся
 отдельным пакетом; каркас не устанавливает его зависимости и веса.
 
+## Docker Compose
+
+[Команды запуска](../README.md#запуск-каркаса-через-docker-compose) выполняются
+из корня репозитория. Compose собирает один образ Python для API, worker и
+одноразовой миграции. После проверки PostgreSQL сервис `migrate` выполняет
+`alembic upgrade head`. API и worker стартуют после успешной миграции, а
+frontend ждёт успешного `/health` API. Ошибка миграции останавливает запуск
+зависимых сервисов.
+
+Compose формирует `DATABASE_URL` для хоста `db` из `DOCCHECK_DB_PASSWORD`.
+Переменная `DATABASE_URL` в `.env` ниже используется для локального запуска
+без контейнеров. Используйте буквы и цифры в пароле Compose, чтобы его можно
+было подставить в URL. PostgreSQL использует пароль при первичной инициализации
+тома. Изменение `.env` само по себе не меняет пароль уже созданной роли.
+
+PostgreSQL 18 хранит данные в именованном volume `postgres-data`,
+подключённом к `/var/lib/postgresql`. Оригиналы, превью и другие локальные
+файлы остаются в `data/` вне контейнеров. В этом срезе нет загрузки файлов.
+Список разрешённых путей в `.dockerignore` исключает `data/`, `.env`,
+примеры, holdout и ML-модуль с весами из контекста сборки. Рабочий пароль
+передаётся сервисам при запуске и не входит в образ.
+
+| Компонент | Версия | Лицензия компонента |
+| --- | --- | --- |
+| Python, образ Debian slim | 3.12.12 | [PSF](https://github.com/python/cpython/blob/v3.12.12/LICENSE) |
+| uv, стадия сборки | 0.9.17 | [MIT](https://github.com/astral-sh/uv/blob/0.9.17/LICENSE-MIT) или [Apache-2.0](https://github.com/astral-sh/uv/blob/0.9.17/LICENSE-APACHE) |
+| Node.js, стадия сборки | 26.12.1 | [MIT и уведомления зависимостей](https://github.com/nodejs/node/blob/v26.12.1/LICENSE) |
+| pnpm, стадия сборки | 12.14.0 | [MIT](https://github.com/pnpm/pnpm/blob/v12.14.0/LICENSE) |
+| nginx, образ Alpine | 1.30.6 | [BSD-2-Clause](https://github.com/nginx/nginx/blob/release-1.30.6/LICENSE) |
+| PostgreSQL | 18.4 | [PostgreSQL License](https://github.com/postgres/postgres/blob/REL_18_4/COPYRIGHT) |
+
+Базовые образы закреплены по digest, зависимости приложения — в lockfile.
+Таблица описывает основные компоненты. Пакеты базовых образов и зависимости
+сохраняют свои лицензии. CI запускает Linux/amd64 и выводит фактические
+размеры образов, время сборки и запуска, время повторного запуска и снимок
+потребления памяти работающих контейнеров. Снимок памяти не измеряет пик
+и не определяет требования реального ML.
+
 ## Установка и PostgreSQL
 
 Нужны Python **3.12.12** (`.python-version`), uv **0.9.17** и локальный PostgreSQL
