@@ -142,9 +142,42 @@ test('the synthetic conclusion shows XLSX export as unavailable', async ({ page 
   const download = page.getByRole('button', { name: 'Скачать XLSX' });
   await expect(download).toBeVisible();
   await expect(download).toBeDisabled();
-  const note = 'Скачивание результата станет доступно после подключения экспорта.';
+  const note = 'Скачивание XLSX доступно для сохранённой проверки.';
   await expect(download).toHaveAccessibleDescription(note);
   await expect(page.getByText(note)).toBeVisible();
+});
+
+test('the stored conclusion downloads XLSX from its own run', async ({ page }) => {
+  const runId = 'saved-xlsx';
+  const path = `/api/v0/runs/${runId}`;
+  await page.route(`**${path}`, (route) => route.fulfill({ json: {
+    run_id: runId, status: 'completed_with_issues', created_at: '2026-11-13T12:00:00Z', error: null,
+    progress: { processed_documents: 4, total_documents: 4 },
+  } }));
+  await page.route(`**${path}/findings`, (route) => route.fulfill({
+    json: { ...example.result, run_id: runId },
+  }));
+  let exportCalls = 0;
+  await page.route(`**${path}/exports/xlsx`, (route) => {
+    exportCalls += 1;
+    if (exportCalls === 1) return route.fulfill({ status: 503, json: { code: 'service_unavailable' } });
+    return route.fulfill({
+      body: 'Synthetic download transport response',
+      contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    });
+  });
+
+  await page.goto(`/checks/${runId}/conclusion`);
+  const button = page.getByRole('button', { name: 'Скачать XLSX' });
+  await button.click();
+  await expect(page.getByRole('alert')).toHaveText('Не удалось скачать XLSX. Повторите попытку.');
+  const downloaded = page.waitForEvent('download');
+  await button.click();
+  const file = await downloaded;
+  expect(file.suggestedFilename()).toBe(`doccheck-${runId}.xlsx`);
+  expect(await file.failure()).toBeNull();
+  expect(exportCalls).toBe(2);
+  await expect(page).toHaveURL(`/checks/${runId}/conclusion`);
 });
 
 test('the finished check loads stored findings and can retry without repeating status polling', async ({ page }) => {
