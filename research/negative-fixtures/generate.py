@@ -5,8 +5,10 @@ import json
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
+from random import Random
 
 from openpyxl import load_workbook
+from PIL import Image
 
 HERE = Path(__file__).resolve().parent
 SOURCE = HERE.parents[1] / "docs/synthetic/nrt-89"
@@ -49,6 +51,8 @@ def build(output: Path) -> None:
                         variant = binary.getvalue()
                     finally:
                         workbook.close()
+            case "rotate_png_90_ccw" | "salt_and_pepper_png":
+                variant = mutate_png(original, case)
             case _:
                 raise ValueError(f"Unknown mutation: {case['mutation']}")
 
@@ -68,6 +72,35 @@ def build(output: Path) -> None:
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
+
+
+def mutate_png(original: bytes, case: dict) -> bytes:
+    with Image.open(BytesIO(original), formats=["PNG"]) as image, BytesIO() as encoded:
+        if case["mutation"] == "rotate_png_90_ccw":
+            modified = image.transpose(Image.Transpose.ROTATE_90)
+        else:
+            # One seeded draw per pixel produces black and white speckles without
+            # introducing colour casts. The PNG is kept in its original dimensions.
+            rgb = image.convert("RGB")
+            pixels = bytearray(rgb.tobytes())
+            sample = Random(case["noise_seed"]).random
+            density = case["noise_density_percent"] / 100
+            for offset in range(0, len(pixels), 3):
+                draw = sample()
+                if draw < density:
+                    pixels[offset : offset + 3] = (
+                        b"\x00\x00\x00" if draw < density / 2 else b"\xff\xff\xff"
+                    )
+            modified = Image.frombytes("RGB", rgb.size, bytes(pixels))
+
+        case.update(
+            output_width=modified.width,
+            output_height=modified.height,
+            output_pixel_mode=modified.mode,
+            output_pixel_sha256=sha256(modified.tobytes()).hexdigest(),
+        )
+        modified.save(encoded, format="PNG")
+        return encoded.getvalue()
 
 
 def main() -> None:
