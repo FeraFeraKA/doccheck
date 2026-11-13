@@ -57,6 +57,15 @@ it('читает результат с меткой синтетики, осно
   ]));
 });
 
+it('сохраняет подтверждённый формат и явный null из API', async () => {
+  const documents = example.result.documents.map((document) => document.role === 'report'
+    ? document : { ...document, format: null });
+  stubFetch(Response.json({ ...example.result, documents }));
+  const { result } = await loadFindings(id);
+  expect(result.documents[0].format).toBe('pdf');
+  expect(result.documents[1].format).toBeNull();
+});
+
 it('сохраняет цепочку от непроверенного показателя до ошибки источника', async () => {
   stubFetch(Response.json(example.result));
   const { result } = await loadFindings(id);
@@ -173,6 +182,10 @@ it('отличает ошибку HTTP прокси от некорректны�
 
 it.each([
   ['иная версия', { ...example.result, schema_version: 'doccheck-check-result/2' }],
+  ['неподдерживаемый формат документа', {
+    ...example.result,
+    documents: [{ ...example.result.documents[0], format: 'html' }],
+  }],
   ['другой запуск', { ...example.result, run_id: 'another-run' }],
   ['нет режима данных', { ...example.result, synthetic: null }],
   ['несогласованный статус', { ...example.result, rows: [{ ...example.result.rows[0], status: 'completed' }] }],
