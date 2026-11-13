@@ -15,7 +15,13 @@ from doccheck_backend.database import create_database_engine
 from doccheck_backend.jobs import create_job, get_job
 from doccheck_backend.models import SyntheticJob
 from doccheck_backend.schemas import HealthResponse, JobResponse
-from doccheck_backend.uploads import MAX_MULTIPART_SIZE, UploadError, size_error, store_run
+from doccheck_backend.uploads import (
+    MAX_DOCUMENTS,
+    MAX_MULTIPART_SIZE,
+    UploadError,
+    size_error,
+    store_run,
+)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -66,7 +72,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 return message
 
             bounded_request = Request(request.scope, receive=bounded_receive)
-            async with bounded_request.form(max_files=102, max_fields=8) as form:
+            async with bounded_request.form(max_files=MAX_DOCUMENTS + 1, max_fields=8) as form:
                 run_id = await run_in_threadpool(
                     store_run,
                     request.app.state.engine,
@@ -74,7 +80,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     parsed_key,
                     form,
                 )
-        except StarletteHTTPException:
+        except StarletteHTTPException as exc:
+            if exc.detail.startswith(("Too many files.", "Too many fields.")):
+                return JSONResponse(
+                    status_code=422,
+                    content={"code": "invalid_input", "message": "Слишком много частей формы"},
+                )
             return JSONResponse(
                 status_code=400,
                 content={"code": "invalid_request", "message": "Некорректная multipart-форма"},

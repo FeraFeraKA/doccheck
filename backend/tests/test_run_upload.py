@@ -87,6 +87,16 @@ def test_invalid_upload_has_safe_errors(tmp_path, data, files, status, code):
     assert not root.exists()
 
 
+@pytest.mark.parametrize("count", [101, 102])
+def test_too_many_documents_matches_contract(tmp_path, count):
+    settings = Settings("postgresql+psycopg://localhost/doccheck_unused", upload_root=tmp_path)
+    with TestClient(create_app(settings)) as client:
+        response = submit(client, uuid4(), files=(REPORT, *([DOCUMENT] * count)))
+    assert response.status_code == 422
+    assert response.json()["code"] == "invalid_input"
+    assert not list(tmp_path.iterdir())
+
+
 def test_upload_limits(tmp_path, monkeypatch):
     root = tmp_path / "runs"
     settings = Settings("postgresql+psycopg://localhost/doccheck_unused", upload_root=root)
