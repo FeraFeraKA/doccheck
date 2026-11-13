@@ -208,11 +208,16 @@ def _text_amount(text: str, *, rub_column: bool = False) -> tuple[Decimal | None
 
 
 def _observe(
-    collected: _Collected, text: str, locator: Locator, *, rub_column: bool = False
+    collected: _Collected,
+    text: str,
+    locator: Locator,
+    *,
+    rub_column: bool = False,
+    interrupted: bool = False,
 ) -> None:
     if not text.strip():
         return
-    amount, ambiguous = _text_amount(text, rub_column=rub_column)
+    amount, ambiguous = (None, True) if interrupted else _text_amount(text, rub_column=rub_column)
     if ambiguous:
         collected.issues.append(NativeIssue("ambiguous_rub_amount", locator=locator))
     collected.observations.append(
@@ -271,6 +276,7 @@ def _pdf_text_lines(page: Page, visible_box: tuple[float, float, float, float]) 
     lines = chars_to_textmap(chars).extract_text_lines()
     visible_lines = []
     for line in lines:
+        line["reading_box"] = (line["x0"], line["top"], line["x1"], line["bottom"])
         glyphs = [positions[id(char)] for char in line["chars"]]
         visible_glyphs = [box for box in glyphs if box is not None]
         if not visible_glyphs:
@@ -291,6 +297,47 @@ def _pdf_text_lines(page: Page, visible_box: tuple[float, float, float, float]) 
     return visible_lines
 
 
+def _wrapped_pdf_lines(lines: list[dict]) -> set[int]:
+    """Mark plausibly interrupted values in reading coordinates, without joining their text."""
+    interrupted = set()
+    for index, (previous, current) in enumerate(zip(lines, lines[1:])):
+        if current.get("clipped") or previous.get("clipped"):
+            continue
+        tail = current["text"].lstrip(_SPACE_CHARS)
+        if not tail or tail[0] not in _DIGITS:
+            continue
+        before = previous["text"].rstrip(_SPACE_CHARS)
+        if not before:
+            continue
+        decimals = before[-1] in _NUMBER_CHARACTERS + _SIGNS
+        kopecks = _possible_kopecks(tail, 0)[0] and _rub_tokens(before)
+        if not (kopecks or (decimals and _rub_tokens(tail))):
+            continue
+        if decimals and not kopecks:
+            # Numeric suffixes of identifiers (e.g. 31-001) are not amounts.
+            end = len(before)
+            start = end
+            while start and _numeric_run_character(before[start - 1]):
+                start -= 1
+            start = _preceding_symbol(before, min(start, end - 1))
+            if start and (before[start - 1].isalnum() or before[start - 1] in "_./," + _SIGNS):
+                continue
+            if not any(char in _DIGITS + _SIGNS for char in before[start:]):
+                continue
+        px0, py0, px1, py1 = previous["reading_box"]
+        cx0, cy0, cx1, cy1 = current["reading_box"]
+        height = max(py1 - py0, cy1 - cy0)
+        overlap = min(px1, cx1) - max(px0, cx0)
+        if not (
+            0 < cy0 - py0 <= 1.8 * height
+            and overlap >= 0.5 * min(px1 - px0, cx1 - cx0)
+            and abs(cx0 - px0) <= 1.5 * height
+        ):
+            continue
+        interrupted.add(index + (0 if kopecks else 1))
+    return interrupted
+
+
 def _read_pdf(path: Path, collected: _Collected) -> None:
     with pdfplumber.open(path) as document:
         for page in document.pages:
@@ -306,6 +353,7 @@ def _read_pdf(path: Path, collected: _Collected) -> None:
                 continue
             x0, top, x1, bottom = visible_box
             width, height = x1 - x0, bottom - top
+            interrupted = _wrapped_pdf_lines(lines)
             for number, line in enumerate(lines, 1):
                 box = (
                     max(0.0, (line["x0"] - x0) / width),
@@ -323,7 +371,9 @@ def _read_pdf(path: Path, collected: _Collected) -> None:
                     collected.issues.append(NativeIssue("clipped_pdf_text", locator=locator))
                     collected.observations.append(Observation(line["text"], locator))
                 else:
-                    _observe(collected, line["text"], locator)
+                    _observe(
+                        collected, line["text"], locator, interrupted=number - 1 in interrupted
+                    )
             page.close()
 
 

@@ -217,6 +217,37 @@ def test_pdf_without_text_is_not_an_empty_success(tmp_path):
     assert [(issue.code, issue.page) for issue in result.issues] == [("no_native_text", 1)]
 
 
+def test_pdf_wrapped_amounts_are_unknown_without_joining_other_lines():
+    path = Path(__file__).parent / "fixtures" / "native-money-wrap.pdf"
+    result = read_native_document(path, "pdf")
+
+    assert [(issue.code, issue.locator.page, issue.locator.line) for issue in result.issues] == [
+        ("ambiguous_rub_amount", 1, 2),
+        ("ambiguous_rub_amount", 2, 2),
+        ("ambiguous_rub_amount", 3, 1),
+    ]
+    first_pages = [item.raw_text for item in result.observations if item.locator.page <= 3]
+    assert first_pages == [
+        "Paid: 1,",
+        "25 RUB",
+        "Paid: -1",
+        "234,56 RUB",
+        "Paid: 1 RUB",
+        "25 коп.",
+    ]
+    assert [
+        (item.locator.page, item.amount) for item in result.observations if item.amount is not None
+    ] == [
+        (4, Decimal(25)),
+        (5, Decimal(25)),
+        (6, Decimal(25)),
+        (7, Decimal(25)),
+        (8, Decimal(25)),
+        (9, Decimal(75)),
+        (9, Decimal(25)),
+    ]
+
+
 @pytest.mark.parametrize(
     ("rotation", "expected_box"),
     [
