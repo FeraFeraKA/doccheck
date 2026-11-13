@@ -2,6 +2,7 @@ import json
 from collections.abc import Callable
 from pathlib import Path
 
+import jsonschema
 import pytest
 from pydantic import ValidationError
 
@@ -21,7 +22,6 @@ def payload() -> dict:
 
 @pytest.fixture
 def accepts_draft() -> Callable[[dict], bool]:
-    jsonschema = pytest.importorskip("jsonschema")
     schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
     validator = jsonschema.Draft202012Validator(schema)
     validator.check_schema(schema)
@@ -104,7 +104,6 @@ def test_draft_requires_a_byte_copy_to_be_excluded(
 
 @pytest.mark.parametrize("file_id", ["unreadable", "ledger"])
 def test_draft_unknown_format_requires_unsupported_format(payload: dict, file_id: str) -> None:
-    jsonschema = pytest.importorskip("jsonschema")
     definitions = json.loads(SCHEMA.read_text(encoding="utf-8"))["$defs"]
     validator = jsonschema.Draft202012Validator(
         {"$defs": definitions, "$ref": "#/$defs/SourceDocument"}

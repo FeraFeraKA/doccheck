@@ -17,12 +17,8 @@ uv run --frozen python ../contracts/generate.py
 uv run --frozen pytest tests/test_result_contract.py
 ```
 
-Регрессии схемы Draft 2020-12 запускаются отдельно с валидатором в
-окружении тестов. Из `backend/`:
-
-```sh
-uv run --frozen --with jsonschema==4.25.1 pytest tests/test_result_contract.py -k draft
-```
+Штатный прогон включает регрессии Draft 2020-12 с версией `jsonschema`
+из `backend/uv.lock`.
 
 Схема Draft 2020-12 описывает поля, значения статусов, денежные строки и
 структуру адресов. Она требует слагаемые для наблюдаемой суммы, ссылки
@@ -107,3 +103,9 @@ uv run --frozen --with jsonschema==4.25.1 pytest tests/test_result_contract.py -
 Тело примера целиком соответствует `CheckJob`, его поле `result` соответствует
 ответу `GET /api/v0/runs/{run_id}/findings`. В рабочем API фикстура недоступна.
 Маршруты из OpenAPI описывают будущую реализацию NRT-96, NRT-97 и NRT-36.
+
+Команда из CI для проверки OpenAPI и ссылок на схемы запускается из `backend/`.
+
+```sh
+uv run --frozen openapi-spec-validator ../contracts/doccheck-api.v0.openapi.yaml
+```

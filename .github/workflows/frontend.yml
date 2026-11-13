@@ -25,6 +25,8 @@ jobs:
           package_json_file: frontend/package.json
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+      - name: Lint TypeScript and React
+        run: pnpm lint
       - name: Typecheck
         run: pnpm typecheck
       - name: Unit and component tests
