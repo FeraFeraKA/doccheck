@@ -12,6 +12,20 @@ interface OverviewProps {
 const dateFormat = new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short', timeStyle: 'short' });
 
 export function ChecksOverview({ loadHistory = loadRunHistory }: OverviewProps = {}) {
+  if (import.meta.env.VITE_DOCCHECK_PUBLIC_DEMO === '1') {
+    return <>
+      <h1>Проверки</h1>
+      <section className="checks-card">
+        <h2>Готовый пример</h2>
+        <p>История рабочих проверок доступна в локальной установке.</p>
+        <Link to={demoRunPath}>{demoTitle}</Link>
+      </section>
+    </>;
+  }
+  return <RunHistory loadHistory={loadHistory} />;
+}
+
+function RunHistory({ loadHistory }: Required<OverviewProps>) {
   const [query, setQuery] = useState('');
   const [params] = useSearchParams();
   const cursor = params.get('cursor') ?? '';

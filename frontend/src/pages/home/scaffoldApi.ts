@@ -69,14 +69,51 @@ function parseJob(value: unknown): SyntheticJob {
   };
 }
 
-function boundedSignal(signal: AbortSignal): AbortSignal {
-  return AbortSignal.any([signal, AbortSignal.timeout(5_000)]);
+function boundedSignal(signal: AbortSignal, timeout = 5_000): AbortSignal {
+  return AbortSignal.any([signal, AbortSignal.timeout(timeout)]);
+}
+
+async function readHealth(signal: AbortSignal): Promise<void> {
+  const value = await requestJson<unknown>('/health', { signal });
+  if (!isRecord(value) || value.status !== 'ok' || value.database !== 'ok') {
+    throw new InvalidResponseError();
+  }
+}
+
+function waitForHealthRetry(signal: AbortSignal): Promise<void> {
+  signal.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    function abort() {
+      clearTimeout(timer);
+      reject(signal.reason);
+    }
+
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', abort);
+      resolve();
+    }, 10_000);
+    signal.addEventListener('abort', abort, { once: true });
+  });
 }
 
 export async function checkHealth(signal: AbortSignal): Promise<void> {
-  const value = await requestJson<unknown>('/health', { signal: boundedSignal(signal) });
-  if (!isRecord(value) || value.status !== 'ok' || value.database !== 'ok') {
-    throw new InvalidResponseError();
+  if (import.meta.env.VITE_DOCCHECK_PUBLIC_DEMO !== '1') {
+    return readHealth(boundedSignal(signal));
+  }
+
+  // Render can serve a startup page until the instance is accepting requests.
+  const deadline = boundedSignal(signal, 75_000);
+  for (let attempt = 1; ; attempt += 1) {
+    deadline.throwIfAborted();
+    try {
+      await readHealth(boundedSignal(deadline, 8_000));
+      deadline.throwIfAborted();
+      return;
+    } catch (error) {
+      deadline.throwIfAborted();
+      if (attempt === 8 || !(isApiUnavailable(error) || error instanceof SyntaxError)) throw error;
+    }
+    await waitForHealthRetry(deadline);
   }
 }
 
