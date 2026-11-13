@@ -242,7 +242,13 @@ def _visible_pdf_box(page: Page) -> tuple[float, float, float, float]:
     return max(left, x0), max(top, y0), min(right, x1), min(bottom, y1)
 
 
-def _pdf_line_fragments(chars: list[dict]) -> Iterator[tuple[int, str, list[dict]]]:
+def _pdf_line_fragments(
+    chars: list[dict], column_rules: list[tuple[float, float, float]]
+) -> Iterator[tuple[int, str, list[dict]]]:
+    written_spaces = set()
+    for left, space, right in zip(chars, chars[1:], chars[2:]):
+        if space["text"] in _GROUP_SPACES and left["text"].isdigit() and right["text"].isdigit():
+            written_spaces.add((id(left), id(right)))
     text_map = chars_to_textmap(chars)
     for number, match in enumerate(re.finditer(r"[^\n]+", text_map.as_string), 1):
         start = match.start()
@@ -254,8 +260,17 @@ def _pdf_line_fragments(chars: list[dict]) -> Iterator[tuple[int, str, list[dict
                 continue
             if previous is not None and char["upright"] and previous["upright"]:
                 size = max(char["size"], previous["size"])
+                gap = char["x0"] - previous["x1"]
+                midpoint = (
+                    max(char["top"], previous["top"]) + min(char["bottom"], previous["bottom"])
+                ) / 2
+                ruled = gap >= 0 and any(
+                    previous["x1"] <= x <= char["x0"] and top <= midpoint <= bottom
+                    for top, bottom, x in column_rules
+                )
+                grouped = gap <= 3 * size and (id(previous), id(char)) in written_spaces
                 # A column gutter is much wider than an intra-field word or digit separator.
-                if char["x0"] - previous["x1"] > 1.5 * size:
+                if ruled or (gap > 1.5 * size and not grouped):
                     yield number, text_map.as_string[start:index].strip(), glyphs
                     start = index
                     glyphs = []
@@ -305,7 +320,7 @@ def _pdf_text_lines(page: Page, visible_box: tuple[float, float, float, float]) 
         return []
     visible_lines = []
     visible_number = previous_number = 0
-    for number, text, fragment in _pdf_line_fragments(chars):
+    for number, text, fragment in _pdf_line_fragments(chars, _pdf_column_rules(page)):
         glyphs = [positions[id(char)] for char in fragment]
         visible_glyphs = [box for box in glyphs if box is not None]
         if not visible_glyphs:
@@ -360,6 +375,20 @@ def _pdf_dividers(page: Page) -> list[tuple[float, float, float]]:
     return dividers
 
 
+def _pdf_column_rules(page: Page) -> list[tuple[float, float, float]]:
+    rules = []
+    for edge in page.edges:
+        if page.rotation in (90, 270):
+            if edge["orientation"] != "h":
+                continue
+            left, right, y = edge["x0"], edge["x1"], edge["top"]
+            rules.append((-right, -left, y) if page.rotation == 90 else (left, right, -y))
+        elif edge["orientation"] == "v":
+            top, bottom, x = edge["top"], edge["bottom"], edge["x0"]
+            rules.append((-bottom, -top, -x) if page.rotation == 180 else (top, bottom, x))
+    return rules
+
+
 def _split_by_divider(previous: dict, current: dict, dividers: list) -> bool:
     px0, _, px1, py1 = previous["reading_box"]
     cx0, cy0, cx1, _ = current["reading_box"]
@@ -370,29 +399,42 @@ def _split_by_divider(previous: dict, current: dict, dividers: list) -> bool:
 def _pdf_column_sequences(lines: list[dict]) -> list[list[int]]:
     sequences: list[list[int]] = []
     active: dict[int, list[int]] = {}
+    largest_height = max(box[3] - box[1] for box in (line["reading_box"] for line in lines))
     for _, row in groupby(enumerate(lines), key=lambda item: item[1]["number"]):
         indexes = [index for index, _ in row]
+        row_top = min(lines[index]["reading_box"][1] for index in indexes)
+        active = {
+            index: sequence
+            for index, sequence in active.items()
+            if row_top - lines[index]["reading_box"][1] <= 1.8 * largest_height
+        }
         earlier = sorted(active, key=lambda index: lines[index]["reading_box"][0])
         later = sorted(indexes, key=lambda index: lines[index]["reading_box"][0])
         matches: dict[int, list[int]] = {}
         used: set[int] = set()
         ambiguous: set[int] = set()
+        overlapped: set[int] = set()
         i = j = 0
         # Fragments on each row are ordered by their horizontal spans. Compare
         # overlapping spans and require a unique link in both directions.
         while i < len(earlier) and j < len(later):
             before, after = earlier[i], later[j]
+            previous_left, _, previous_right, _ = lines[before]["reading_box"]
+            current_left, _, current_right, _ = lines[after]["reading_box"]
+            if min(previous_right, current_right) > max(previous_left, current_left):
+                overlapped.add(before)
             if _adjacent_pdf_lines(lines[before], lines[after], alignment="either"):
                 if before in used:
                     ambiguous.add(before)
                 used.add(before)
                 matches.setdefault(after, []).append(before)
-            previous_right = lines[before]["reading_box"][2]
-            current_right = lines[after]["reading_box"][2]
             i += previous_right <= current_right
             j += current_right <= previous_right
 
-        following = {}
+        # A row in a disjoint column leaves the earlier column active.
+        following = {
+            index: sequence for index, sequence in active.items() if index not in overlapped
+        }
         for index in indexes:
             candidates = matches.get(index, [])
             if len(candidates) == 1 and candidates[0] not in ambiguous:

@@ -267,6 +267,57 @@ def test_pdf_wrapped_values_stay_with_their_column(tmp_path):
     ]
 
 
+@pytest.mark.parametrize("rotation", [0, 90, 180, 270])
+@pytest.mark.parametrize(
+    ("left", "right", "expected"),
+    [
+        ("123", "456 RUB", [None, Decimal(456)]),
+        ("12 RUB", "56 RUB", [Decimal(12), Decimal(56)]),
+    ],
+)
+def test_pdf_vertical_rule_splits_neighboring_cells(tmp_path, left, right, expected, rotation):
+    divider = 20 + len(left) * 7.2 + 5.4
+    stream = (
+        f"BT /F1 12 Tf 20 140 Td ({left}) Tj ET\n"
+        f"BT /F1 12 Tf {divider + 8:.2f} 140 Td ({right}) Tj ET\n"
+        f"{divider:.2f} 126 m {divider:.2f} 154 l S"
+    )
+    path = _single_page_pdf(
+        tmp_path / "upload",
+        stream.encode("ascii"),
+        font=b"Courier",
+        page_attrs=f"/Rotate {rotation}".encode(),
+    )
+    result = read_native_document(path, "pdf")
+    assert [item.raw_text for item in result.observations] == [left, right]
+    assert [item.amount for item in result.observations] == expected
+    assert result.issues == ()
+
+
+def test_pdf_other_column_does_not_interrupt_wrapped_value(tmp_path):
+    stream = b"\n".join(
+        (
+            b"BT /F1 12 Tf 20 150 Td (Paid: 1,) Tj ET",
+            b"BT /F1 12 Tf 185 142 Td (Cost: 8,10 RUB) Tj ET",
+            b"BT /F1 12 Tf 20 134 Td (25 RUB) Tj ET",
+        )
+    )
+    path = _single_page_pdf(tmp_path / "upload", stream, font=b"Courier")
+    result = read_native_document(path, "pdf")
+    assert [item.amount for item in result.observations] == [None, Decimal("8.10"), None]
+    assert [(issue.code, issue.locator.line) for issue in result.issues] == [
+        ("ambiguous_rub_amount", 3),
+    ]
+
+
+def test_pdf_explicit_grouping_space_survives_wide_kerning(tmp_path):
+    stream = b"BT /F1 12 Tf 20 140 Td [(Paid: 1 ) -1500 (234,56 RUB)] TJ ET"
+    path = _single_page_pdf(tmp_path / "upload", stream, font=b"Courier")
+    result = read_native_document(path, "pdf")
+    assert [item.amount for item in result.observations] == [Decimal("1234.56")]
+    assert result.issues == ()
+
+
 @pytest.mark.parametrize(
     ("first", "second", "right", "divider", "expected"),
     [
