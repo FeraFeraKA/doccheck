@@ -118,8 +118,8 @@ function SelectedDocumentSource({ runId, document, evidenceId, onRetry }: {
   const page = address?.kind === 'page' ? address : null;
   const canRetry = original.status === 'error' || evidence.status === 'error';
 
-  return <section aria-label="Просмотр источника" className="mt-3 space-y-2">
-    <p><strong>{document.name}</strong></p>
+  return <section aria-label="Просмотр источника" className="document-viewer mt-3 space-y-2">
+    <p className="document-toolbar"><strong>{document.name}</strong></p>
     {evidenceId === null && <p>Адрес фрагмента отсутствует.</p>}
     {evidenceId !== null && evidence.status === 'loading' && <p role="status">Загрузка адреса…</p>}
     {evidence.status === 'error' && <p role="alert">{evidence.message}</p>}
@@ -140,7 +140,9 @@ function SelectedDocumentSource({ runId, document, evidenceId, onRetry }: {
         </a>
       )}
       {format === 'png' && (
-        <SourceImage key={original.value} url={original.value} name={document.name} box={page?.bbox} />
+        <div className="document-viewport">
+          <SourceImage key={original.value} url={original.value} name={document.name} box={page?.bbox} />
+        </div>
       )}
       {(format === 'xlsx' || format === 'docx') && (
         <p>Для просмотра по адресу откройте скачанный файл в офисном приложении.</p>
