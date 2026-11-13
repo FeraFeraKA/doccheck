@@ -113,7 +113,9 @@ async function getRunJson(path: string, signal: AbortSignal): Promise<unknown> {
 
 export async function getRun(runId: string, signal: AbortSignal): Promise<RunState> {
   if (!isRunId(runId)) throw new TypeError('Invalid run ID');
-  return parseRunState(await getRunJson(`${runsPath}/${runId}`, signal), runId);
+  const value = await getRunJson(`${runsPath}/${runId}`, signal);
+  signal.throwIfAborted();
+  return parseRunState(value, runId);
 }
 
 export async function listRuns(
@@ -125,6 +127,7 @@ export async function listRuns(
   if (cursor !== undefined) params.set('cursor', cursor);
   const query = params.toString();
   const value = await getRunJson(query ? `${runsPath}?${query}` : runsPath, signal);
+  signal.throwIfAborted();
   if (!isRecord(value) || !Array.isArray(value.items)
     || !(value.next_cursor === null || typeof value.next_cursor === 'string')) {
     throw new InvalidRunResponseError();

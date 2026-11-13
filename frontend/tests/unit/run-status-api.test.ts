@@ -86,6 +86,24 @@ describe('API истории и состояния запусков', () => {
     mockFetch().mockResolvedValue(new Response('invalid JSON'));
     await expect(listRuns(new AbortController().signal)).rejects.toBeInstanceOf(SyntaxError);
   });
+
+  it.each([
+    { name: 'состояние', load: (signal: AbortSignal) => getRun(runId, signal), body: queued },
+    { name: 'история', load: listRuns, body: { items: [summary], next_cursor: null } },
+  ])('$name отклоняет ответ при отмене между чтением JSON и возвратом результата', async ({ load, body }) => {
+    const controller = new AbortController();
+    const reason = new DOMException('Тестовая отмена', 'AbortError');
+    const response = new Response();
+    vi.spyOn(response, 'json').mockImplementation(() => {
+      // Два await передают JSON через requestJson и getRunJson, затем продолжает load.
+      const parsed = Promise.resolve(body);
+      void parsed.then(() => {}).then(() => {}).then(() => controller.abort(reason));
+      return parsed;
+    });
+    mockFetch().mockResolvedValue(response);
+
+    await expect(load(controller.signal)).rejects.toBe(reason);
+  });
 });
 
 describe('опрос состояния задания', () => {
