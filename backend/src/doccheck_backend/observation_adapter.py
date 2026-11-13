@@ -39,6 +39,12 @@ _DOCUMENT_HEADER = re.compile(
     r"номер\s+(?:документа|акта)\b|(?:№\s*)?документ(?:а)?\b)",
     re.IGNORECASE,
 )
+_AMOUNT_ROLE = re.compile(
+    r"^\s*(?:итого\b[^:：]*|итоговая\s+сумма|к\s+оплате(?:\s+по\s+документу)?|"
+    r"сумма(?:\s+по\s+акту)?|стоимость)"
+    r"(?:\s*,?\s*руб\.?)?\s*[:：]\s*",
+    re.IGNORECASE,
+)
 
 
 class ObservationInputError(ValueError):
@@ -272,7 +278,8 @@ def _contains_complete_reading(field: str, value: str | None, text: str) -> bool
         return (
             re.search(
                 rf"(?<!\w)(?:№|N(?:[oоº°])?\.?)\s*{re.escape(value)}"
-                r"(?=\s*(?:$|[,;:]|\bот\b|\||[»\"]))",
+                r"(?=\s*(?:$|[,;:]|\bот\b|\||[»\"]|"
+                r"(?:по\s+|к\s+|для\s+)?(?:договор\w*|контракт\w*)\b))",
                 text.strip(),
                 re.IGNORECASE,
             )
@@ -280,13 +287,16 @@ def _contains_complete_reading(field: str, value: str | None, text: str) -> bool
         )
     if field != "amount":
         return False
-    amount = re.search(
+    marker = _AMOUNT_ROLE.match(text)
+    if marker is None:
+        return False
+    amount = re.fullmatch(
         r"(?<![\w.,+−-])([+-]?(?:[0-9]{1,3}(?:[ \u00a0\u2009\u202f][0-9]{3})+|[0-9]+)"
-        r"(?:[.,][0-9]+)?)\s*(?:₽|руб(?:\.|лей|ля|ль)?|RUB)\s*\.?\s*$",
-        text,
+        r"(?:[.,][0-9]+)?)(?:\s*(?:₽|руб(?:\.|лей|ля|ль)?|RUB))?\s*\.?\s*",
+        text[marker.end() :],
         re.IGNORECASE,
     )
-    if amount is None or re.search(r"[0-9+−-]\s+$", text[: amount.start()]):
+    if amount is None:
         return False
     try:
         compact = re.sub(r"\s+", "", amount[1]).replace(",", ".")

@@ -99,6 +99,8 @@ def test_model_number_conflict_keeps_address_only_on_the_source_number(module_pa
     [
         ("doc_number", "Акт № 321", "Акт № 321", "321"),
         ("amount", "Итого: 75,00 руб.", "Итого: 75.0 RUB", "75.00"),
+        ("doc_number", "Акт № 412 по договору № 640", "Акт № 412 по договору № 640", "412"),
+        ("amount", "Итого, руб.: 75,00", "Итого, руб.: 75,00", "75.00"),
     ],
 )
 def test_independent_complete_readings_keep_both_page_addresses(
@@ -115,6 +117,21 @@ def test_independent_complete_readings_keep_both_page_addresses(
     (candidate,) = tuple(
         item for item in record.candidates if item.field == field and item.value == value
     )
+    assert candidate.sources == sources
+    assert not candidate.source_ambiguous
+
+
+def test_split_amount_keeps_the_role_marker_with_its_value(module_path, tmp_path):
+    document = _document(tmp_path)
+    sources = (
+        SourceObservation("Итого:", PageLocator(kind="page", page=1, line=1), "native"),
+        SourceObservation("75,00 руб.", PageLocator(kind="page", page=1, line=2), "native"),
+    )
+    (record,) = identify_documents(
+        [replace(document, observations=sources)], synthetic=True
+    ).documents
+    (candidate,) = tuple(item for item in record.candidates if item.field == "amount")
+    assert candidate.value == "75.00"
     assert candidate.sources == sources
     assert not candidate.source_ambiguous
 
