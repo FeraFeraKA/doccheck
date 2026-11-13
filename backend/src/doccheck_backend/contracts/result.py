@@ -97,6 +97,15 @@ class SourceDocument(ContractModel):
                     },
                     "then": {"properties": {"parse_status": {"enum": ["parsed", "partial"]}}},
                 },
+                {
+                    "if": {
+                        "required": ["duplicate_of"],
+                        "properties": {"duplicate_of": {"type": "string"}},
+                    },
+                    "then": {
+                        "properties": {"decision": {"properties": {"state": {"const": "exclude"}}}}
+                    },
+                },
             ]
         }
     )
@@ -129,6 +138,15 @@ class SourceDocument(ContractModel):
 
 
 class Period(ContractModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "anyOf": [
+                {"properties": {"start": {"type": "string"}}},
+                {"properties": {"end": {"type": "string"}}},
+            ]
+        }
+    )
+
     start: IsoDate | None
     end: IsoDate | None
 
@@ -475,6 +493,25 @@ class Summary(ContractModel):
 
 
 class CheckResult(ContractModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "if": {"properties": {"synthetic": {"const": False}}},
+            "then": {
+                "properties": {
+                    "rows": {
+                        "items": {
+                            "properties": {
+                                "completeness": {
+                                    "properties": {"basis": {"not": {"const": "dataset_fixture"}}}
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+        }
+    )
+
     schema_version: Literal[RESULT_SCHEMA_VERSION]
     run_id: Text
     synthetic: StrictBool

@@ -44,6 +44,13 @@
     },
     "CheckResult": {
       "additionalProperties": false,
+      "if": {
+        "properties": {
+          "synthetic": {
+            "const": false
+          }
+        }
+      },
       "properties": {
         "schema_version": {
           "const": "doccheck-check-result/1",
@@ -101,6 +108,25 @@
         "rows",
         "summary"
       ],
+      "then": {
+        "properties": {
+          "rows": {
+            "items": {
+              "properties": {
+                "completeness": {
+                  "properties": {
+                    "basis": {
+                      "not": {
+                        "const": "dataset_fixture"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
       "title": "CheckResult",
       "type": "object"
     },
@@ -711,6 +737,22 @@
     },
     "Period": {
       "additionalProperties": false,
+      "anyOf": [
+        {
+          "properties": {
+            "start": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "properties": {
+            "end": {
+              "type": "string"
+            }
+          }
+        }
+      ],
       "properties": {
         "start": {
           "anyOf": [
@@ -1354,6 +1396,29 @@
                   "parsed",
                   "partial"
                 ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "duplicate_of": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "duplicate_of"
+            ]
+          },
+          "then": {
+            "properties": {
+              "decision": {
+                "properties": {
+                  "state": {
+                    "const": "exclude"
+                  }
+                }
               }
             }
           }

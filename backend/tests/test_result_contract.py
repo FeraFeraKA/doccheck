@@ -1,4 +1,5 @@
 import json
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,15 @@ SCHEMA = CONTRACTS / "check-result.v1.schema.json"
 @pytest.fixture
 def payload() -> dict:
     return json.loads(EXAMPLE.read_text(encoding="utf-8"))
+
+
+@pytest.fixture
+def accepts_draft() -> Callable[[dict], bool]:
+    jsonschema = pytest.importorskip("jsonschema")
+    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
+    validator = jsonschema.Draft202012Validator(schema)
+    validator.check_schema(schema)
+    return validator.is_valid
 
 
 def test_checked_in_schema_matches_models_and_example_round_trips(payload: dict) -> None:
@@ -51,18 +61,64 @@ def test_checked_in_schema_matches_models_and_example_round_trips(payload: dict)
     ],
 )
 def test_draft_2020_12_rejects_inconsistent_row_fields(
-    payload: dict, row: int, field: str, value: object
+    payload: dict, accepts_draft: Callable[[dict], bool], row: int, field: str, value: object
 ) -> None:
-    jsonschema = pytest.importorskip("jsonschema")
-    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
-    validator = jsonschema.Draft202012Validator(schema)
-    validator.check_schema(schema)
-    validator.validate(payload)
+    assert accepts_draft(payload)
     payload["result"]["rows"][row][field] = value
-    with pytest.raises(jsonschema.ValidationError):
-        validator.validate(payload)
+    assert not accepts_draft(payload)
     with pytest.raises(ValidationError):
         CheckJob.model_validate(payload)
+
+
+@pytest.mark.parametrize("known_bound", ["start", "end"])
+def test_draft_period_requires_an_observed_bound(
+    payload: dict, accepts_draft: Callable[[dict], bool], known_bound: str
+) -> None:
+    period = next(item for item in payload["result"]["evidence"] if item["kind"] == "period")
+    dates = period["normalized_value"]
+    period["normalized_value"] = {
+        bound: dates[bound] if bound == known_bound else None for bound in dates
+    }
+    assert accepts_draft(payload)
+    CheckJob.model_validate(payload)
+
+    period["normalized_value"][known_bound] = None
+    assert not accepts_draft(payload)
+    with pytest.raises(ValidationError, match="at least one observed date"):
+        CheckJob.model_validate(payload)
+
+
+def test_draft_requires_a_byte_copy_to_be_excluded(
+    payload: dict, accepts_draft: Callable[[dict], bool]
+) -> None:
+    duplicate = next(item for item in payload["result"]["documents"] if item.get("duplicate_of"))
+    assert accepts_draft(payload)
+    CheckJob.model_validate(payload)
+
+    duplicate["decision"]["state"] = "include"
+    assert not accepts_draft(payload)
+    with pytest.raises(ValidationError, match="a byte copy must be excluded"):
+        CheckJob.model_validate(payload)
+
+
+def test_draft_restricts_dataset_fixture_coverage_to_synthetic_results(
+    payload: dict, accepts_draft: Callable[[dict], bool]
+) -> None:
+    result = payload["result"]
+    assert accepts_draft(payload)
+    CheckJob.model_validate(payload)
+
+    result["synthetic"] = False
+    assert not accepts_draft(payload)
+    with pytest.raises(
+        ValidationError, match="dataset fixture coverage requires a synthetic result"
+    ):
+        CheckJob.model_validate(payload)
+
+    for row in result["rows"]:
+        row["completeness"]["basis"] = "manifest"
+    assert accepts_draft(payload)
+    CheckJob.model_validate(payload)
 
 
 @pytest.mark.parametrize(
