@@ -8,6 +8,19 @@
           "title": "Policy Id",
           "type": "string"
         },
+        "operation": {
+          "anyOf": [
+            {
+              "const": "sum",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Operation"
+        },
         "formula": {
           "minLength": 1,
           "title": "Formula",
@@ -889,6 +902,35 @@
             "properties": {
               "expected_value": {
                 "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "expected_value": {
+                "type": "string"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "observed_evidence_sum": {
+                "type": "string"
+              },
+              "calculation": {
+                "properties": {
+                  "operation": {
+                    "const": "sum"
+                  },
+                  "components": {
+                    "minItems": 1
+                  }
+                },
+                "required": [
+                  "operation"
+                ]
               }
             }
           }

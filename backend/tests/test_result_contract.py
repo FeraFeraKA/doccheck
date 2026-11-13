@@ -73,6 +73,13 @@ def test_xlsx_range_requires_ordered_cells_inside_a_worksheet(cell: str) -> None
         SheetLocator.model_validate({"kind": "sheet", "sheet": "Demo", "range": cell})
 
 
+def test_xlsx_range_of_one_cell_has_the_same_address_as_the_cell() -> None:
+    cell = SheetLocator(kind="sheet", sheet="Demo", range="C6")
+    same_cell = SheetLocator(kind="sheet", sheet="Demo", range="C6:C6")
+    assert same_cell.model_dump_json() == cell.model_dump_json()
+    assert SheetLocator(kind="sheet", sheet="Demo", range="C6:C7").range == "C6:C7"
+
+
 @pytest.mark.parametrize(
     ("file_format", "locator"),
     [
@@ -107,9 +114,10 @@ def test_copy_cannot_supply_a_second_amount(payload: dict) -> None:
         CheckJob.model_validate(payload)
 
 
-def test_amount_cannot_be_counted_twice_under_different_ids(payload: dict) -> None:
+@pytest.mark.parametrize("address", ["C6", "C6:C6"])
+def test_amount_cannot_be_counted_twice_under_different_ids(payload: dict, address: str) -> None:
     evidence = payload["result"]["evidence"]
-    evidence[3]["locator"] = evidence[2]["locator"]
+    evidence[3]["locator"]["range"] = address
     with pytest.raises(ValidationError, match="must not be counted twice"):
         CheckJob.model_validate(payload)
 
@@ -160,6 +168,36 @@ def test_exact_negative_decimal_and_proven_zero_are_valid(payload: dict) -> None
     row["delta"] = "150.50"
     job = CheckJob.model_validate(payload)
     assert job.result is not None and job.result.rows[0].observed_evidence_sum == "0.00"
+
+
+def test_expected_value_must_match_the_supported_sum(payload: dict) -> None:
+    result = payload["result"]
+    result["rows"][0].update(expected_value="150.50", delta="0.00", status="verified", reasons=[])
+    result["summary"]["counts"].update(verified=1, discrepancy=0)
+    with pytest.raises(ValidationError, match="expected sum must equal"):
+        CheckJob.model_validate(payload)
+
+
+def test_complete_declaration_does_not_prove_zero(payload: dict) -> None:
+    result = payload["result"]
+    row = result["rows"][1]
+    row.update(expected_value="0.00", delta="0.00", status="verified", reasons=[])
+    row["completeness"].update(state="complete", basis="user_declaration")
+    result["summary"]["counts"].update(verified=1, unverified=0)
+    with pytest.raises(ValidationError, match="supported calculation with evidence"):
+        CheckJob.model_validate(payload)
+
+
+def test_unknown_operation_only_preserves_observed_sum(payload: dict) -> None:
+    result = payload["result"]
+    row = result["rows"][0]
+    del row["calculation"]["operation"]
+    with pytest.raises(ValidationError, match="supported calculation with evidence"):
+        CheckJob.model_validate(payload)
+    row.update(expected_value=None, delta=None, status="unverified")
+    result["summary"]["counts"].update(discrepancy=0, unverified=2)
+    job = CheckJob.model_validate(payload)
+    assert job.result is not None and job.result.rows[0].observed_evidence_sum == "120.50"
 
 
 def test_job_failure_is_distinct_from_a_discrepancy(payload: dict) -> None:

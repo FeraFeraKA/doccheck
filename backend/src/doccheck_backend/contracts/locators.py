@@ -4,7 +4,14 @@ import re
 from datetime import date
 from typing import Annotated, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 Text = Annotated[str, StringConstraints(strict=True, min_length=1)]
 Index = Annotated[int, Field(strict=True, ge=1)]
@@ -107,14 +114,15 @@ class SheetLocator(ContractModel):
     sheet: Text
     range: Annotated[str, StringConstraints(strict=True, pattern=_RANGE)]
 
-    @model_validator(mode="after")
-    def check_range(self) -> Self:
-        first, _, last = self.range.partition(":")
+    @field_validator("range")
+    @classmethod
+    def canonical_range(cls, value: str) -> str:
+        first, _, last = value.partition(":")
         left, top = _cell_position(first)
         right, bottom = _cell_position(last or first)
         if not (left <= right <= 16_384 and top <= bottom <= 1_048_576):
             raise ValueError("range must be ordered and within XLSX bounds")
-        return self
+        return first if first == last else value
 
 
 class ParagraphLocator(ContractModel):

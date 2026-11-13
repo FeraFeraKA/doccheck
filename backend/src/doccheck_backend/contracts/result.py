@@ -185,6 +185,7 @@ class Component(ContractModel):
 
 class Calculation(ContractModel):
     policy_id: Text
+    operation: Literal["sum"] | None = None
     formula: Text
     components: list[Component]
 
@@ -235,6 +236,21 @@ class ResultRow(ContractModel):
                     },
                     "then": {"properties": {"expected_value": {"type": "null"}}},
                 },
+                {
+                    "if": {"properties": {"expected_value": {"type": "string"}}},
+                    "then": {
+                        "properties": {
+                            "observed_evidence_sum": {"type": "string"},
+                            "calculation": {
+                                "required": ["operation"],
+                                "properties": {
+                                    "operation": {"const": "sum"},
+                                    "components": {"minItems": 1},
+                                },
+                            },
+                        }
+                    },
+                },
             ]
         }
     )
@@ -273,8 +289,13 @@ class ResultRow(ContractModel):
             raise ValueError("observed sum must be null without admitted components")
         if self.reported_value is not None and not self.reported_evidence_refs:
             raise ValueError("a reported value requires evidence")
-        if self.completeness.state != "complete" and self.expected_value is not None:
-            raise ValueError("an expected value requires complete coverage")
+        if self.expected_value is not None:
+            if self.completeness.state != "complete":
+                raise ValueError("an expected value requires complete coverage")
+            if self.calculation.operation != "sum" or self.observed_evidence_sum is None:
+                raise ValueError("an expected value requires a supported calculation with evidence")
+            if Decimal(self.expected_value) != Decimal(self.observed_evidence_sum):
+                raise ValueError("an expected sum must equal the sum of admitted components")
         if self.derived_mismatch and self.root_issue_id is None:
             raise ValueError("a derived mismatch requires a root issue")
         if self.status == "unverified":
