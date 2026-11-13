@@ -1,0 +1,36 @@
+[build-system]
+requires = ["hatchling==1.33.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "doccheck-backend"
+version = "0.1.0"
+description = "Synthetic API, PostgreSQL and worker scaffold; no document processing"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "alembic==1.20.1",
+  "fastapi==0.162.5",
+  "psycopg[binary]==3.3.9",
+  "pydantic==2.14.3",
+  "python-dotenv==1.2.4",
+  "sqlalchemy==2.0.57",
+  "uvicorn==0.54.0",
+]
+
+[dependency-groups]
+dev = ["httpx==0.28.1", "pytest==9.2.0", "ruff==0.17.5"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/doccheck_backend"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --ignore=tests/ml_module"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = ["ml_module", "tests/ml_module"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
