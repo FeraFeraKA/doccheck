@@ -23,6 +23,7 @@ DecimalText = Annotated[str, StringConstraints(strict=True, pattern=_DECIMAL_PAT
 _RUB_SCHEMA = {"type": "string", "pattern": _RUB_PATTERN.pattern}
 _DECIMAL_FIELDS = ("reported_value", "expected_value", "observed_evidence_sum", "delta")
 _COMPLETED_JOB_STATES = ("completed", "completed_with_issues")
+_UNSUPPORTED_FORMAT = "unsupported_format"
 PageLine = tuple[str, int, int]
 ReadingKind = Literal["numeric", "contract", "period", "article", "document_identity"]
 DateBounds = tuple[str | None, str | None]
@@ -106,6 +107,19 @@ class SourceDocument(ContractModel):
                         "properties": {"decision": {"properties": {"state": {"const": "exclude"}}}}
                     },
                 },
+                {
+                    "if": {"properties": {"format": {"type": "null"}}},
+                    "then": {
+                        "properties": {
+                            "errors": {
+                                "contains": {
+                                    "required": ["code"],
+                                    "properties": {"code": {"const": _UNSUPPORTED_FORMAT}},
+                                }
+                            }
+                        }
+                    },
+                },
             ]
         }
     )
@@ -131,7 +145,7 @@ class SourceDocument(ContractModel):
         if self.decision.state == "include" and self.parse_status not in ("parsed", "partial"):
             raise ValueError("an included document requires a usable parse")
         if self.format is None and not any(
-            error.code == "unsupported_format" for error in self.errors
+            error.code == _UNSUPPORTED_FORMAT for error in self.errors
         ):
             raise ValueError("an unknown format requires an unsupported_format error")
         return self

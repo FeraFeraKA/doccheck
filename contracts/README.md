@@ -21,7 +21,7 @@ uv run --frozen pytest tests/test_result_contract.py
 окружении тестов. Из `backend/`:
 
 ```sh
-uv run --frozen --with jsonschema==4.25.1 pytest tests/test_result_contract.py -k draft_2020_12
+uv run --frozen --with jsonschema==4.25.1 pytest tests/test_result_contract.py -k draft
 ```
 
 Схема Draft 2020-12 описывает поля, значения статусов, денежные строки и

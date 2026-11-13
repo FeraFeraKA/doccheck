@@ -1422,6 +1422,31 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "format": {
+                "type": "null"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "errors": {
+                "contains": {
+                  "properties": {
+                    "code": {
+                      "const": "unsupported_format"
+                    }
+                  },
+                  "required": [
+                    "code"
+                  ]
+                }
+              }
+            }
+          }
         }
       ],
       "properties": {

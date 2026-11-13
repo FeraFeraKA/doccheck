@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from doccheck_backend.contracts import RESULT_SCHEMA_VERSION, CheckJob, CheckResult
 from doccheck_backend.contracts.locators import PageLocator, SheetLocator
+from doccheck_backend.contracts.result import SourceDocument
 
 CONTRACTS = Path(__file__).resolve().parents[2] / "contracts"
 EXAMPLE = CONTRACTS / "check-result.v1.synthetic.json"
@@ -99,6 +100,30 @@ def test_draft_requires_a_byte_copy_to_be_excluded(
     assert not accepts_draft(payload)
     with pytest.raises(ValidationError, match="a byte copy must be excluded"):
         CheckJob.model_validate(payload)
+
+
+@pytest.mark.parametrize("file_id", ["unreadable", "ledger"])
+def test_draft_unknown_format_requires_unsupported_format(payload: dict, file_id: str) -> None:
+    jsonschema = pytest.importorskip("jsonschema")
+    definitions = json.loads(SCHEMA.read_text(encoding="utf-8"))["$defs"]
+    validator = jsonschema.Draft202012Validator(
+        {"$defs": definitions, "$ref": "#/$defs/SourceDocument"}
+    )
+    document = next(item for item in payload["result"]["documents"] if item["id"] == file_id)
+    validator.validate(document)
+    SourceDocument.model_validate(document)
+
+    document["format"] = None
+    with pytest.raises(jsonschema.ValidationError):
+        validator.validate(document)
+    with pytest.raises(ValidationError, match="an unknown format requires an unsupported_format"):
+        SourceDocument.model_validate(document)
+
+    document["errors"].append(
+        {"id": "unknown-file-format", "code": "unsupported_format", "message": "Unsupported format"}
+    )
+    validator.validate(document)
+    SourceDocument.model_validate(document)
 
 
 def test_draft_restricts_dataset_fixture_coverage_to_synthetic_results(
