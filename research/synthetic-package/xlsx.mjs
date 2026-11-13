@@ -11,44 +11,62 @@ const api = moduleDir
 const { Workbook, SpreadsheetFile } = api;
 const [source, output, previewDir] = process.argv.slice(2);
 const documents = JSON.parse(await fs.readFile(source, 'utf8'));
+const moneyFormat = '#,##0.00;[Red](#,##0.00);-';
+
+function writePayroll(sheet, doc) {
+  sheet.getRange('A5:D5').values = [['Код статьи', 'Вид начисления', 'Сумма, руб.', 'Основание']];
+  sheet.getRange('A6:D7').values = doc.items.map(
+    (item) => [item.article_code, item.label, Number(item.amount), item.basis],
+  );
+  sheet.getRange('B8').values = [['ИТОГО']];
+  sheet.getRange('C8').formulas = [['=SUM(C6:C7)']];
+  sheet.getRange('C6:C8').setNumberFormat(moneyFormat);
+  sheet.getRange('B8:C8').format.font.bold = true;
+  return 'C8';
+}
+
+function writeInsurance(sheet, doc) {
+  sheet.getRange('A5:D5').values = [
+    ['База начислений, руб.', 'Начислено взносов, руб.', 'Код статьи', 'Комментарий'],
+  ];
+  sheet.getRange('A6:D6').values = [
+    [Number(doc.accrual_base), Number(doc.amount), doc.article_code, doc.comment],
+  ];
+  sheet.getRange('A6:B6').setNumberFormat(moneyFormat);
+  return 'B6';
+}
+
 if (previewDir) await fs.mkdir(previewDir, { recursive: true });
 for (const doc of documents) {
+  const payroll = doc.category === 'payroll';
+  if (!payroll && doc.category !== 'insurance') throw new Error(`Unknown XLSX layout: ${doc.category}`);
   const wb = Workbook.create();
-  const s = wb.worksheets.add('Ведомость');
-  s.showGridLines = false;
-  s.getRange('A1:D18').format.font = { name: 'Arial', size: 10 };
-  s.getRange('A1:D18').format.rowHeight = 25;
-  s.getRange('A1:A18').format.columnWidth = 4;
-  s.getRange('B1:B18').format.columnWidth = 40;
-  s.getRange('C1:C18').format.columnWidth = 18;
-  s.getRange('D1:D18').format.columnWidth = 19;
-  for (const row of [1, 2, 3, 4, 5, 6, 17]) s.getRange(`A${row}:D${row}`).merge();
-  s.getRange('A1').values = [['СИНТЕТИЧЕСКИЙ ДОКУМЕНТ - НЕ ДЛЯ БУХГАЛТЕРСКОГО УЧЕТА']];
-  s.getRange('A1:D1').format.font.size = 8;
-  s.getRange('A2').values = [[doc.kind]];
-  s.getRange('A2:D2').format.font = { name: 'Arial', size: 14, bold: true };
-  s.getRange('A3').values = [[`№ ${doc.number}. Договор № ${doc.contract}`]];
-  s.getRange('A4').values = [[doc.company]];
-  s.getRange('A5').values = [[`Расчетный период: ${doc.period_start} - ${doc.period_end}`]];
-  s.getRange('A6').values = [['Начисленные суммы по договору. Единица измерения: рубль.']];
-  s.getRange('A8:D8').values = [['№', 'Исполнитель', 'Дата начисления', 'Начислено, руб.']];
-  s.getRange('A8:D8').format = { fill: '#E8E8E8', font: { bold: true }, horizontalAlignment: 'center' };
-  const excelDate = (Date.parse(`${doc.date}T00:00:00Z`) - Date.UTC(1899, 11, 30)) / 86400000;
-  s.getRange('A9:D11').values = doc.items.map((item, i) => [i + 1, item.label, excelDate, Number(item.amount)]);
-  s.getRange('C9:C11').setNumberFormat('dd.mm.yyyy');
-  s.getRange('D9:D13').setNumberFormat('#,##0.00');
-  s.getRange('B13').values = [['Итого начислено']];
-  s.getRange('D13').formulas = [['=ROUND(SUM(D9:D11),2)']];
-  s.getRange('A13:D13').format.font.bold = true;
-  s.getRange('A13:D13').format.borders = { preset: 'outside', style: 'thin', color: '#999999' };
-  s.getRange('A17').values = [['Все лица и реквизиты вымышлены. Ответственный: Синтез У. У.']];
+  const sheet = wb.worksheets.add(payroll ? 'Ведомость' : 'Расчет взносов');
+  const range = payroll ? 'A1:D8' : 'A1:D6';
+  sheet.showGridLines = false;
+  sheet.getRange(range).format.font = { name: 'Arial', size: 10 };
+  sheet.getRange(range).format.rowHeight = 22;
+  const widths = payroll ? [23, 33, 19, 32] : [26, 28, 17, 36];
+  for (const [index, column] of Array.from('ABCD').entries()) {
+    sheet.getRange(`${column}:${column}`).format.columnWidth = widths[index];
+  }
+  sheet.getRange('A1:D1').merge();
+  const title = payroll ? 'РАСЧЕТНАЯ ВЕДОМОСТЬ ПО ОПЛАТЕ ТРУДА' : 'РАСЧЕТ СТРАХОВЫХ ВЗНОСОВ';
+  sheet.getRange('A1:A3').values = [
+    [`${title} — СИНТЕТИЧЕСКИЙ ДОКУМЕНТ`],
+    [`Документ: ${doc.number}`],
+    [`Проект: ${doc.contract} | Период: ${doc.period_label}`],
+  ];
+  sheet.getRange('A1:D1').format.font = { name: 'Arial', size: 12, bold: true };
+  sheet.getRange('A5:D5').format = { fill: '#E8E8E8', font: { bold: true } };
+  const amountCell = payroll ? writePayroll(sheet, doc) : writeInsurance(sheet, doc);
   wb.recalculate();
-  const total = s.getRange('D13').values[0][0];
+  const total = sheet.getRange(amountCell).values[0][0];
   if (Number(total).toFixed(2) !== doc.amount) throw new Error(`Wrong total ${doc.id}`);
   const errors = await wb.inspect({ kind: 'match', searchTerm: '#REF!|#DIV/0!|#VALUE!|#NAME\\?|#N/A|#NUM!', options: { useRegex: true, maxResults: 5 } });
   if (/"match"/.test(errors.ndjson)) throw new Error(errors.ndjson);
   if (previewDir) {
-    const png = await wb.render({ sheetName: s.name, range: 'A1:D18', scale: 1.5, format: 'png' });
+    const png = await wb.render({ sheetName: sheet.name, range, scale: 1.5, format: 'png' });
     await fs.writeFile(path.join(previewDir, `${doc.id}.png`), new Uint8Array(await png.arrayBuffer()));
   }
   const destination = path.join(output, doc.file);

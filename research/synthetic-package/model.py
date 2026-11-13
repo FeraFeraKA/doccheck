@@ -8,6 +8,10 @@ import random
 
 DEFAULT_SEED = 890041
 MARK = "СИНТЕТИЧЕСКИЙ ДОКУМЕНТ — НЕ ДЛЯ БУХГАЛТЕРСКОГО УЧЕТА"
+MONTHS = (
+    "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
+    "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь",
+)
 LABELS = {
     "payroll": "Оплата труда",
     "insurance": "Страховые взносы",
@@ -23,6 +27,11 @@ def money(cents: int) -> str:
 
 def shown(amount: str) -> str:
     return format(Decimal(amount), ",.2f").replace(",", " ").replace(".", ",")
+
+
+def spreadsheet_period(period_start: str) -> str:
+    start = date.fromisoformat(period_start)
+    return f"{MONTHS[start.month - 1]} {start.year}"
 
 
 def make_package(seed: int = DEFAULT_SEED) -> dict:
@@ -56,15 +65,29 @@ def make_package(seed: int = DEFAULT_SEED) -> dict:
     # Five consecutive months. No tax-rate assumptions: insurance is an explicit
     # fictional accrual statement, not a legal calculation or payroll deduction.
     for month in range(6, 11):
-        items = [{"label": f"Сотрудник Синтез {token}-{i:02d}", "amount": money(rng.randrange(4100001, 9300000))}
-                 for i in range(1, 4)]
-        total = sum(int(Decimal(x["amount"]) * 100) for x in items)
+        # Keep the seeded monthly totals when grouping amounts into two accruals.
+        salary = sum(rng.randrange(4100001, 9300000) for _ in range(2))
+        allowance = rng.randrange(4100001, 9300000)
+        payroll_total = salary + allowance
+        items = [
+            {"article_code": "9101", "label": "Начисление по окладу",
+             "amount": money(salary), "basis": "Учебный табель"},
+            {"article_code": "9102", "label": "Доплата за проект",
+             "amount": money(allowance), "basis": "Учебное распоряжение"},
+        ]
         add(f"02_payroll_{month:02d}", "Расчетная ведомость заработной платы", "xlsx", "payroll", month,
-            items=items, amount=total)
-        insurance = [{"label": x["label"], "amount": money(rng.randrange(1200001, 2600000))} for x in items]
-        total = sum(int(Decimal(x["amount"]) * 100) for x in insurance)
-        add(f"03_insurance_{month:02d}", "Ведомость начисленных страховых взносов", "xlsx", "insurance", month,
-            items=insurance, amount=total)
+            items=items, amount=payroll_total)
+        contributions = sum(rng.randrange(1200001, 2600000) for _ in range(3))
+        insurance = add(
+            f"03_insurance_{month:02d}", "Ведомость начисленных страховых взносов",
+            "xlsx", "insurance", month, amount=contributions,
+            items=[{"label": "Страховые взносы", "amount": money(contributions)}],
+        )
+        insurance.update(
+            accrual_base=money(payroll_total),
+            article_code="9201",
+            comment="Учебные начисления за месяц",
+        )
     add("04_act", "Акт оказанных услуг", "pdf", "production_overhead", 6)
     add("05_invoice_act", "Счет-акт", "pdf", "production_overhead", 7, acquisition="scan")
     add("06_memo", "Служебная записка", "docx", "production_overhead", 8)
@@ -114,8 +137,14 @@ def make_package(seed: int = DEFAULT_SEED) -> dict:
 
 def public_document(doc: dict) -> dict:
     """Explicit allowlist: no scenario labels, duplicate links or expectations."""
-    return {k: doc[k] for k in ("id", "file", "kind", "format", "acquisition", "category", "number", "contract",
-                                "date", "period_start", "period_end", "company", "counterparty", "tax_id", "amount", "items", "partial")}
+    fields = ("id", "file", "kind", "format", "acquisition", "category", "number", "contract",
+              "date", "period_start", "period_end", "company", "counterparty", "tax_id", "amount", "items", "partial")
+    public = {key: doc[key] for key in fields}
+    if doc["format"] == "xlsx":
+        public["period_label"] = spreadsheet_period(doc["period_start"])
+    if doc["category"] == "insurance":
+        public.update({key: doc[key] for key in ("accrual_base", "article_code", "comment")})
+    return public
 
 
 def public_report(package: dict) -> dict:

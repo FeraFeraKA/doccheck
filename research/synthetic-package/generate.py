@@ -70,9 +70,9 @@ def generate(output: Path, seed: int, node: str, previews: Path | None = None):
     package["report"] = report
     package["coverage"] = ["verified", "discrepancy", "unverified", "duplicate", "other_period", "other_contract", "partial_sum"]
     package["provenance"] = {
-        "source": "Invented independently from seed; no organizer files or answer book read",
-        "layout": "New layouts in the same format families; exact original coordinates NOT verified",
-        "acceptance": "Andrei must compare structure and absence of coinciding substantive data locally",
+        "source": "All fixture values are generated from the seed without source data or an answer book",
+        "layout": "Payroll and insurance worksheets match the source cell addresses; other formats await structural review",
+        "acceptance": "Andrei checks the remaining layouts and absence of coinciding substantive values locally",
         "purpose": "Public regression fixture, not independent holdout or application output",
     }
     write_json(output / "expectations/manifest.json", package)
@@ -86,7 +86,7 @@ def generate(output: Path, seed: int, node: str, previews: Path | None = None):
 
 `expectations/manifest.json` предназначен только для тестов и человека: содержание каждого файла, включение в расчет, исключенные документы, доступные суммы и ожидаемые статусы всех пяти показателей. Статусы не записываются в документы. У непроверяемых показателей ожидаемая полная сумма и дельта равны `null`.
 
-Размещение полей стабильно между seeds. Точное соответствие координат оригиналу и отсутствие совпадений с ним **не проверены**: Андрей сравнивает локально, не передавая оригинал агенту. Формы созданы заново, не скопированы из комплекта организаторов. Учебные ИНН намеренно имеют префикс `SYN-INN` и не являются действительными реквизитами.
+Для XLSX сверены адреса полей на всех десяти исходных ведомостях. В зарплате суммы стоят в `C6:C7`, итог в `C8`. Во взносах база и сумма стоят в `A6:B6`, код статьи и комментарий в `C6:D6`. Значения сгенерированы из seed. Андрей локально проверяет расположение полей в остальных форматах и отсутствие совпадающих существенных реквизитов и сумм. Учебные ИНН имеют префикс `SYN-INN`.
 
 Генератор, зависимости и команды проверки: [research/synthetic-package](../../../research/synthetic-package/README.md).
 """, encoding="utf-8")

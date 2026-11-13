@@ -25,16 +25,16 @@
       "amount": "184535.84",
       "items": [
         {
-          "label": "Сотрудник Синтез 00890041-01",
-          "amount": "54525.46"
+          "article_code": "9101",
+          "label": "Начисление по окладу",
+          "amount": "108851.36",
+          "basis": "Учебный табель"
         },
         {
-          "label": "Сотрудник Синтез 00890041-02",
-          "amount": "54325.90"
-        },
-        {
-          "label": "Сотрудник Синтез 00890041-03",
-          "amount": "75684.48"
+          "article_code": "9102",
+          "label": "Доплата за проект",
+          "amount": "75684.48",
+          "basis": "Учебное распоряжение"
         }
       ],
       "scope": "included",
@@ -58,20 +58,15 @@
       "amount": "46234.93",
       "items": [
         {
-          "label": "Сотрудник Синтез 00890041-01",
-          "amount": "13251.78"
-        },
-        {
-          "label": "Сотрудник Синтез 00890041-02",
-          "amount": "19611.67"
-        },
-        {
-          "label": "Сотрудник Синтез 00890041-03",
-          "amount": "13371.48"
+          "label": "Страховые взносы",
+          "amount": "46234.93"
         }
       ],
       "scope": "included",
-      "partial": false
+      "partial": false,
+      "accrual_base": "184535.84",
+      "article_code": "9201",
+      "comment": "Учебные начисления за месяц"
     },
     {
       "id": "02_payroll_07",
@@ -91,16 +86,16 @@
       "amount": "222913.26",
       "items": [
         {
-          "label": "Сотрудник Синтез 00890041-01",
-          "amount": "80731.71"
+          "article_code": "9101",
+          "label": "Начисление по окладу",
+          "amount": "157618.02",
+          "basis": "Учебный табель"
         },
         {
-          "label": "Сотрудник Синтез 00890041-02",
-          "amount": "76886.31"
-        },
-        {
-          "label": "Сотрудник Синтез 00890041-03",
-          "amount": "65295.24"
+          "article_code": "9102",
+          "label": "Доплата за проект",
+          "amount": "65295.24",
+          "basis": "Учебное распоряжение"
         }
       ],
       "scope": "included",
@@ -124,20 +119,15 @@
       "amount": "58557.79",
       "items": [
         {
-          "label": "Сотрудник Синтез 00890041-01",
-          "amount": "18525.20"
-        },
-        {
-          "label": "Сотрудник Синтез 00890041-02",
-          "amount": "19986.14"
-        },
-        {
-          "label": "Сотрудник Синтез 00890041-03",
-          "amount": "20046.45"
+          "label": "Страховые взносы",
+          "amount": "58557.79"
         }
       ],
       "scope": "included",
-      "partial": false
+      "partial": false,
+      "accrual_base": "222913.26",
+      "article_code": "9201",
+      "comment": "Учебные начисления за месяц"
     },
     {
       "id": "02_payroll_08",
@@ -157,16 +147,16 @@
       "amount": "217293.49",
       "items": [
         {
-          "label": "Сотрудник Синтез 00890041-01",
-          "amount": "48991.12"
+          "article_code": "9101",
+          "label": "Начисление по окладу",
+          "amount": "135488.69",
+          "basis": "Учебный табель"
         },
         {
-          "label": "Сотрудник Синтез 00890041-02",
-          "amount": "86497.57"
-        },
-        {
-          "label": "Сотрудник Синтез 00890041-03",
-          "amount": "81804.80"
+          "article_code": "9102",
+          "label": "Доплата за проект",
+          "amount": "81804.80",
+          "basis": "Учебное распоряжение"
         }
       ],
       "scope": "included",
@@ -190,20 +180,15 @@
       "amount": "59885.86",
       "items": [
         {
-          "label": "Сотрудник Синтез 00890041-01",
-          "amount": "25738.83"
-        },
-        {
-          "label": "Сотрудник Синтез 00890041-02",
-          "amount": "15147.91"
-        },
-        {
-          "label": "Сотрудник Синтез 00890041-03",
-          "amount": "18999.12"
+          "label": "Страховые взносы",
+          "amount": "59885.86"
         }
       ],
       "scope": "included",
-      "partial": false
+      "partial": false,
+      "accrual_base": "217293.49",
+      "article_code": "9201",
+      "comment": "Учебные начисления за месяц"
     },
     {
       "id": "02_payroll_09",
@@ -223,16 +208,16 @@
       "amount": "177288.54",
       "items": [
         {
-          "label": "Сотрудник Синтез 00890041-01",
-          "amount": "56396.13"
+          "article_code": "9101",
+          "label": "Начисление по окладу",
+          "amount": "125667.62",
+          "basis": "Учебный табель"
         },
         {
-          "label": "Сотрудник Синтез 00890041-02",
-          "amount": "69271.49"
-        },
-        {
-          "label": "Сотрудник Синтез 00890041-03",
-          "amount": "51620.92"
+          "article_code": "9102",
+          "label": "Доплата за проект",
+          "amount": "51620.92",
+          "basis": "Учебное распоряжение"
         }
       ],
       "scope": "included",
@@ -256,20 +241,15 @@
       "amount": "69069.57",
       "items": [
         {
-          "label": "Сотрудник Синтез 00890041-01",
-          "amount": "23761.62"
-        },
-        {
-          "label": "Сотрудник Синтез 00890041-02",
-          "amount": "20064.84"
-        },
-        {
-          "label": "Сотрудник Синтез 00890041-03",
-          "amount": "25243.11"
+          "label": "Страховые взносы",
+          "amount": "69069.57"
         }
       ],
       "scope": "included",
-      "partial": false
+      "partial": false,
+      "accrual_base": "177288.54",
+      "article_code": "9201",
+      "comment": "Учебные начисления за месяц"
     },
     {
       "id": "02_payroll_10",
@@ -289,16 +269,16 @@
       "amount": "184173.24",
       "items": [
         {
-          "label": "Сотрудник Синтез 00890041-01",
-          "amount": "67413.34"
+          "article_code": "9101",
+          "label": "Начисление по окладу",
+          "amount": "140138.53",
+          "basis": "Учебный табель"
         },
         {
-          "label": "Сотрудник Синтез 00890041-02",
-          "amount": "72725.19"
-        },
-        {
-          "label": "Сотрудник Синтез 00890041-03",
-          "amount": "44034.71"
+          "article_code": "9102",
+          "label": "Доплата за проект",
+          "amount": "44034.71",
+          "basis": "Учебное распоряжение"
         }
       ],
       "scope": "included",
@@ -322,20 +302,15 @@
       "amount": "63792.22",
       "items": [
         {
-          "label": "Сотрудник Синтез 00890041-01",
-          "amount": "25123.13"
-        },
-        {
-          "label": "Сотрудник Синтез 00890041-02",
-          "amount": "21532.63"
-        },
-        {
-          "label": "Сотрудник Синтез 00890041-03",
-          "amount": "17136.46"
+          "label": "Страховые взносы",
+          "amount": "63792.22"
         }
       ],
       "scope": "included",
-      "partial": false
+      "partial": false,
+      "accrual_base": "184173.24",
+      "article_code": "9201",
+      "comment": "Учебные начисления за месяц"
     },
     {
       "id": "04_act",
@@ -751,9 +726,9 @@
     "partial_sum"
   ],
   "provenance": {
-    "source": "Invented independently from seed; no organizer files or answer book read",
-    "layout": "New layouts in the same format families; exact original coordinates NOT verified",
-    "acceptance": "Andrei must compare structure and absence of coinciding substantive data locally",
+    "source": "All fixture values are generated from the seed without source data or an answer book",
+    "layout": "Payroll and insurance worksheets match the source cell addresses; other formats await structural review",
+    "acceptance": "Andrei checks the remaining layouts and absence of coinciding substantive values locally",
     "purpose": "Public regression fixture, not independent holdout or application output"
   }
 }
