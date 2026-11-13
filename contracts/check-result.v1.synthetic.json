@@ -1,0 +1,256 @@
+{
+  "run_id": "synthetic-example",
+  "status": "completed_with_issues",
+  "result": {
+    "schema_version": "doccheck-check-result/1",
+    "run_id": "synthetic-example",
+    "synthetic": true,
+    "scope": {
+      "report_document_id": "report",
+      "contract_number": "DEMO-K1",
+      "period_start": "2025-02-01",
+      "period_end": "2025-02-28",
+      "report_row_locator": null
+    },
+    "versions": {
+      "code_revision": "synthetic",
+      "rules_version": "demo-sum/1",
+      "ml_module_version": null,
+      "ml_policy_version": null,
+      "model_revision": null
+    },
+    "documents": [
+      {
+        "id": "report",
+        "name": "synthetic-report.pdf",
+        "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+        "format": "pdf",
+        "role": "report",
+        "parse_status": "parsed",
+        "decision": {
+          "state": "include",
+          "reason_code": "report_selected",
+          "message": "Выбран синтетический отчёт",
+          "evidence_refs": ["report-a", "report-b"]
+        },
+        "errors": []
+      },
+      {
+        "id": "ledger",
+        "name": "synthetic-ledger.xlsx",
+        "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+        "format": "xlsx",
+        "role": "support",
+        "parse_status": "parsed",
+        "decision": {
+          "state": "include",
+          "reason_code": "source_confirmed",
+          "message": "Подтверждены две операции для статьи A",
+          "evidence_refs": ["amount-1", "amount-2", "contract", "period", "article"]
+        },
+        "errors": []
+      },
+      {
+        "id": "ledger-copy",
+        "name": "synthetic-ledger-copy.xlsx",
+        "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+        "format": "xlsx",
+        "role": "support",
+        "parse_status": "parsed",
+        "decision": {
+          "state": "exclude",
+          "reason_code": "byte_duplicate",
+          "message": "Операции уже учтены из выбранного экземпляра",
+          "evidence_refs": []
+        },
+        "errors": [],
+        "duplicate_of": "ledger"
+      },
+      {
+        "id": "unreadable",
+        "name": "synthetic-scan.png",
+        "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+        "format": "png",
+        "role": "support",
+        "parse_status": "error",
+        "decision": {
+          "state": "parse_error",
+          "reason_code": "unreadable_source",
+          "message": "Синтетический источник статьи B не прочитан",
+          "evidence_refs": []
+        },
+        "errors": [{"code": "unreadable_source", "message": "Ошибка чтения файла"}]
+      }
+    ],
+    "evidence": [
+      {
+        "id": "report-a",
+        "document_id": "report",
+        "kind": "reported_value",
+        "raw_value": "150,50",
+        "normalized_value": "150.50",
+        "unit": "RUB",
+        "method": "ocr",
+        "locator": {"kind": "page", "page": 1, "bbox": [0.2, 0.4, 0.5, 0.45]}
+      },
+      {
+        "id": "report-b",
+        "document_id": "report",
+        "kind": "reported_value",
+        "raw_value": "0,00",
+        "normalized_value": "0.00",
+        "unit": "RUB",
+        "method": "ocr",
+        "locator": {"kind": "page", "page": 1, "table_row": 4, "table_column": 2}
+      },
+      {
+        "id": "amount-1",
+        "document_id": "ledger",
+        "kind": "amount",
+        "raw_value": "60,25",
+        "normalized_value": "60.25",
+        "unit": "RUB",
+        "method": "native",
+        "locator": {"kind": "sheet", "sheet": "Синтетика", "range": "C6"}
+      },
+      {
+        "id": "amount-2",
+        "document_id": "ledger",
+        "kind": "amount",
+        "raw_value": "60,25",
+        "normalized_value": "60.25",
+        "unit": "RUB",
+        "method": "native",
+        "locator": {"kind": "sheet", "sheet": "Синтетика", "range": "C7"}
+      },
+      {
+        "id": "contract",
+        "document_id": "ledger",
+        "kind": "contract",
+        "raw_value": "DEMO-K1",
+        "normalized_value": "DEMO-K1",
+        "unit": null,
+        "method": "native",
+        "locator": {"kind": "sheet", "sheet": "Синтетика", "range": "A2"}
+      },
+      {
+        "id": "period",
+        "document_id": "ledger",
+        "kind": "period",
+        "raw_value": "Февраль 2025",
+        "normalized_value": {"start": "2025-02-01", "end": "2025-02-28"},
+        "unit": null,
+        "method": "native",
+        "locator": {"kind": "sheet", "sheet": "Синтетика", "range": "A3"}
+      },
+      {
+        "id": "article",
+        "document_id": "ledger",
+        "kind": "article",
+        "raw_value": "DEMO-A",
+        "normalized_value": "DEMO-A",
+        "unit": null,
+        "method": "native",
+        "locator": {"kind": "sheet", "sheet": "Синтетика", "range": "A6:A7"}
+      }
+    ],
+    "rows": [
+      {
+        "id": "row-a",
+        "label": "Синтетическая статья A",
+        "indicator_code": "DEMO-A",
+        "unit": "RUB",
+        "reported_value": "150.50",
+        "reported_evidence_refs": ["report-a"],
+        "observed_evidence_sum": "120.50",
+        "expected_value": "120.50",
+        "delta": "30.00",
+        "status": "discrepancy",
+        "completeness": {
+          "state": "complete",
+          "basis": "dataset_fixture",
+          "reason": "В профиле статьи A подтверждены обе ожидаемые операции",
+          "evidence_refs": ["amount-1", "amount-2"]
+        },
+        "calculation": {
+          "policy_id": "demo-sum/1",
+          "operation": "sum",
+          "formula": "Сумма допущенных операций",
+          "components": [
+            {
+              "amount": "60.25",
+              "amount_refs": ["amount-1"],
+              "contract_refs": ["contract"],
+              "period_refs": ["period"],
+              "article_refs": ["article"],
+              "relation_reason": "Операция в строке 6 совпала по договору, периоду и статье"
+            },
+            {
+              "amount": "60.25",
+              "amount_refs": ["amount-2"],
+              "contract_refs": ["contract"],
+              "period_refs": ["period"],
+              "article_refs": ["article"],
+              "relation_reason": "Операция в строке 7 совпала по договору, периоду и статье"
+            }
+          ]
+        },
+        "reasons": [
+          {
+            "code": "amount_mismatch",
+            "message": "Сумма в отчёте выше суммы подтверждённых операций",
+            "evidence_refs": ["report-a", "amount-1", "amount-2"]
+          }
+        ],
+        "root_issue_id": "issue-a",
+        "derived_mismatch": false
+      },
+      {
+        "id": "row-b",
+        "label": "Синтетическая статья B",
+        "indicator_code": "DEMO-B",
+        "unit": "RUB",
+        "reported_value": "0.00",
+        "reported_evidence_refs": ["report-b"],
+        "observed_evidence_sum": null,
+        "expected_value": null,
+        "delta": null,
+        "status": "unverified",
+        "completeness": {
+          "state": "incomplete",
+          "basis": "dataset_fixture",
+          "reason": "Не прочитан обязательный синтетический скан статьи B",
+          "evidence_refs": []
+        },
+        "calculation": {
+          "policy_id": "demo-sum/1",
+          "operation": "sum",
+          "formula": "Сумма допущенных операций",
+          "components": []
+        },
+        "reasons": [
+          {
+            "code": "missing_evidence",
+            "message": "Источник ожидаемого значения не прочитан",
+            "evidence_refs": []
+          }
+        ],
+        "root_issue_id": null,
+        "derived_mismatch": false
+      }
+    ],
+    "summary": {
+      "counts": {"verified": 0, "discrepancy": 1, "unverified": 1},
+      "primary_issues": [
+        {
+          "id": "issue-a",
+          "code": "amount_mismatch",
+          "message": "В статье A подтверждено расхождение",
+          "evidence_refs": ["report-a", "amount-1", "amount-2"]
+        }
+      ],
+      "conclusion": "По статье A обнаружено расхождение. Статья B остаётся непроверенной."
+    }
+  },
+  "error": null
+}
