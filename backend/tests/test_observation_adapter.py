@@ -92,6 +92,7 @@ def test_model_number_conflict_keeps_address_only_on_the_source_number(module_pa
     assert record.number_requires_review
     assert numbers["321"].sources == (source,)
     assert numbers["999"].sources == () and numbers["999"].source_ambiguous
+    assert numbers["999"].provenance == ()
 
 
 @pytest.mark.parametrize(
@@ -134,6 +135,31 @@ def test_split_amount_keeps_the_role_marker_with_its_value(module_path, tmp_path
     assert candidate.value == "75.00"
     assert candidate.sources == sources
     assert not candidate.source_ambiguous
+
+
+@pytest.mark.parametrize(
+    ("field", "text", "value"),
+    [
+        ("doc_number", "Номер документа: 412", "412"),
+        ("amount", "Итого 75,00 руб.", "75.00"),
+        ("doc_number", "Акт № 412 согласно договору № 640", "412"),
+    ],
+)
+def test_retains_source_provenance_when_module_role_cannot_be_rechecked(
+    module_path, tmp_path, field, text, value
+):
+    document = _document(tmp_path)
+    observations = (
+        SourceObservation(text, PageLocator(kind="page", page=1, line=1), "native"),
+        SourceObservation(text, PageLocator(kind="page", page=2, line=3), "native"),
+    )
+    supplied = replace(document, observations=observations)
+    (record,) = identify_documents([supplied], synthetic=True).documents
+    (candidate,) = tuple(
+        item for item in record.candidates if item.field == field and item.value == value
+    )
+    assert candidate.provenance == observations
+    assert candidate.sources == () and candidate.source_ambiguous
 
 
 def test_bare_number_needs_an_adjacent_header_address(module_path, tmp_path):

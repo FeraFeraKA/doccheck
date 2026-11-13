@@ -84,6 +84,9 @@ class IdentityCandidate:
     value: str | None
     sources: tuple[SourceObservation, ...]
     source_ambiguous: bool = False
+    # These are inputs the module returned for the same reading. Their addresses
+    # are known even when the adapter cannot attest the reading's role or grouping.
+    provenance: tuple[SourceObservation, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -323,9 +326,9 @@ def _evidence_sources(
     prepared: _Prepared,
     field: str,
     reading: str | None,
-) -> tuple[tuple[SourceObservation, ...], bool]:
+) -> tuple[tuple[SourceObservation, ...], tuple[SourceObservation, ...], bool]:
     if value is None:
-        return (), False
+        return (), (), False
     evidence = value if isinstance(value, list) else [value]
     sources: list[SourceObservation] = []
     ambiguous = False
@@ -340,12 +343,13 @@ def _evidence_sources(
             sources.append(matches[0])
         elif len(matches) != 1:
             ambiguous = True
+    provenance = tuple(sources)
     if field == "doc_number":
         trusted = [source for source in sources if _has_document_number_context(source, prepared)]
         ambiguous = ambiguous or len(trusted) != len(sources)
         sources = trusted
     if len(evidence) < 2:
-        return tuple(sources), ambiguous
+        return tuple(sources), provenance, ambiguous
 
     # The module can flatten independent readings and compounds into the same list.
     # Retain complete readings, or one demonstrably adjacent compound. Without
@@ -360,9 +364,11 @@ def _evidence_sources(
         and not complete
         and all(_adjacent(left, right) for left, right in zip(sources, sources[1:]))
     ):
-        return tuple(sources), False
-    return tuple(source for index, source in enumerate(sources) if index in complete), (
-        ambiguous or len(complete) != len(sources)
+        return tuple(sources), provenance, False
+    return (
+        tuple(source for index, source in enumerate(sources) if index in complete),
+        provenance,
+        ambiguous or len(complete) != len(sources),
     )
 
 
@@ -374,8 +380,8 @@ def _candidate(
 ) -> IdentityCandidate:
     if value is not None and not isinstance(value, str):
         raise IdentityResponseError("Invalid candidate value")
-    sources, ambiguous = _evidence_sources(evidence, prepared, field, value)
-    return IdentityCandidate(field, value, sources, ambiguous)
+    sources, provenance, ambiguous = _evidence_sources(evidence, prepared, field, value)
+    return IdentityCandidate(field, value, sources, ambiguous, provenance)
 
 
 def _number_candidates(number: dict[str, object], prepared: _Prepared) -> list[IdentityCandidate]:
