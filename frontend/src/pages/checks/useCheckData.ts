@@ -4,7 +4,7 @@ type LoadState<T> = { phase: 'loading' } | { phase: 'failed' } | { phase: 'ready
 
 interface LoadRequest<T> {
   key: string;
-  load: (key: string, signal: AbortSignal) => Promise<T>;
+  load: (key: string, signal: AbortSignal, onUpdate: (data: T) => void) => Promise<T>;
   attempt: number;
   state: LoadState<T>;
 }
@@ -21,7 +21,7 @@ export function useCheckData<T>(key: string, load: LoadRequest<T>['load']) {
 
     void Promise.resolve().then(() => {
       controller.signal.throwIfAborted();
-      return load(key, controller.signal);
+      return load(key, controller.signal, (data) => publish({ phase: 'ready', data }));
     }).then(
       (data) => publish({ phase: 'ready', data }),
       () => publish({ phase: 'failed' }),
