@@ -13,6 +13,9 @@ const statusLabels: Record<JobStatus, string> = {
 };
 
 const buttonClass = 'rounded border px-4 py-2 disabled:cursor-not-allowed disabled:opacity-50';
+const checkingHealth = import.meta.env.VITE_DOCCHECK_PUBLIC_DEMO === '1'
+  ? 'Проверяем связь с API. После простоя запуск демосервера может занять около минуты.'
+  : 'Проверяем связь с API…';
 
 export function HomePage() {
   const [health, setHealth] = useState<'loading' | 'ready' | 'error'>('loading');
@@ -118,7 +121,7 @@ export function HomePage() {
       <section className="mt-8" aria-labelledby="api-heading">
         <h2 id="api-heading" className="text-xl font-medium">Состояние API</h2>
         <p role="status" className="mt-2">
-          {health === 'loading' && 'Проверяем связь с API…'}
+          {health === 'loading' && checkingHealth}
           {health === 'ready' && 'API и PostgreSQL доступны.'}
           {health === 'error' && 'API недоступен.'}
         </p>

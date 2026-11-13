@@ -22,3 +22,7 @@
 
 !contracts/check-result.v1.synthetic.json
 !docs/synthetic/nrt-89/inputs.json
+
+!frontend/src/assets/fonts/inter-cyrillic.woff2
+!frontend/src/assets/fonts/inter-latin.woff2
+!frontend/public/fonts/inter-OFL.txt
