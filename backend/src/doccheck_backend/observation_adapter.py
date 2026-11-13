@@ -4,6 +4,7 @@ import json
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Literal, Protocol
 
@@ -256,9 +257,43 @@ def _adjacent(first: SourceObservation, second: SourceObservation) -> bool:
     return False
 
 
+def _contains_complete_reading(field: str, value: str | None, text: str) -> bool:
+    if value is None:
+        return False
+    if field == "doc_number":
+        # The module has already selected this observation as evidence for this role.
+        # Require the entire value at a number marker, without accepting a prefix.
+        return (
+            re.search(
+                rf"(?<!\w)(?:№|N(?:[oоº°])?\.?)\s*{re.escape(value)}"
+                r"(?=\s*(?:$|[,;:]|\bот\b|\||[»\"]))",
+                text.strip(),
+                re.IGNORECASE,
+            )
+            is not None
+        )
+    if field != "amount":
+        return False
+    amount = re.search(
+        r"(?<![\w.,+−-])([+-]?(?:[0-9]{1,3}(?:[ \u00a0\u2009\u202f][0-9]{3})+|[0-9]+)"
+        r"(?:[.,][0-9]+)?)\s*(?:₽|руб(?:\.|лей|ля|ль)?|RUB)\s*\.?\s*$",
+        text,
+        re.IGNORECASE,
+    )
+    if amount is None or re.search(r"[0-9+−-]\s+$", text[: amount.start()]):
+        return False
+    try:
+        compact = re.sub(r"\s+", "", amount[1]).replace(",", ".")
+        return Decimal(compact) == Decimal(value)
+    except InvalidOperation:
+        return False
+
+
 def _evidence_sources(
     value: object,
     prepared: _Prepared,
+    field: str,
+    reading: str | None,
 ) -> tuple[tuple[SourceObservation, ...], bool]:
     if value is None:
         return (), False
@@ -276,11 +311,26 @@ def _evidence_sources(
             sources.append(matches[0])
         elif len(matches) != 1:
             ambiguous = True
-    if len(evidence) > 1 and (
-        ambiguous or any(not _adjacent(left, right) for left, right in zip(sources, sources[1:]))
+    if len(evidence) < 2:
+        return tuple(sources), ambiguous
+
+    # The module can flatten independent readings and compounds into the same list.
+    # Retain complete readings, or one demonstrably adjacent compound. Without
+    # explicit grouping, mixed complete and incomplete entries remain ambiguous.
+    complete = {
+        index
+        for index, source in enumerate(sources)
+        if _contains_complete_reading(field, reading, source.text)
+    }
+    if (
+        not ambiguous
+        and not complete
+        and all(_adjacent(left, right) for left, right in zip(sources, sources[1:]))
     ):
-        return (), True
-    return tuple(sources), ambiguous
+        return tuple(sources), False
+    return tuple(source for index, source in enumerate(sources) if index in complete), (
+        ambiguous or len(complete) != len(sources)
+    )
 
 
 def _candidate(
@@ -291,7 +341,7 @@ def _candidate(
 ) -> IdentityCandidate:
     if value is not None and not isinstance(value, str):
         raise IdentityResponseError("Invalid candidate value")
-    sources, ambiguous = _evidence_sources(evidence, prepared)
+    sources, ambiguous = _evidence_sources(evidence, prepared, field, value)
     return IdentityCandidate(field, value, sources, ambiguous)
 
 

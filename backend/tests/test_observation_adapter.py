@@ -94,6 +94,31 @@ def test_model_number_conflict_keeps_address_only_on_the_source_number(module_pa
     assert numbers["999"].sources == () and numbers["999"].source_ambiguous
 
 
+@pytest.mark.parametrize(
+    ("field", "first", "second", "value"),
+    [
+        ("doc_number", "Акт № 321", "Акт № 321", "321"),
+        ("amount", "Итого: 75,00 руб.", "Итого: 75.0 RUB", "75.00"),
+    ],
+)
+def test_independent_complete_readings_keep_both_page_addresses(
+    module_path, tmp_path, field, first, second, value
+):
+    document = _document(tmp_path)
+    sources = (
+        SourceObservation(first, PageLocator(kind="page", page=1, line=1), "native"),
+        SourceObservation(second, PageLocator(kind="page", page=2, line=5), "native"),
+    )
+    (record,) = identify_documents(
+        [replace(document, observations=sources)], synthetic=True
+    ).documents
+    (candidate,) = tuple(
+        item for item in record.candidates if item.field == field and item.value == value
+    )
+    assert candidate.sources == sources
+    assert not candidate.source_ambiguous
+
+
 def test_unambiguous_issuer_response_can_omit_candidate_list(module_path, tmp_path):
     document = _document(tmp_path)
     issuer = SourceObservation(
