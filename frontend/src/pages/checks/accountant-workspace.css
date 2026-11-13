@@ -1,3 +1,5 @@
+@reference "../../app/styles.css";
+
 @font-face {
   font-family: Inter;
   font-style: normal;
@@ -37,20 +39,17 @@
 }
 
 .app-sidebar {
-  position: fixed;
+  @apply fixed flex flex-col;
   inset: 0 auto 0 0;
   width: 240px;
   background: var(--ui-sidebar);
   color: var(--ui-ink);
-  display: flex;
-  flex-direction: column;
   padding: 30px 0 22px;
   z-index: 30;
   border-right: 1px solid #d1dddd;
 }
 .brand {
-  display: flex;
-  align-items: center;
+  @apply flex items-center;
   gap: 10px;
   font-size: 27px;
   font-weight: 600;
@@ -59,8 +58,7 @@
   color: var(--ui-ink);
 }
 .brand-symbol {
-  display: grid;
-  place-items: center;
+  @apply grid place-items-center;
   width: 32px;
   height: 36px;
   background: var(--ui-ink);
@@ -76,8 +74,7 @@
   margin: 0 0 7px -5px;
 }
 .nav-item {
-  display: flex;
-  align-items: center;
+  @apply flex items-center;
   gap: 14px;
   padding: 18px 24px;
   font-size: 15px;
@@ -105,8 +102,7 @@
   padding: 28px 18px 0;
 }
 .profile {
-  display: flex;
-  align-items: center;
+  @apply flex items-center;
   gap: 10px;
   padding: 22px 4px 0;
 }
@@ -126,19 +122,16 @@
   font-weight: 500;
 }
 .app-content {
+  @apply flex min-h-screen flex-col;
   margin-left: 240px;
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
 }
 .app-main {
   padding: 34px 36px;
   flex: 1;
 }
 .page-content {
+  @apply relative mx-auto;
   max-width: 1600px;
-  margin: 0 auto;
-  position: relative;
 }
 .accountant-workspace .page-content h1 {
   margin-block: 0;
@@ -150,9 +143,7 @@
   color: var(--ui-ink);
 }
 .file-type-icon {
-  display: grid;
-  place-items: center;
-  flex-shrink: 0;
+  @apply grid shrink-0 place-items-center;
   width: 64px;
   height: 64px;
   border-radius: 7px;

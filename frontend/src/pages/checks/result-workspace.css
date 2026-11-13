@@ -1,5 +1,7 @@
+@reference "../../app/styles.css";
+
 .checks-content .result-breadcrumb { font-size: .8125rem; color: #4d6465; }
-.checks-content .result-header { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; }
+.checks-content .result-header { @apply flex flex-wrap items-center gap-3; }
 .checks-content .result-header h1 { margin-block: .5rem; font-family: inherit; font-size: clamp(1.5rem, 4vw, 1.75rem); }
 .checks-content .result-run-state { font-size: .8125rem; border: 1px solid #dce5e5; border-radius: .375rem; padding: .2rem .5rem; }
 .checks-content .result-scope { color: #4d6465; font-size: .8125rem; overflow-wrap: anywhere; }
@@ -11,11 +13,11 @@
 .checks-content .result-overview i { display: inline-block; width: .4375rem; height: .4375rem; margin-inline-end: .25rem; border-radius: 50%; background: #56a77c; }
 
 .result-reconciliation {
-  --result-ink: #163735;
-  --result-primary: #1c4649;
+  --result-ink: var(--ui-ink);
+  --result-primary: var(--ui-primary);
   --result-secondary: #4d6465;
   --result-line: #dce5e5;
-  --result-soft: #eff2f2;
+  --result-soft: var(--ui-soft);
   --result-selected: #e5f0ed;
   background: #fff;
   color: var(--result-ink);
@@ -26,7 +28,7 @@
 
 .result-reconciliation .reconcile-commandbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .625rem; min-height: 3.75rem; padding: .75rem 1rem; border-bottom: 1px solid var(--result-line); }
 .result-reconciliation .reconcile-command-title,
-.result-reconciliation .issue-navigation { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; font-size: .8125rem; }
+.result-reconciliation .issue-navigation { @apply flex flex-wrap items-center gap-2; font-size: .8125rem; }
 .result-reconciliation .reconcile-icon { display: inline-grid; place-items: center; width: 2rem; height: 2rem; border-radius: .375rem; background: var(--result-selected); font-size: 1.15rem; }
 .result-reconciliation .issue-counter { padding: .3rem .55rem; border-radius: .375rem; background: #ffeadb; color: #773e20; font-weight: 650; }
 .result-reconciliation .issue-navigation button { display: grid; place-items: center; width: 2rem; height: 2rem; padding: 0; }

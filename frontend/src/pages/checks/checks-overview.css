@@ -1,28 +1,20 @@
+@reference "../../app/styles.css";
+
 .checks-overview {
-  --ui-ink: #163735;
-  --ui-secondary: #597578;
   --ui-muted: #647b7c;
-  --ui-line: #e1e5e5;
-  --ui-soft: #eff2f2;
-  --ui-selected: #dce6e7;
-  --ui-primary: #1c4649;
-  --ui-mint: #cdf5eb;
-  --ui-peach: #ffdabd;
   --ui-lavender: #eee0ff;
   max-width: 1600px;
   margin-inline: auto;
   color: var(--ui-ink);
 }
 .checks-overview .overview-heading {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
+  @apply flex items-center justify-between;
   gap: 24px;
   margin-bottom: 32px;
 }
 .checks-overview .overview-heading h1 {
   margin: 0;
-  font: 500 28px/1.25 system-ui, sans-serif;
+  font: 500 28px/1.25 var(--font-sans);
   letter-spacing: -.6px;
 }
 .checks-overview .overview-heading p {
@@ -33,18 +25,14 @@
 }
 .checks-overview .overview-primary,
 .checks-content .checks-overview a.overview-primary {
+  @apply inline-flex items-center justify-center whitespace-nowrap no-underline;
   height: 42px;
-  white-space: nowrap;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
   border-radius: 6px;
   padding: 0 16px;
   background: var(--ui-primary);
   color: white;
   font-size: 14px;
   font-weight: 500;
-  text-decoration: none;
 }
 .checks-overview .overview-primary:hover { background: #26575a; }
 .checks-overview .overview-secondary {
