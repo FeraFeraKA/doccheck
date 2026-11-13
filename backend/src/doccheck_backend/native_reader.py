@@ -35,6 +35,7 @@ _SPACE = rf"[{_SPACE_CHARS}]"
 _GROUP_SPACE = rf"[{_GROUP_SPACES}]"
 _SIGNS = "+−-"
 _LINE_BREAKS = "\r\n\v\f\u0085\u2028\u2029"
+_AMOUNT_SPACING = rf"[{_SPACE_CHARS}{_LINE_BREAKS}]"
 _NUMBER = re.compile(
     rf"(?P<sign>[+−-]?){_SPACE}*"
     rf"(?P<integer>[0-9]{{1,3}}(?:{_GROUP_SPACE}[0-9]{{3}})+|[0-9]+)"
@@ -43,7 +44,8 @@ _NUMBER = re.compile(
 _CURRENCY = r"(?:₽|руб(?:лей|ля|ль|\.)?|RUB|р\.)"
 _KOPECKS = r"коп(?:еек|ейки|ейка|\.)?"
 _RUB_TOKEN = re.compile(
-    rf"{_CURRENCY}(?:{_SPACE}*([0-9]+){_SPACE}*{_KOPECKS}(?!\w)|(?!\w))",
+    rf"{_CURRENCY}"
+    rf"(?:({_AMOUNT_SPACING}*)([0-9]+)({_AMOUNT_SPACING}*){_KOPECKS}(?!\w)|(?!\w))",
     re.IGNORECASE,
 )
 _MONEY_HEADER = re.compile(r"^(?:сумма|стоимость)\s*[,\s(]+(?:руб\.?|₽|rub)\)?$", re.I)
@@ -80,14 +82,21 @@ def _rub_tokens(text: str) -> list[tuple[str, str]]:
     # markers cannot overlap, even when the document has a long invalid grouping.
     for currency in _RUB_TOKEN.finditer(text):
         end = currency.start()
-        if not end or text[end - 1] not in "0123456789" + _SPACE_CHARS:
+        last = end
+        while last and (
+            text[last - 1] in _SPACE_CHARS + _LINE_BREAKS or category(text[last - 1]) == "Cf"
+        ):
+            last -= 1
+        if not last or text[last - 1] not in "0123456789":
             continue
-        start = end
-        while start and text[start - 1] in "0123456789.," + _SPACE_CHARS:
+        start = last
+        while start and (
+            text[start - 1] in "0123456789.," + _SPACE_CHARS or category(text[start - 1]) == "Cf"
+        ):
             start -= 1
         if start < end:
             start = _preceding_symbol(text, start)
-        numeral = text[start:end].strip(_SPACE_CHARS)
+        numeral = text[start:last].strip(_SPACE_CHARS)
         if not numeral or numeral[-1] not in "0123456789":
             continue
         # Punctuation attached to a label ends the prose, not the numeral.
@@ -106,17 +115,23 @@ def _rub_tokens(text: str) -> list[tuple[str, str]]:
             and (
                 text[start - 1].isalnum()
                 or text[start - 1] in "_./," + _SIGNS
-                or category(text[start - 1]) == "Pd"
+                or category(text[start - 1]) in ("Pd", "Cf")
             )
         ):
             numeral = ""
         if start and text[start - 1] in _LINE_BREAKS:
             before = start - 1
-            while before and text[before - 1] in _SPACE_CHARS + _LINE_BREAKS:
+            while before and (
+                text[before - 1] in _SPACE_CHARS + _LINE_BREAKS
+                or category(text[before - 1]) == "Cf"
+            ):
                 before -= 1
             if before and (text[before - 1] in _SIGNS or category(text[before - 1]) == "Pd"):
                 numeral = ""
-        matches.append((numeral, currency[1] or ""))
+        unit_gaps = text[last:end] + (currency[1] or "") + (currency[3] or "")
+        if any(char not in _SPACE_CHARS for char in unit_gaps):
+            numeral = ""
+        matches.append((numeral, currency[2] or ""))
     return matches
 
 

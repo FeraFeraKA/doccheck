@@ -370,6 +370,49 @@ def test_docx_keeps_explicit_signs_and_distinguishes_label_dashes(tmp_path, text
 
 
 @pytest.mark.parametrize(
+    "text",
+    [
+        "Удержано: −\u200b123,45 RUB",
+        "Удержано: −\u2060123,45 RUB",
+        "Удержано: −\u200e123,45 RUB",
+        "Удержано: \u200e−123,45 RUB",
+        "Удержано: −\n\u200e123,45 RUB",
+        "Сумма: 123,45\nруб.",
+        "Сумма: 1 руб.\n25 коп.",
+        "Сумма: 1 руб. 25\nкоп.",
+    ],
+)
+def test_docx_does_not_accept_a_partial_monetary_token(tmp_path, text):
+    path = tmp_path / "upload"
+    document = Document()
+    document.add_paragraph(text)
+    document.save(path)
+    result = read_native_document(path, "docx")
+    (observation,) = result.observations
+
+    assert observation.raw_text == text
+    assert observation.amount is None
+    assert [(issue.code, issue.locator) for issue in result.issues] == [
+        ("ambiguous_rub_amount", observation.locator)
+    ]
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [("Сумма — 123,45 руб.", "123.45"), ("Сумма: 1 руб.\t25 коп.", "1.25")],
+)
+def test_docx_keeps_complete_tokens_with_safe_separators(tmp_path, text, expected):
+    path = tmp_path / "upload"
+    document = Document()
+    document.add_paragraph(text)
+    document.save(path)
+    result = read_native_document(path, "docx")
+    (observation,) = result.observations
+    assert observation.amount == Decimal(expected)
+    assert result.issues == ()
+
+
+@pytest.mark.parametrize(
     ("text", "amount", "ambiguous"),
     [
         ("Итого. 123,45 руб.", "123.45", False),
