@@ -178,6 +178,49 @@ def test_rejects_inferred_scope_for_a_different_report(engine, queue, tmp_path):
     assert saved.error["code"] == "processing_failed"
 
 
+def test_rejects_inferred_address_for_a_falsely_relabelled_report(engine, queue, tmp_path):
+    run_id = _enqueue(queue, infer_scope=True)
+
+    def process(run, directory):
+        data = _synthetic_result(run).model_dump(mode="json")
+        # This result validates against its own format and keeps all original IDs and hashes.
+        data["documents"][0]["format"] = "xlsx"
+        data["scope"]["report_row_locator"] = {"kind": "sheet", "sheet": "Synthetic", "range": "A1"}
+        return CheckJob(
+            run_id=str(run.id),
+            status="completed",
+            result=CheckResult.model_validate(data),
+            error=None,
+        )
+
+    assert run_document_worker(engine, tmp_path, process, once=True)
+    saved = _read_run(engine, run_id)
+    assert saved.status == "failed"
+    assert saved.result is None
+    assert saved.error["code"] == "processing_failed"
+
+
+def test_keeps_unsupported_format_as_a_partial_file_error(engine, queue, tmp_path):
+    run_id = _enqueue(queue, infer_scope=True)
+
+    def process(run, directory):
+        data = _synthetic_result(run, partial=True).model_dump(mode="json")
+        unsupported = data["documents"][1]
+        unsupported["format"] = None
+        unsupported["errors"][0]["code"] = "unsupported_format"
+        return CheckJob(
+            run_id=str(run.id),
+            status="completed_with_issues",
+            result=CheckResult.model_validate(data),
+            error=None,
+        )
+
+    assert run_document_worker(engine, tmp_path, process, once=True)
+    saved = _read_run(engine, run_id)
+    assert saved.status == "completed_with_issues"
+    assert saved.result["documents"][1]["format"] is None
+
+
 def test_rejects_changed_explicit_scope(engine, queue, tmp_path):
     run_id = _enqueue(queue)
 

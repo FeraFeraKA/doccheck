@@ -127,6 +127,7 @@ def _process(run: StoredRun, upload_root: Path, process: RunProcessor) -> CheckJ
         scope = None if run.scope is None else Scope.model_validate(run.scope)
         report_document_id = run.report_document_id
         documents = {doc["id"]: doc["sha256"] for doc in run.documents}
+        formats = {doc["id"]: doc["format"] for doc in run.documents}
         returned = process(run, upload_root / run_id)
         outcome = CheckJob.model_validate(returned.model_dump(mode="json"))
         if outcome.run_id != run_id or outcome.status in ("queued", "processing"):
@@ -144,6 +145,11 @@ def _process(run: StoredRun, upload_root: Path, process: RunProcessor) -> CheckJ
                 else _PROCESSING_COMPLETED_WITH_ISSUES
             )
         if outcome.result is not None:
+            for document in outcome.result.documents:
+                if document.format is not None and document.format != formats[document.id]:
+                    raise ValueError("result document format must match the upload manifest")
+            # CheckResult checks locator kinds against its document formats. Matching those
+            # formats to the manifest also ties addresses to the original uploaded bytes.
             _validate_jsonb_text(outcome.result.model_dump(mode="json"))
         return outcome
     except Exception as exc:
