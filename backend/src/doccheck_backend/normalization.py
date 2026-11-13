@@ -34,6 +34,9 @@ def normalize_contract_number(raw: str | None) -> NormalizedField:
     if raw is None or not raw.strip():
         return NormalizedField(raw, None, "missing")
     value = unicodedata.normalize("NFC", raw.strip())
+    # A replacement character means a character was lost during decoding.
+    if "\ufffd" in value:
+        return NormalizedField(raw, None, "invalid_contract_number")
     if not any(character.isalnum() for character in value) or any(
         unicodedata.category(character).startswith("C") for character in value
     ):

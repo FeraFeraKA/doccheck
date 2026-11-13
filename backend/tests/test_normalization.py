@@ -26,6 +26,7 @@ def test_contract_number_keeps_distinguishing_characters_and_raw_value():
         ("\u00a0", "missing"),
         ("—", "invalid_contract_number"),
         ("AB\0-01", "invalid_contract_number"),
+        ("\ufffd014", "invalid_contract_number"),
     ],
 )
 def test_contract_number_preserves_unusable_reading(raw: str | None, issue: str):
