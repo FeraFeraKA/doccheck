@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
+from unicodedata import category
 from xml.etree.ElementTree import ParseError
 from zipfile import BadZipFile, ZipFile
 from zlib import error as DecompressionError
@@ -28,11 +29,15 @@ from doccheck_backend.contracts.locators import (
 from doccheck_backend.native_observations import NativeDocument, NativeIssue, Observation
 from doccheck_backend.native_xlsx import read_workbook
 
-_SPACE_CHARS = " \u00a0\u2009\u202f"
+_GROUP_SPACES = " \u00a0\u2009\u202f"
+_SPACE_CHARS = "\t \u00a0\u1680" + "".join(map(chr, range(0x2000, 0x200B))) + "\u202f\u205f\u3000"
 _SPACE = rf"[{_SPACE_CHARS}]"
+_GROUP_SPACE = rf"[{_GROUP_SPACES}]"
+_SIGNS = "+−-"
+_LINE_BREAKS = "\r\n\v\f\u0085\u2028\u2029"
 _NUMBER = re.compile(
     rf"(?P<sign>[+−-]?){_SPACE}*"
-    rf"(?P<integer>[0-9]{{1,3}}(?:{_SPACE}[0-9]{{3}})+|[0-9]+)"
+    rf"(?P<integer>[0-9]{{1,3}}(?:{_GROUP_SPACE}[0-9]{{3}})+|[0-9]+)"
     r"(?P<fraction>[.,][0-9]+)?"
 )
 _CURRENCY = r"(?:₽|руб(?:лей|ля|ль|\.)?|RUB|р\.)"
@@ -50,6 +55,25 @@ class _Collected:
     issues: list[NativeIssue] = field(default_factory=list)
 
 
+def _preceding_symbol(text: str, start: int) -> int:
+    if not start:
+        return start
+    symbol = text[start - 1]
+    if symbol in _SIGNS:
+        return start - 1
+    if category(symbol) != "Pd":
+        return start
+    # An en or em dash separates a written label only when spaced on both sides.
+    if symbol in "–—" and text[start] in _SPACE_CHARS:
+        before = start - 1
+        while before and text[before - 1] in _SPACE_CHARS:
+            before -= 1
+        if 0 < before < start - 1 and text[before - 1].isalpha():
+            return start
+    # Retain ambiguous sign-like punctuation so number validation rejects the token.
+    return start - 1
+
+
 def _rub_tokens(text: str) -> list[tuple[str, str]]:
     matches = []
     # Each reverse scan stops at the first non-numeric character. Runs between currency
@@ -61,8 +85,8 @@ def _rub_tokens(text: str) -> list[tuple[str, str]]:
         start = end
         while start and text[start - 1] in "0123456789.," + _SPACE_CHARS:
             start -= 1
-        if start and text[start - 1] in "+−-":
-            start -= 1
+        if start < end:
+            start = _preceding_symbol(text, start)
         numeral = text[start:end].strip(_SPACE_CHARS)
         if not numeral or numeral[-1] not in "0123456789":
             continue
@@ -79,9 +103,19 @@ def _rub_tokens(text: str) -> list[tuple[str, str]]:
         if (
             start
             and text[start] not in _SPACE_CHARS
-            and (text[start - 1].isalnum() or text[start - 1] in "_./,+−-")
+            and (
+                text[start - 1].isalnum()
+                or text[start - 1] in "_./," + _SIGNS
+                or category(text[start - 1]) == "Pd"
+            )
         ):
             numeral = ""
+        if start and text[start - 1] in _LINE_BREAKS:
+            before = start - 1
+            while before and text[before - 1] in _SPACE_CHARS + _LINE_BREAKS:
+                before -= 1
+            if before and (text[before - 1] in _SIGNS or category(text[before - 1]) == "Pd"):
+                numeral = ""
         matches.append((numeral, currency[1] or ""))
     return matches
 

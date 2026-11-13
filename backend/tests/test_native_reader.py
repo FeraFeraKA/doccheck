@@ -340,6 +340,36 @@ def test_long_numeric_text_without_currency_does_not_produce_an_amount():
 
 
 @pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Удержано: −\t123,45 руб.", "-123.45"),
+        ("Удержано: -\u2007123,45\u200aруб.", "-123.45"),
+        ("Удержано: −\u30001\u202f123,45 руб.", "-1123.45"),
+        ("Сумма: –123,45 руб.", None),
+        ("Сумма: ‑123,45 руб.", None),
+        ("Сумма: –\t123,45 руб.", None),
+        ("Сумма:\n−\n123,45 руб.", None),
+        ("Сумма – 123,45 руб.", "123.45"),
+        ("Сумма\u2002—\t123,45 руб.", "123.45"),
+        ("Сумма: – 123,45 руб.", None),
+    ],
+)
+def test_docx_keeps_explicit_signs_and_distinguishes_label_dashes(tmp_path, text, expected):
+    path = tmp_path / "upload"
+    document = Document()
+    document.add_paragraph(text)
+    document.save(path)
+    result = read_native_document(path, "docx")
+    (observation,) = result.observations
+    assert observation.raw_text == text
+    assert observation.amount == (Decimal(expected) if expected is not None else None)
+    if expected is None:
+        assert [issue.code for issue in result.issues] == ["ambiguous_rub_amount"]
+    else:
+        assert result.issues == ()
+
+
+@pytest.mark.parametrize(
     ("text", "amount", "ambiguous"),
     [
         ("Итого. 123,45 руб.", "123.45", False),
