@@ -62,8 +62,8 @@ def _file_format(upload: UploadFile) -> str:
             with ZipFile(upload.file) as archive:
                 if required_member in archive.namelist():
                     return suffix
-        except (BadZipFile, UnicodeDecodeError):
-            # A damaged OOXML file may still belong to the declared format.
+        except (BadZipFile, NotImplementedError, UnicodeDecodeError):
+            # Preserve unreadable OOXML for file-level processing.
             return suffix
         finally:
             upload.file.seek(0)

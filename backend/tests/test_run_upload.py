@@ -254,3 +254,33 @@ def test_damaged_ooxml_is_kept_for_file_level_processing():
         upload = UploadFile(file, size=len(damaged), filename="damaged.docx")
         assert uploads._file_format(upload) == "docx"
         assert file.tell() == 0
+
+
+def test_ooxml_with_unsupported_zip_version_is_saved_for_processing(database_url, tmp_path):
+    from io import BytesIO
+    from zipfile import ZipFile, ZipInfo
+
+    member = ZipInfo("word/document.xml")
+    member.extract_version = 255
+    with BytesIO() as buffer:
+        with ZipFile(buffer, "w") as archive:
+            archive.writestr(member, "<document />")
+        damaged = buffer.getvalue()
+
+    root = tmp_path / "runs"
+    with TestClient(create_app(Settings(database_url, upload_root=root))) as client:
+        response = submit(client, uuid4(), files=(REPORT, ("documents", ("damaged.docx", damaged))))
+
+    assert response.status_code == 202
+    run_id = UUID(response.json()["run_id"])
+    engine = create_engine(database_url)
+    try:
+        with engine.connect() as connection:
+            documents = connection.execute(
+                select(Run.documents).where(Run.id == run_id)
+            ).scalar_one()
+        document = documents[1]
+        assert document["format"] == "docx"
+        assert (root / str(run_id) / document["id"]).read_bytes() == damaged
+    finally:
+        engine.dispose()
