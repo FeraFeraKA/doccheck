@@ -1,7 +1,9 @@
-import { NavLink, Outlet } from 'react-router';
+import { NavLink, Outlet, useMatch } from 'react-router';
 import './workspace.css';
 
 export function ChecksWorkspace() {
+  const isNewCheck = useMatch('/checks/new');
+
   return (
     <div className="checks-workspace">
       <aside className="checks-sidebar">
@@ -13,7 +15,7 @@ export function ChecksWorkspace() {
         </nav>
       </aside>
       <main className="checks-content">
-        <p className="checks-demo">Синтетический режим · файлы остаются в браузере</p>
+        {isNewCheck && <p className="checks-demo">Синтетический режим · файлы остаются в браузере</p>}
         <Outlet />
       </main>
     </div>
