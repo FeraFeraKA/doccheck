@@ -310,12 +310,48 @@ def test_pdf_other_column_does_not_interrupt_wrapped_value(tmp_path):
     ]
 
 
-def test_pdf_explicit_grouping_space_survives_wide_kerning(tmp_path):
+@pytest.mark.parametrize("rotation", [0, 90, 180, 270])
+def test_pdf_wide_numeric_gap_with_written_space_is_ambiguous(tmp_path, rotation):
     stream = b"BT /F1 12 Tf 20 140 Td [(Paid: 1 ) -1500 (234,56 RUB)] TJ ET"
-    path = _single_page_pdf(tmp_path / "upload", stream, font=b"Courier")
+    path = _single_page_pdf(
+        tmp_path / "upload", stream, font=b"Courier", page_attrs=f"/Rotate {rotation}".encode()
+    )
     result = read_native_document(path, "pdf")
-    assert [item.amount for item in result.observations] == [Decimal("1234.56")]
-    assert result.issues == ()
+    assert [item.raw_text for item in result.observations] == ["Paid: 1", "234,56 RUB"]
+    assert all(item.amount is None for item in result.observations)
+    assert [(i.code, i.locator) for i in result.issues] == [
+        ("ambiguous_rub_amount", result.observations[1].locator),
+    ]
+
+
+@pytest.mark.parametrize("rotation", [0, 90, 180, 270])
+@pytest.mark.parametrize("boundary", ["none", "vertical", "horizontal", "both"])
+@pytest.mark.parametrize("terminal_space", [False, True])
+def test_pdf_terminal_space_does_not_join_id_to_amount(
+    tmp_path, rotation, boundary, terminal_space
+):
+    left = b"123 " if terminal_space else b"123"
+    stream = (
+        b"BT /F1 12 Tf 20 160 Td (ID) Tj ET\n"
+        b"BT /F1 12 Tf 65 160 Td (Amount) Tj ET\n"
+        b"BT /F1 12 Tf 20 140 Td (" + left + b") Tj ET\n"
+        b"BT /F1 12 Tf 65 140 Td (456 RUB) Tj ET\n"
+    )
+    if boundary in ("vertical", "both"):
+        stream += b"58 125 m 58 174 l S\n"
+    if boundary in ("horizontal", "both"):
+        stream += b"10 152 m 135 152 l S\n"
+    path = _single_page_pdf(
+        tmp_path / "upload", stream, font=b"Courier", page_attrs=f"/Rotate {rotation}".encode()
+    )
+    result = read_native_document(path, "pdf")
+    observed = result.observations[-2:]
+    assert [item.raw_text for item in observed] == ["123", "456 RUB"]
+    ambiguous = terminal_space and boundary in ("none", "horizontal")
+    assert [item.amount for item in observed] == [None, None if ambiguous else Decimal(456)]
+    assert [(i.code, i.locator) for i in result.issues] == (
+        [("ambiguous_rub_amount", observed[1].locator)] if ambiguous else []
+    )
 
 
 @pytest.mark.parametrize(

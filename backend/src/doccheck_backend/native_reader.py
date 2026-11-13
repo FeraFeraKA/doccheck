@@ -1,6 +1,7 @@
 """Native observations with contract addresses for a single trusted local file."""
 
 import re
+from bisect import bisect_left
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
@@ -244,22 +245,21 @@ def _visible_pdf_box(page: Page) -> tuple[float, float, float, float]:
 
 def _pdf_line_fragments(
     chars: list[dict], column_rules: list[tuple[float, float, float]]
-) -> Iterator[tuple[int, str, list[dict]]]:
-    written_spaces = set()
-    for left, space, right in zip(chars, chars[1:], chars[2:]):
-        if space["text"] in _GROUP_SPACES and left["text"].isdigit() and right["text"].isdigit():
-            written_spaces.add((id(left), id(right)))
+) -> Iterator[tuple[int, str, list[dict], bool]]:
+    spaces = sorted((c["x0"], c["top"], c["x1"]) for c in chars if c["text"] in _GROUP_SPACES)
+    space_starts = [space[0] for space in spaces]
     text_map = chars_to_textmap(chars)
     for number, match in enumerate(re.finditer(r"[^\n]+", text_map.as_string), 1):
         start = match.start()
         previous = None
         glyphs = []
+        ambiguous = False
         for index in range(start, match.end()):
             _, char = text_map.tuples[index]
             if char is None:
                 continue
             if previous is not None and char["upright"] and previous["upright"]:
-                size = max(char["size"], previous["size"])
+                height = max(char["bottom"] - char["top"], previous["bottom"] - previous["top"])
                 gap = char["x0"] - previous["x1"]
                 midpoint = (
                     max(char["top"], previous["top"]) + min(char["bottom"], previous["bottom"])
@@ -268,16 +268,28 @@ def _pdf_line_fragments(
                     previous["x1"] <= x <= char["x0"] and top <= midpoint <= bottom
                     for top, bottom, x in column_rules
                 )
-                grouped = gap <= 3 * size and (id(previous), id(char)) in written_spaces
-                # A column gutter is much wider than an intra-field word or digit separator.
-                if ruled or (gap > 1.5 * size and not grouped):
-                    yield number, text_map.as_string[start:index].strip(), glyphs
+                if ruled or gap > 1.5 * height:
+                    written_space = False
+                    if (
+                        not ruled
+                        and gap <= 3 * height
+                        and previous["text"].isdigit()
+                        and char["text"].isdigit()
+                    ):
+                        first = bisect_left(space_starts, previous["x1"] - 0.1)
+                        last = bisect_left(space_starts, char["x0"])
+                        written_space = any(
+                            abs(top - previous["top"]) <= 1 and end <= char["x0"] + 0.1
+                            for _, top, end in spaces[first:last]
+                        )
+                    yield number, text_map.as_string[start:index].strip(), glyphs, ambiguous
                     start = index
                     glyphs = []
+                    ambiguous = written_space
             glyphs.append(char)
             previous = char
         if glyphs:
-            yield number, text_map.as_string[start : match.end()].strip(), glyphs
+            yield number, text_map.as_string[start : match.end()].strip(), glyphs, ambiguous
 
 
 def _pdf_text_lines(page: Page, visible_box: tuple[float, float, float, float]) -> list[dict]:
@@ -320,7 +332,7 @@ def _pdf_text_lines(page: Page, visible_box: tuple[float, float, float, float]) 
         return []
     visible_lines = []
     visible_number = previous_number = 0
-    for number, text, fragment in _pdf_line_fragments(chars, _pdf_column_rules(page)):
+    for number, text, fragment, ambiguous in _pdf_line_fragments(chars, _pdf_column_rules(page)):
         glyphs = [positions[id(char)] for char in fragment]
         visible_glyphs = [box for box in glyphs if box is not None]
         if not visible_glyphs:
@@ -329,6 +341,7 @@ def _pdf_text_lines(page: Page, visible_box: tuple[float, float, float, float]) 
             visible_number += 1
             previous_number = number
         line = {"number": visible_number, "text": text, "reading_box": objects_to_bbox(fragment)}
+        line["ambiguous"] = ambiguous and bool(_rub_tokens(text))
         if len(visible_glyphs) != len(glyphs) or any(box[4] for box in visible_glyphs):
             # Do not expose hidden text or reparse a visible tail as a complete amount.
             line["text"] = "".join(
@@ -565,7 +578,12 @@ def _read_pdf(path: Path, collected: _Collected) -> None:
                     collected.issues.append(NativeIssue("clipped_pdf_text", locator=locator))
                     collected.observations.append(Observation(line["text"], locator))
                 else:
-                    _observe(collected, line["text"], locator, interrupted=index in interrupted)
+                    _observe(
+                        collected,
+                        line["text"],
+                        locator,
+                        interrupted=index in interrupted or line["ambiguous"],
+                    )
             page.close()
 
 
