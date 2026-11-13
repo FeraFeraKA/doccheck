@@ -1,6 +1,5 @@
 import { useState } from 'react';
-import { Link, NavLink, useOutletContext, useParams } from 'react-router';
-import type { WorkspaceRole } from './ChecksWorkspace';
+import { Link, NavLink, useParams } from 'react-router';
 import { demoResult, demoRunPath, formatLocation, formatMoney, statusLabels } from './demoData';
 
 const tabs = [
@@ -10,7 +9,6 @@ const tabs = [
 
 export function CheckDetail({ view }: { view: string }) {
   const { id } = useParams();
-  const role = useOutletContext<WorkspaceRole>();
   const { scope, summary, documents } = demoResult;
 
   if (id !== demoResult.run_id) return <CheckNotFound />;
@@ -23,11 +21,17 @@ export function CheckDetail({ view }: { view: string }) {
       <nav className="checks-tabs" aria-label="Разделы проверки">
         {tabs.map(([suffix, label]) => <NavLink key={suffix} to={demoRunPath + suffix} end>{label}</NavLink>)}
       </nav>
-      {view === 'table' && <Reconciliation />}
+      {view === 'table' && <>
+        <Reconciliation />
+        {summary.counts.discrepancy > 0 && <section className="checks-card">
+          <h2>Возможные причины расхождений</h2>
+          <p>Правила сверки могут предложить объяснение для проверки бухгалтером. В этом примере таких гипотез нет.</p>
+        </section>}
+      </>}
       {view === 'documents' && <Documents documents={documents} />}
       {view === 'exceptions' && (
         <Documents title="Исключения" documents={documents.filter((doc) => doc.decision.state !== 'include')}
-          notice={role === 'Аспирант' ? 'Режим просмотра' : 'Действия бухгалтера недоступны в синтетическом режиме.'} />
+          notice="Действия бухгалтера недоступны в синтетическом режиме." />
       )}
       {view === 'conclusion' && <section className="checks-card">
         <h2>Заключение</h2><p>{summary.conclusion}</p>
@@ -58,7 +62,7 @@ function Reconciliation() {
         <h2>Показатели</h2>
         <div className="checks-table-scroll">
           <table>
-            <thead><tr><th>Показатель</th><th>В отчёте</th><th>Ожидаемо</th><th>Δ</th><th>Статус</th></tr></thead>
+            <thead><tr><th>Показатель</th><th>КФЗ</th><th>По первичным документам</th><th>Δ</th><th>Статус</th></tr></thead>
             <tbody>{rows.map((item) => (
               <tr key={item.id} data-selected={item.id === selectedId}>
                 <td><button type="button" aria-pressed={item.id === selectedId} onClick={() => {

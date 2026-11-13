@@ -2,7 +2,7 @@ import { useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { demoFiles, demoRunPath } from './demoData';
 
-const steps = ['Отчёт (КФЗ)', 'Первичные документы'];
+const steps = ['КФЗ', 'Первичные документы'];
 const formats = ['.pdf', '.docx', '.xlsx', '.png'];
 
 interface SelectedFile {
@@ -45,7 +45,8 @@ export function NewCheck() {
   return (
     <div className="checks-upload">
       <h1>Новая проверка</h1>
-      <p>Выберите отчёт и подтверждающие документы для предварительного просмотра пакета.</p>
+      <p>Выберите карточку фактических затрат (КФЗ) и первичные документы.</p>
+      <p>При рабочей сверке приложение собирает сводные значения из первичных документов и сравнивает их с КФЗ. Здесь доступен готовый синтетический результат.</p>
       <ol className="checks-tabs" aria-label="Шаги">
         {steps.map((label, index) => (
           <li key={label}>
@@ -66,7 +67,7 @@ export function NewCheck() {
           <button type="button" onClick={loadExample}>Загрузить пример</button>
         </div>
         <div className="checks-drop">
-          <label htmlFor="check-files">{isReport ? 'Выберите отчёт' : 'Выберите первичные документы'}</label>
+          <label htmlFor="check-files">{isReport ? 'Выберите КФЗ' : 'Выберите первичные документы'}</label>
           <input id="check-files" key={step} type="file" accept={formats.join(',')} multiple={!isReport}
             onChange={(event) => {
               if (event.currentTarget.files) takeFiles(event.currentTarget.files);

@@ -28,24 +28,15 @@
   gap: .25rem;
 }
 
-.checks-sidebar nav a,
-.checks-role button {
+.checks-sidebar nav a {
   border-radius: .5rem;
   padding: .65rem .8rem;
 }
 
 .checks-sidebar nav a:hover,
-.checks-sidebar nav a[aria-current],
-.checks-role button[aria-pressed="true"] {
+.checks-sidebar nav a[aria-current] {
   background: var(--primary);
   color: white;
-}
-
-.checks-role {
-  display: flex;
-  flex-wrap: wrap;
-  margin-top: auto;
-  font-size: .875rem;
 }
 
 .checks-content {
