@@ -42,10 +42,9 @@ _NUMBER = re.compile(
     rf"(?P<integer>[0-9]{{1,3}}(?:{_GROUP_SPACE}[0-9]{{3}})+|[0-9]+)"
     r"(?P<fraction>[.,][0-9]+)?"
 )
-_CURRENCY = r"(?:₽|руб(?:лей|ля|ль|\.)?|RUB|р\.)"
-_KOPECKS = r"коп(?:еек|ейки|ейка|\.)?"
-_RUB_TOKEN = re.compile(rf"{_CURRENCY}(?=\d|\W|$)", re.IGNORECASE)
-_KOPECK_SUFFIX = re.compile(rf"{_KOPECKS}(?!\w)", re.IGNORECASE)
+_RUB_UNITS = ("рублей", "рубля", "рубль", "руб.", "руб", "rub", "р.", "₽")
+_KOPECK_UNITS = ("копеек", "копейки", "копейка", "коп.", "коп")
+_RUB_START = re.compile(r"[рr₽]", re.IGNORECASE)
 _MONEY_HEADER = re.compile(r"^(?:сумма|стоимость)\s*[,\s(]+(?:руб\.?|₽|rub)\)?$", re.I)
 
 
@@ -82,6 +81,28 @@ def _numeric_run_character(char: str) -> bool:
     return char in _NUMBER_CHARACTERS or _token_space(char)
 
 
+def _match_unit(text: str, start: int, units: tuple[str, ...]) -> tuple[int, bool] | None:
+    # Fixed-size vocabulary. Spaces or formatting within a recognized unit
+    # preserve the candidate boundary but make it unsafe to normalize.
+    for unit in units:
+        index = start
+        interrupted = False
+        for offset, letter in enumerate(unit):
+            if offset:
+                while index < len(text) and _token_space(text[index]):
+                    interrupted = True
+                    index += 1
+            if index == len(text) or text[index].casefold() != letter:
+                break
+            index += 1
+        else:
+            if index == len(text) or not (text[index].isalnum() or text[index] == "_"):
+                return index, interrupted
+            if index < len(text) and text[index] in _DIGITS and unit.endswith("."):
+                return index, interrupted
+    return None
+
+
 def _possible_kopecks(text: str, start: int) -> tuple[str, bool]:
     index = start
     while index < len(text) and _token_space(text[index]):
@@ -96,12 +117,13 @@ def _possible_kopecks(text: str, start: int) -> tuple[str, bool]:
         if text[index] in _NUMBER_CHARACTERS:
             token_end = index + 1
         index += 1
-    if _KOPECK_SUFFIX.match(text, index) is None:
+    suffix = _match_unit(text, index, _KOPECK_UNITS)
+    if suffix is None:
         return "", False
     # Validate the whole run, so a split or malformed kopeck group cannot disappear.
     digits = text[token_start:token_end]
     gap = text[start:token_start] + text[token_end:index]
-    return digits, not re.fullmatch(r"[0-9]{1,2}", digits) or any(
+    return digits, suffix[1] or not re.fullmatch(r"[0-9]{1,2}", digits) or any(
         char not in _SPACE_CHARS for char in gap
     )
 
@@ -110,8 +132,15 @@ def _rub_tokens(text: str) -> list[tuple[str, str]]:
     matches = []
     # Each reverse scan stops at the first non-numeric character. Runs between currency
     # markers cannot overlap, even when the document has a long invalid grouping.
-    for currency in _RUB_TOKEN.finditer(text):
-        end = currency.start()
+    currency_end = 0
+    for marker in _RUB_START.finditer(text):
+        end = marker.start()
+        if end < currency_end:
+            continue
+        currency = _match_unit(text, end, _RUB_UNITS)
+        if currency is None:
+            continue
+        currency_end, interrupted_currency = currency
         last = end
         while last and _token_space(text[last - 1]):
             last -= 1
@@ -144,8 +173,12 @@ def _rub_tokens(text: str) -> list[tuple[str, str]]:
             )
         ):
             numeral = ""
-        kopecks, interrupted = _possible_kopecks(text, currency.end())
-        if interrupted or any(char not in _SPACE_CHARS for char in text[last:end]):
+        kopecks, interrupted = _possible_kopecks(text, currency_end)
+        if (
+            interrupted_currency
+            or interrupted
+            or any(char not in _SPACE_CHARS for char in text[last:end])
+        ):
             numeral = ""
         matches.append((numeral, kopecks))
     return matches
