@@ -119,6 +119,31 @@ def test_independent_complete_readings_keep_both_page_addresses(
     assert not candidate.source_ambiguous
 
 
+def test_bare_number_needs_an_adjacent_header_address(module_path, tmp_path):
+    document = _document(tmp_path)
+    label = SourceObservation(
+        "Акт", PageLocator(kind="page", page=1, bbox=(0.1, 0.1, 0.2, 0.2)), "native"
+    )
+    reading = SourceObservation(
+        "№ 412", PageLocator(kind="page", page=1, bbox=(0.8, 0.8, 0.9, 0.9)), "native"
+    )
+    supplied = replace(document, observations=(label, reading))
+    (record,) = identify_documents([supplied], synthetic=True).documents
+    number = next(item for item in record.candidates if item.field == "doc_number")
+    assert number.value == "412" and number.sources == () and number.source_ambiguous
+    assert record.number_requires_review
+
+    adjacent = (
+        replace(label, locator=PageLocator(kind="page", page=1, line=3)),
+        replace(reading, locator=PageLocator(kind="page", page=1, line=4)),
+    )
+    (record,) = identify_documents(
+        [replace(supplied, observations=adjacent)], synthetic=True
+    ).documents
+    number = next(item for item in record.candidates if item.field == "doc_number")
+    assert number.value == "412" and number.sources == adjacent[1:] and not number.source_ambiguous
+
+
 def test_unambiguous_issuer_response_can_omit_candidate_list(module_path, tmp_path):
     document = _document(tmp_path)
     issuer = SourceObservation(

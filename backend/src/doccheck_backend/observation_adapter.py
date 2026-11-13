@@ -33,6 +33,12 @@ _PREDICTIONS = {
     "description",
     "evidence_quote",
 }
+_DOCUMENT_HEADER = re.compile(
+    r"^\s*(?:акт\b|сч[её]т\b|упд\b|ведомость\b|справка\b|"
+    r"служебная\s+записка\b|универсальный\s+передаточный\s+документ\b|"
+    r"номер\s+(?:документа|акта)\b|(?:№\s*)?документ(?:а)?\b)",
+    re.IGNORECASE,
+)
 
 
 class ObservationInputError(ValueError):
@@ -289,6 +295,19 @@ def _contains_complete_reading(field: str, value: str | None, text: str) -> bool
         return False
 
 
+def _has_document_number_context(source: SourceObservation, prepared: _Prepared) -> bool:
+    if _DOCUMENT_HEADER.match(source.text):
+        return True
+    if not re.match(r"^\s*(?:№|N(?:[oоº°])?\.?)", source.text, re.I):
+        # This can be the value half of an addressed, compound reading.
+        return True
+    return any(
+        _DOCUMENT_HEADER.match(previous.text) and _adjacent(previous, source)
+        for candidates in prepared.sources.values()
+        for previous in candidates
+    )
+
+
 def _evidence_sources(
     value: object,
     prepared: _Prepared,
@@ -311,6 +330,10 @@ def _evidence_sources(
             sources.append(matches[0])
         elif len(matches) != 1:
             ambiguous = True
+    if field == "doc_number":
+        trusted = [source for source in sources if _has_document_number_context(source, prepared)]
+        ambiguous = ambiguous or len(trusted) != len(sources)
+        sources = trusted
     if len(evidence) < 2:
         return tuple(sources), ambiguous
 
@@ -389,7 +412,8 @@ def _record(raw: dict[str, object], prepared: _Prepared) -> DocumentIdentity:
         for field, value in source_facts.items()
         if facts.get(field) != value
     )
-    candidates.extend(_number_candidates(number, prepared))
+    numbers = _number_candidates(number, prepared)
+    candidates.extend(numbers)
     candidates.append(
         _candidate("doc_type", doc_type.get("value"), doc_type.get("evidence"), prepared)
     )
@@ -412,7 +436,7 @@ def _record(raw: dict[str, object], prepared: _Prepared) -> DocumentIdentity:
         prepared.acquisition,
         tuple(candidates),
         _required_text(number.get("status")),
-        manual,
+        manual or numbers[0].source_ambiguous,
         _mapping(raw.get("fact_conflicts")),
         _required_text(issuer.get("status")),
         tax_conflict,
