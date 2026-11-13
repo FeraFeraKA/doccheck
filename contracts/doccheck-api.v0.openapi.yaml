@@ -195,7 +195,14 @@ paths:
       - name: evidence_id
         in: path
         required: true
-        schema: {$ref: '#/components/schemas/Id'}
+        schema:
+          type: string
+          minLength: 1
+          pattern: '^(?!\.{1,2}$)[^/\\]+$'
+        description: |
+          ID из результата, закодированный как один сегмент URL. Для ID
+          с разделителем пути или равного "." либо ".." используйте
+          GET /fragments с параметром evidence_id.
     get:
       operationId: getFragment
       summary: Получить адресное доказательство из результата
@@ -205,13 +212,33 @@ paths:
         Адрес locator относится к скачиваемому оригиналу. API возвращает
         структурный адрес, отдельное изображение фрагмента не требуется.
       responses:
-        '200':
-          description: Сохранённое адресное доказательство.
-          content:
-            application/json:
-              schema: {$ref: './check-result.v1.schema.json#/$defs/Evidence'}
+        '200': {$ref: '#/components/responses/Fragment'}
         '404': {$ref: '#/components/responses/NotFound'}
         '409': {$ref: '#/components/responses/ResultUnavailable'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+  /api/v0/runs/{run_id}/documents/{document_id}/fragments:
+    parameters:
+      - $ref: '#/components/parameters/RunId'
+      - $ref: '#/components/parameters/DocumentId'
+      - name: evidence_id
+        in: query
+        required: true
+        schema: {type: string, minLength: 1}
+        description: |
+          Точный ID из результата. Передайте как query-параметр, например
+          через new URLSearchParams({evidence_id: id}). Так разделители
+          пути, точки, Unicode и символ % сохраняют исходное значение.
+    get:
+      operationId: getFragmentById
+      summary: Получить адресное доказательство по ID в параметре запроса
+      description: |
+        Выдаёт то же сохранённое доказательство и проверяет принадлежность
+        тем же заданию и документу, что и маршрут с ID в пути.
+      responses:
+        '200': {$ref: '#/components/responses/Fragment'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/ResultUnavailable'}
+        '422': {$ref: '#/components/responses/InvalidInput'}
         '503': {$ref: '#/components/responses/Unavailable'}
   /api/v0/runs/{run_id}/exports/xlsx:
     parameters:
@@ -246,6 +273,11 @@ components:
       required: true
       schema: {$ref: '#/components/schemas/Id'}
   responses:
+    Fragment:
+      description: Сохранённое адресное доказательство.
+      content:
+        application/json:
+          schema: {$ref: './check-result.v1.schema.json#/$defs/Evidence'}
     InvalidInput:
       description: |
         invalid_input — неверные поля, число файлов, пустой файл, ключ,
@@ -256,7 +288,8 @@ components:
     NotFound:
       description: |
         run_not_found, document_not_found или fragment_not_found. Недоступный
-        оригинал получает document_not_found. ID из другого задания не раскрывается.
+        или изменённый оригинал получает document_not_found. ID из другого
+        задания не раскрывается.
       content:
         application/json:
           schema: {$ref: '#/components/schemas/ApiError'}
