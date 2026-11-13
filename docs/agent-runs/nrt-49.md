@@ -43,6 +43,8 @@ OpenAPI статическая. Запуск CI для актуальной па
   `pnpm lint`, `pnpm typecheck`, `pnpm test` (13 тестов) и `pnpm build`.
   Контрольный TSX с дублирующимся `id` отклонён правилом
   `react(jsx-no-duplicate-props)`. После удаления файла линтер прошёл.
+- `pnpm test:e2e` прошёл на `ee2e9d949d2dc169d3c8f7cdb0fab0b1bb719e3c`.
+  Шесть сценариев Chromium проверили синтетическую сверку, мобильный экран,
+  выбор файлов и работу стартовой страницы с подменённым API.
 - `docker compose config --quiet` и `git diff --check` прошли.
-  Docker daemon локально недоступен. Локальный Playwright ждёт
-  освобождения порта 4173. GitHub Actions проверяется после публикации.
+  Docker daemon локально недоступен. GitHub Actions проверяется после публикации.
