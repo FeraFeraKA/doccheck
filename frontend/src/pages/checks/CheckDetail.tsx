@@ -3,6 +3,7 @@ import { Link, NavLink, useParams } from 'react-router';
 import { loadCheckRun, runStatusLabels } from './checkData';
 import type { RunDetails } from './checkData';
 import { demoJob } from './demoData';
+import { DocumentSourcePreview } from './DocumentSourcePreview';
 import { FindingsHttpError, loadFindings } from './loadFindings';
 import { formatDecimal, formatLocation, statusLabels } from './reviewResult';
 import type { ReviewResult } from './reviewResult';
@@ -112,7 +113,7 @@ function ResultContent({ id, view, result, synthetic, stored }: ResultContentPro
       </nav>
       {view === 'table' && <>
         {result.rows.length > 0
-          ? <Reconciliation result={result} />
+          ? <Reconciliation result={result} storedRunId={stored ? id : undefined} />
           : <section className="checks-card"><h2>Показатели</h2><p>Показатели отсутствуют.</p></section>}
         {synthetic && summary.counts.discrepancy > 0 && <section className="checks-card">
           <h2>Возможные причины расхождений</h2>
@@ -142,10 +143,11 @@ function ResultContent({ id, view, result, synthetic, stored }: ResultContentPro
   );
 }
 
-function Reconciliation({ result }: { result: ReviewResult }) {
+function Reconciliation({ result, storedRunId }: { result: ReviewResult; storedRunId?: string }) {
   const { rows, evidence, documents, summary } = result;
   const [selectedId, setSelectedId] = useState(rows[0]?.id);
   const [evidenceId, setEvidenceId] = useState<string>();
+  const [openSourceId, setOpenSourceId] = useState<string>();
   const row = rows.find(({ id }) => id === selectedId) ?? rows[0];
   const issue = summary.primary_issues.find(({ id }) => id === row?.root_issue_id);
   const fileErrorIds = new Set(issue?.file_error_refs);
@@ -182,6 +184,7 @@ function Reconciliation({ result }: { result: ReviewResult }) {
                 <td><button type="button" aria-pressed={item.id === row?.id} onClick={() => {
                   setSelectedId(item.id);
                   setEvidenceId(undefined);
+                  setOpenSourceId(undefined);
                 }}>{item.label}</button></td>
                 <td>{item.unit}</td>
                 <td>{formatDecimal(item.reported_value)}</td>
@@ -219,7 +222,10 @@ function Reconciliation({ result }: { result: ReviewResult }) {
           <p key={error.id}>{item.name} · {error.message}</p>
         )))}
         {sources.length > 0 && <label>Доказательство
-          <select value={source?.id} onChange={(event) => setEvidenceId(event.target.value)}>
+          <select value={source?.id} onChange={(event) => {
+            setEvidenceId(event.target.value);
+            setOpenSourceId(undefined);
+          }}>
             {sources.map((item) => (
               <option key={item.id} value={item.id}>{documents.find(({ id }) => id === item.document_id)?.name}
                 {' · '}{formatLocation(item.locator)}</option>
@@ -232,14 +238,27 @@ function Reconciliation({ result }: { result: ReviewResult }) {
             {document.decision.state !== 'include' && <>
               <dt>Решение по документу</dt><dd>{decisions[document.decision.state]}</dd>
             </>}
-            <dt>Адрес</dt><dd>{formatLocation(source.locator)}</dd>
+            <dt>Адрес в результате</dt><dd>{formatLocation(source.locator)}</dd>
             {'bbox' in source.locator && source.locator.bbox && <>
               <dt>Координаты фрагмента</dt><dd>{source.locator.bbox.join(', ')}</dd>
             </>}
             <dt>Значение источника</dt><dd>{source.raw_value}</dd>
           </dl>
         ) : <p>Адрес источника недоступен.</p>}
-        <p className="checks-caption">Просмотр оригиналов подключается отдельно.</p>
+        {storedRunId && source && document && <>
+          <button type="button" aria-expanded={openSourceId === source.id}
+            onClick={() => setOpenSourceId(openSourceId === source.id ? undefined : source.id)}>
+            {openSourceId === source.id ? 'Закрыть просмотр источника' : 'Просмотреть источник'}
+          </button>
+          {openSourceId === source.id && (
+            <DocumentSourcePreview
+              runId={storedRunId}
+              document={{ id: document.id, name: document.name, format: document.format ?? null }}
+              evidenceId={source.id}
+            />
+          )}
+        </>}
+        {!storedRunId && <p className="checks-caption">В готовом примере доступны адреса источников.</p>}
       </section>
     </div>
   );

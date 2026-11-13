@@ -43,6 +43,7 @@ test('the accountant opens the synthetic reconciliation and sees discrepancies a
   await page.reload();
   await expect(page.getByText('Действия бухгалтера недоступны в синтетическом режиме.')).toBeVisible();
   await expect(page.getByText('Ошибка чтения', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Просмотреть источник' })).toHaveCount(0);
   expect(apiRequests).toEqual([]);
 });
 
@@ -305,4 +306,49 @@ test('mixed units stay visible even when all values in a row are unknown', async
   await expect(hours.getByRole('cell', { name: 'Не проверен', exact: true })).toBeVisible();
   await expect(hours.getByRole('cell', { name: '—', exact: true })).toHaveCount(3);
   await expect(hours.getByText(/Частичная сумма/)).toHaveCount(0);
+});
+
+test('the selected stored evidence opens its own original and address', async ({ page }) => {
+  const runId = 'run-with-source';
+  const result = { ...example.result, run_id: runId };
+  const requested: string[] = [];
+  await page.route('**/api/v0/runs/run-with-source', (route) => route.fulfill({ json: {
+    run_id: runId, status: 'completed_with_issues', created_at: '2026-11-13T12:00:00Z', error: null,
+    progress: { processed_documents: 4, total_documents: 4 },
+  } }));
+  await page.route('**/api/v0/runs/run-with-source/findings', (route) => route.fulfill({ json: result }));
+  await page.route('**/api/v0/runs/run-with-source/documents/**', (route) => {
+    const url = new URL(route.request().url());
+    requested.push(url.pathname + url.search);
+    const evidenceId = url.searchParams.get('evidence_id');
+    if (evidenceId === null) {
+      return route.fulfill({ body: 'Synthetic file', contentType: 'application/octet-stream' });
+    }
+    const evidence = result.evidence.find(({ id }) => id === evidenceId);
+    return route.fulfill({ json: evidence });
+  });
+  await page.goto('/checks/' + runId);
+
+  const open = page.getByRole('button', { name: 'Просмотреть источник' });
+  await expect(open).toBeVisible();
+  expect(requested).toEqual([]);
+  await open.click();
+  const preview = page.getByRole('region', { name: 'Просмотр источника' });
+  await expect(preview.getByRole('link', { name: 'Открыть страницу 1 PDF (в новой вкладке)' }))
+    .toHaveAttribute('href', /^blob:.*#page=1$/);
+  await expect(preview.getByRole('link', { name: 'Скачать оригинал' })).toHaveAttribute('download', 'synthetic-report.pdf');
+  expect(requested).toEqual(expect.arrayContaining([
+    '/api/v0/runs/run-with-source/documents/report',
+    '/api/v0/runs/run-with-source/documents/report/fragments?evidence_id=report-a',
+  ]));
+
+  await page.getByLabel('Доказательство').selectOption('amount-1');
+  await expect(preview).toHaveCount(0);
+  await open.click();
+  await expect(preview.getByText(/Лист «Синтетика», C6/)).toBeVisible();
+  await expect(preview.getByText('Для просмотра по адресу откройте скачанный файл в офисном приложении.')).toBeVisible();
+  expect(requested).toEqual(expect.arrayContaining([
+    '/api/v0/runs/run-with-source/documents/ledger',
+    '/api/v0/runs/run-with-source/documents/ledger/fragments?evidence_id=amount-1',
+  ]));
 });
