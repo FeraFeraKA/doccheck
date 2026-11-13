@@ -40,10 +40,37 @@ def test_summary_keeps_scope_and_unknown_coverage_visible(result: CheckResult) -
     assert row.reported_value == "0.00" and row.expected_value is None and row.delta is None
     assert result.scope.contract_number in summary.conclusion
     assert f"{result.scope.period_start} — {result.scope.period_end}" in summary.conclusion
-    assert "неизвестное у 1" in summary.conclusion
-    assert "основание не установлено" in summary.conclusion
+    assert "Неизвестное покрытие (основание не установлено — 1)" in summary.conclusion
     assert "Исключено документов 1, документов с ошибками 1." in summary.conclusion
     assert "0.00" not in summary.conclusion
+
+
+def test_summary_distinguishes_swapped_coverage_bases(result: CheckResult) -> None:
+    conclusions = []
+    for complete_basis, incomplete_basis in (
+        ("manifest", "user_declaration"),
+        ("user_declaration", "manifest"),
+    ):
+        findings = result.model_dump(mode="json")
+        findings["rows"][0]["completeness"].update(
+            basis=complete_basis, reason="Проверено основание полноты синтетической статьи A"
+        )
+        findings["rows"][1]["completeness"].update(
+            basis=incomplete_basis, reason="Проверено основание неполноты синтетической статьи B"
+        )
+        validated = CheckResult.model_validate(findings)
+        summary = build_summary(
+            validated.scope, validated.rows, validated.documents, validated.summary.primary_issues
+        )
+        assert summary.counts == result.summary.counts
+        conclusions.append(summary.conclusion)
+
+    first, second = conclusions
+    assert first != second
+    assert "Полное покрытие (манифест документов — 1)" in first
+    assert "Неполное покрытие (заявление пользователя — 1)" in first
+    assert "Полное покрытие (заявление пользователя — 1)" in second
+    assert "Неполное покрытие (манифест документов — 1)" in second
 
 
 def test_summary_counts_rows_and_preserves_one_issue_for_two_linked_rows(

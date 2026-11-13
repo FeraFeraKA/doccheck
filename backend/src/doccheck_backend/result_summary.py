@@ -18,6 +18,11 @@ _BASIS_LABELS = {
     "dataset_fixture": "профиль синтетического набора",
     "none": "основание не установлено",
 }
+_COVERAGE_LABELS = {
+    "complete": "Полное покрытие",
+    "incomplete": "Неполное покрытие",
+    "unknown": "Неизвестное покрытие",
+}
 
 
 def build_summary(
@@ -44,17 +49,15 @@ def build_summary(
             f"Подтверждено {counts.verified}, с расхождениями {counts.discrepancy}, "
             f"не проверено {counts.unverified}."
         )
-        completeness = Counter(row.completeness.state for row in rows)
-        sentences.append(
-            f"Полное покрытие у {completeness['complete']} показателей, "
-            f"неполное у {completeness['incomplete']}, неизвестное у {completeness['unknown']}."
-        )
-        bases = {row.completeness.basis for row in rows}
-        sentences.append(
-            "При оценке полноты указаны "
-            + ", ".join(label for basis, label in _BASIS_LABELS.items() if basis in bases)
-            + "."
-        )
+        coverage = Counter((row.completeness.state, row.completeness.basis) for row in rows)
+        for state, label in _COVERAGE_LABELS.items():
+            entries = [
+                f"{basis_label} — {coverage[state, basis]}"
+                for basis, basis_label in _BASIS_LABELS.items()
+                if coverage[state, basis]
+            ]
+            if entries:
+                sentences.append(f"{label} ({', '.join(entries)}).")
 
     exclusions = sum(document.decision.state == "exclude" for document in documents)
     documents_with_errors = sum(bool(document.errors) for document in documents)
