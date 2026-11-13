@@ -44,3 +44,7 @@ class Run(Base):
     scope: Mapped[dict[str, object]] = mapped_column(JSONB)
     documents: Mapped[list[dict[str, object]]] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    result: Mapped[dict[str, object] | None] = mapped_column(JSONB(none_as_null=True))
+    error: Mapped[dict[str, object] | None] = mapped_column(JSONB(none_as_null=True))
