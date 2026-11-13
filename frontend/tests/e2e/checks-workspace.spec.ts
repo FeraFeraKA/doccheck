@@ -71,3 +71,39 @@ test('the upload wizard selects files without secure-context APIs', async ({ pag
   await expect(page.getByText('example.pdf', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Далее' })).toBeEnabled();
 });
+
+test('the accountant distinguishes missing files, invalid selection and unknown checks', async ({ page }) => {
+  await page.goto('/checks/new');
+  await expect(page.getByText('КФЗ пока не выбрана.')).toBeVisible();
+  await page.getByLabel('Выберите КФЗ').setInputFiles({
+    name: 'empty.pdf',
+    mimeType: 'application/pdf',
+    buffer: Buffer.alloc(0),
+  });
+  await expect(page.getByRole('alert')).toHaveText('Добавьте непустые PDF, DOCX, XLSX или PNG.');
+  await expect(page.getByRole('button', { name: 'Далее' })).toBeDisabled();
+
+  await page.getByRole('button', { name: 'Загрузить пример' }).click();
+  await page.getByRole('button', { name: 'Далее' }).click();
+  await expect(page.getByText('Первичные документы пока не выбраны.')).toBeVisible();
+
+  await page.goto('/checks/unknown/conclusion');
+  await expect(page.getByRole('heading', { name: 'Проверка не найдена' })).toBeVisible();
+  await page.getByRole('link', { name: 'Все проверки' }).click();
+  await expect(page.getByRole('link', { name: 'Синтетическая сверка' })).toBeVisible();
+  await page.getByRole('searchbox', { name: 'Поиск' }).fill('нет совпадений');
+  await expect(page.getByText('Проверки не найдены.')).toBeVisible();
+});
+
+test('the synthetic conclusion shows XLSX export as unavailable', async ({ page }) => {
+  await page.goto('/checks');
+  await page.getByRole('link', { name: 'Синтетическая сверка' }).click();
+  await page.getByRole('link', { name: 'Заключение' }).click();
+
+  const download = page.getByRole('button', { name: 'Скачать XLSX' });
+  await expect(download).toBeVisible();
+  await expect(download).toBeDisabled();
+  const note = 'Скачивание результата станет доступно после подключения экспорта.';
+  await expect(download).toHaveAccessibleDescription(note);
+  await expect(page.getByText(note)).toBeVisible();
+});
