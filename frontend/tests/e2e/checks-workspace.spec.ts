@@ -8,19 +8,12 @@ test('the accountant opens the synthetic reconciliation and sees discrepancies a
   });
 
   await page.goto('/checks/new');
-  await expect(page.getByText('Синтетический режим · файлы остаются в браузере')).toBeVisible();
   await expect(page.getByRole('group', { name: 'Роль интерфейса' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Аспирант' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Бухгалтер' })).toHaveCount(0);
   await expect(page.getByLabel('Выберите КФЗ')).toBeVisible();
   await expect(page.getByText(/собирает сводные значения из первичных документов/)).toBeVisible();
   await expect(page.getByRole('button', { name: 'Далее' })).toBeDisabled();
-  await page.getByRole('button', { name: 'Загрузить пример' }).click();
-  await expect(page.getByText('01_kfz.pdf')).toBeVisible();
-  await page.getByRole('button', { name: 'Далее' }).click();
-  await expect(page.getByLabel('Выберите первичные документы')).toBeVisible();
-  await page.getByRole('button', { name: 'Загрузить пример' }).click();
-  await expect(page.getByText('02_payroll_06.xlsx')).toBeVisible();
   await page.getByRole('link', { name: 'Открыть готовый синтетический результат' }).click();
 
   const discrepancy = page.getByRole('row').filter({ hasText: 'Синтетическая статья A' });
@@ -91,8 +84,13 @@ test('the accountant distinguishes missing files, invalid selection and unknown 
   await expect(page.getByRole('alert')).toHaveText('Добавьте непустые PDF, DOCX, XLSX или PNG.');
   await expect(page.getByRole('button', { name: 'Далее' })).toBeDisabled();
 
-  await page.getByRole('button', { name: 'Загрузить пример' }).click();
+  await page.getByLabel('Выберите КФЗ').setInputFiles({
+    name: 'report.pdf',
+    mimeType: 'application/pdf',
+    buffer: Buffer.from('%PDF-1.4 synthetic report'),
+  });
   await page.getByRole('button', { name: 'Далее' }).click();
+  await expect(page.getByRole('button', { name: 'Отправить на проверку' })).toBeDisabled();
   await expect(page.getByText('Первичные документы пока не выбраны.')).toBeVisible();
 
   await page.goto('/checks/unknown/conclusion');
