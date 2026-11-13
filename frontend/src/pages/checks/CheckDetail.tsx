@@ -1,21 +1,17 @@
 import { useLayoutEffect, useRef, useState } from 'react';
-import { Link, NavLink, useParams } from 'react-router';
+import { Link, useParams } from 'react-router';
 import { loadCheckRun, runStatusLabels } from './checkData';
 import type { RunDetails } from './checkData';
 import { demoJob } from './demoData';
 import { DocumentSourcePreview } from './DocumentSourcePreview';
 import { FindingsHttpError, loadFindings } from './loadFindings';
+import { ResultHeader } from './ResultHeader';
+import type { CheckView } from './ResultHeader';
+import { ResultSummary, resultHeadline, resultTone } from './ResultSummary';
 import { formatDecimal, formatLocation, statusLabels } from './reviewResult';
 import type { ReviewResult } from './reviewResult';
 import { useCheckData } from './useCheckData';
-import { isRunId } from './runStatusApi';
-import { XlsxDownload } from './XlsxDownload';
 import './result-workspace.css';
-
-const tabs = [
-  ['', 'Сверка'], ['/documents', 'Документы'], ['/exceptions', 'Исключения'],
-  ['/conclusion', 'Заключение'], ['/log', 'Журнал проверки'],
-];
 
 const componentEvidenceFields = [
   ['amount_refs', 'Сумма'],
@@ -24,8 +20,6 @@ const componentEvidenceFields = [
   ['article_refs', 'Статья'],
   ['identity_refs', 'Идентификация документа'],
 ] as const;
-
-type CheckView = 'table' | 'documents' | 'exceptions' | 'conclusion' | 'log';
 
 function formatSourceChoice(locator: ReviewResult['evidence'][number]['locator']) {
   const location = formatLocation(locator);
@@ -45,9 +39,11 @@ export function CheckDetail({ view, loadRun = loadCheckRun }: {
 
   return (
     <>
-      <nav className="result-breadcrumb" aria-label="Путь к проверке">
-        <Link to="/checks">← Все проверки</Link>
-      </nav>
+      {(state.phase !== 'ready' || !state.data) && (
+        <nav className="result-breadcrumb" aria-label="Путь к проверке">
+          <Link to="/checks">← Все проверки</Link>
+        </nav>
+      )}
       {state.phase === 'loading' && <p role="status">Загрузка проверки…</p>}
       {state.phase === 'failed' && <section className="checks-card">
         <p role="alert">Не удалось получить состояние проверки.</p>
@@ -63,24 +59,32 @@ export function CheckDetail({ view, loadRun = loadCheckRun }: {
 function RunContent({ id, view, run }: { id: string; view: CheckView; run: RunDetails }) {
   const { result, status } = run;
   const hasStoredResult = status === 'completed' || status === 'completed_with_issues';
+  if (result) return <ResultContent id={id} view={view} result={result} run={run} synthetic stored={false} />;
+  if (hasStoredResult) return <StoredFindings id={id} view={view} run={run} />;
+  return <PendingRun run={run} />;
+}
 
-  return (
-    <>
-      {id === demoJob.run_id && <p className="checks-demo">Синтетическая сверка · готовый пример</p>}
-      <div className="result-header">
-        <h1>{run.title}</h1>
-        <p role="status" className="result-run-state">Состояние проверки · {runStatusLabels[status]}</p>
-      </div>
+function RunState({ run }: { run: RunDetails }) {
+  const { status } = run;
+  return <>
+      <p role="status" className="result-run-state">Состояние проверки · {runStatusLabels[status]}</p>
       {run.progress && (
         <p>Обработано документов: {run.progress.processed} из {run.progress.total}</p>
       )}
       {status === 'processing' && !run.progress && <p>Число обработанных документов пока неизвестно.</p>}
       {status === 'failed' && <p role="alert">{run.error ?? 'Не удалось выполнить проверку.'}</p>}
       {status === 'completed_with_issues' && run.error && <p role="alert">{run.error}</p>}
-      {result && <ResultContent id={id} view={view} result={result} synthetic stored={false} />}
-      {!result && hasStoredResult && <StoredFindings id={id} view={view} />}
-    </>
-  );
+  </>;
+}
+
+function PendingRun({ run }: { run: RunDetails }) {
+  return <>
+    <nav className="result-breadcrumb" aria-label="Путь к проверке">
+      <Link to="/checks">← Все проверки</Link>
+    </nav>
+    <div className="result-header"><h1>{run.title}</h1></div>
+    <RunState run={run} />
+  </>;
 }
 
 async function loadStoredFindings(id: string, signal: AbortSignal) {
@@ -92,77 +96,66 @@ async function loadStoredFindings(id: string, signal: AbortSignal) {
   }
 }
 
-function StoredFindings({ id, view }: { id: string; view: CheckView }) {
+function StoredFindings({ id, view, run }: { id: string; view: CheckView; run: RunDetails }) {
   const { state, retry } = useCheckData(id, loadStoredFindings);
 
-  if (state.phase === 'loading') return <p role="status">Загрузка результата сверки…</p>;
-  if (state.phase === 'failed') return <section className="checks-card">
+  if (state.phase === 'loading') return <><PendingRun run={run} /><p role="status">Загрузка результата сверки…</p></>;
+  if (state.phase === 'failed') return <><PendingRun run={run} /><section className="checks-card">
     <p role="alert">Не удалось загрузить результат сверки.</p>
     <button type="button" onClick={retry}>Повторить загрузку результата</button>
-  </section>;
+  </section></>;
 
-  if (state.data === null) return <section className="checks-card">
+  if (state.data === null) return <><PendingRun run={run} /><section className="checks-card">
     <p role="status">Результат проверки недоступен.</p>
     <button type="button" onClick={retry}>Повторить загрузку результата</button>
-  </section>;
+  </section></>;
 
   const { result, synthetic } = state.data;
-  return <>
-    {synthetic && <p className="checks-demo">Синтетический результат · сохранённая проверка</p>}
-    <ResultContent id={id} view={view} result={result} synthetic={synthetic} stored />
-  </>;
+  return <ResultContent id={id} view={view} result={result} run={run} synthetic={synthetic} stored />;
 }
 
 interface ResultContentProps {
   id: string;
   view: CheckView;
   result: ReviewResult;
+  run: RunDetails;
   synthetic: boolean;
   stored: boolean;
 }
 
-function ResultContent({ id, view, result, synthetic, stored }: ResultContentProps) {
+function ResultContent({ id, view, result, run, synthetic, stored }: ResultContentProps) {
   const { summary, documents, scope } = result;
   const runPath = '/checks/' + encodeURIComponent(id);
+  const tone = resultTone(summary.counts);
+  const syntheticLabel = id === demoJob.run_id ? 'Синтетическая сверка · готовый пример'
+    : synthetic ? 'Синтетический результат · сохранённая проверка' : undefined;
 
   return (
     <>
-      <p className="result-scope">Договор {scope.contract_number} · {scope.period_start} — {scope.period_end}</p>
-      <nav className="result-tabs" aria-label="Разделы проверки">
-        {tabs.map(([suffix, label]) => <NavLink key={suffix} to={runPath + suffix} end>{label}</NavLink>)}
-      </nav>
+      <ResultHeader title={run.title} runPath={runPath} view={view} scope={scope}
+        conclusion={resultHeadline[tone]} tone={tone} syntheticLabel={syntheticLabel} />
+      {stored && <div className="stored-run-status mt-3 text-[13px]"><RunState run={run} /></div>}
+      {(view === 'table' || view === 'conclusion') && <ResultSummary id={id} runPath={runPath} result={result} stored={stored} />}
       {view === 'table' && <>
-        <div className="result-overview">
-          <span><i aria-hidden="true" /> Подтверждено <strong>{summary.counts.verified}</strong></span>
-          <span>Не проверено <strong>{summary.counts.unverified}</strong></span>
-          <span>Документов <strong>{documents.length}</strong></span>
+        <div className="mt-6">
+          {result.rows.length > 0
+            ? <Reconciliation result={result} storedRunId={stored ? id : undefined} />
+            : <section className="checks-card"><h2>Показатели</h2><p>Показатели отсутствуют.</p></section>}
         </div>
-        {result.rows.length > 0
-          ? <Reconciliation result={result} storedRunId={stored ? id : undefined} />
-          : <section className="checks-card"><h2>Показатели</h2><p>Показатели отсутствуют.</p></section>}
         {synthetic && summary.counts.discrepancy > 0 && <section className="checks-card">
           <h2>Возможные причины расхождений</h2>
           <p>Правила сверки могут предложить объяснение для проверки бухгалтером. В этом примере таких гипотез нет.</p>
         </section>}
       </>}
-      {view === 'documents' && <Documents documents={documents} />}
+      {view === 'documents' && <>
+        <Documents documents={documents} />
+        <Link to={runPath + '/exceptions'} className="mt-3 inline-block">Исключения</Link>
+      </>}
       {view === 'exceptions' && (
         <Documents title="Исключения" documents={documents.filter((doc) => doc.decision.state !== 'include')}
           empty="Исключений нет."
           notice={synthetic ? 'Действия бухгалтера недоступны в синтетическом режиме.' : undefined} />
       )}
-      {view === 'conclusion' && <section className="checks-card">
-        <h2>Заключение</h2><p>{summary.conclusion}</p>
-        <ul>{summary.primary_issues.map((issue) => <li key={issue.id}>{issue.message}</li>)}</ul>
-        <div className="checks-export">
-          {stored && isRunId(id) ? <XlsxDownload key={id} runId={id} /> : <>
-            <button type="button" disabled aria-describedby="checks-export-note">Скачать XLSX</button>
-            <p id="checks-export-note" className="checks-caption">
-              Скачивание XLSX доступно для сохранённой проверки.
-            </p>
-          </>}
-        </div>
-      </section>}
       {view === 'log' && <CheckLog synthetic={synthetic} />}
     </>
   );
