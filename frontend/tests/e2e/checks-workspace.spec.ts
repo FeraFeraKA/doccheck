@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import example from '../../../contracts/check-result.v1.synthetic.json' with { type: 'json' };
 
 test('the accountant opens the synthetic reconciliation and sees discrepancies and sources', async ({ page }) => {
   const apiRequests: string[] = [];
@@ -42,6 +43,7 @@ test('the accountant opens the synthetic reconciliation and sees discrepancies a
   await page.reload();
   await expect(page.getByText('Действия бухгалтера недоступны в синтетическом режиме.')).toBeVisible();
   await expect(page.getByText('Ошибка чтения', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Просмотреть источник' })).toHaveCount(0);
   expect(apiRequests).toEqual([]);
 });
 
@@ -116,6 +118,10 @@ test('saved run and history cursor are recovered from the URL', async ({ page })
   await page.route('**/api/v0/runs/saved-run', (route) => route.fulfill({ json: {
     ...summary, progress: { processed_documents: 2, total_documents: 2 },
   } }));
+  await page.route('**/api/v0/runs/saved-run/findings', (route) => route.fulfill({
+    status: 409,
+    json: { code: 'result_pending', message: 'Результат пока недоступен' },
+  }));
   await page.goto('/checks');
   await expect(page.getByRole('link', { name: 'Синтетическая сверка' })).toBeVisible();
   await page.getByRole('link', { name: 'Более ранние проверки' }).click();
@@ -141,4 +147,175 @@ test('the synthetic conclusion shows XLSX export as unavailable', async ({ page 
   const note = 'Скачивание результата станет доступно после подключения экспорта.';
   await expect(download).toHaveAccessibleDescription(note);
   await expect(page.getByText(note)).toBeVisible();
+});
+
+test('the finished check loads stored findings and can retry without repeating status polling', async ({ page }) => {
+  const runId = 'partial-result';
+  const [first, ...otherRows] = example.result.rows;
+  const findings = {
+    ...example.result,
+    run_id: runId,
+    rows: [{
+      ...first,
+      expected_value: null,
+      observed_evidence_sum: first.calculation.components[0].amount,
+      delta: null,
+      status: 'unverified',
+      completeness: { ...first.completeness, state: 'incomplete', reason: 'Не хватает одной операции', evidence_refs: [] },
+      calculation: { ...first.calculation, components: first.calculation.components.slice(0, 1) },
+      reasons: [{ code: 'missing_evidence', message: 'Одна операция не подтверждена', evidence_refs: [] }],
+      root_issue_id: null,
+    }, ...otherRows],
+    summary: {
+      ...example.result.summary,
+      counts: { verified: 0, discrepancy: 0, unverified: 2 },
+      primary_issues: example.result.summary.primary_issues.filter((issue) => issue.id !== 'issue-a'),
+      conclusion: 'Оба показателя остаются непроверенными.',
+    },
+  };
+  let statusCalls = 0;
+  await page.route('**/api/v0/runs/partial-result', (route) => {
+    statusCalls += 1;
+    return route.fulfill({ json: {
+      run_id: runId, status: 'completed_with_issues', created_at: '2026-11-13T12:00:00Z', error: null,
+      progress: { processed_documents: 4, total_documents: 4 },
+    } });
+  });
+  let finishFailure: (() => void) | undefined;
+  const firstFailure = new Promise<void>((resolve) => { finishFailure = resolve; });
+  let findingsCalls = 0;
+  await page.route('**/api/v0/runs/partial-result/findings', async (route) => {
+    findingsCalls += 1;
+    if (findingsCalls === 1) {
+      await firstFailure;
+      return route.fulfill({ status: 503, json: { code: 'service_unavailable', message: 'Сервис недоступен' } });
+    }
+    return route.fulfill({ json: findings });
+  });
+  await page.goto('/checks/partial-result');
+  await expect(page.getByText('Загрузка результата сверки…')).toBeVisible();
+  finishFailure?.();
+  await expect(page.getByRole('alert')).toHaveText('Не удалось загрузить результат сверки.');
+  await expect(page.getByText('Состояние проверки · Завершена с замечаниями')).toBeVisible();
+  await page.getByRole('button', { name: 'Повторить загрузку результата' }).click();
+
+  await expect(page.getByText('Синтетический результат · сохранённая проверка')).toBeVisible();
+  const partial = page.getByRole('row').filter({ hasText: 'Синтетическая статья A' });
+  await expect(partial.getByText('Частичная сумма: 60,25 RUB')).toBeVisible();
+  await expect(partial.getByRole('cell', { name: '—', exact: true })).toBeVisible();
+  await expect(partial.getByRole('cell', { name: 'Не проверен', exact: true })).toBeVisible();
+  await page.getByLabel('Доказательство').selectOption('amount-1');
+  await expect(page.getByText('Лист «Синтетика», C6', { exact: true })).toBeVisible();
+  await page.getByText('Основания по слагаемым').click();
+  await expect(page.getByText(/Операция в строке 6 совпала по договору/)).toBeVisible();
+
+  const zero = page.getByRole('row').filter({ hasText: 'Синтетическая статья B' });
+  await expect(zero.getByRole('cell', { name: '0,00', exact: true })).toBeVisible();
+  await zero.getByRole('button').click();
+  await expect(page.getByText('Источник статьи B не прочитан')).toBeVisible();
+  await expect(page.getByText(/Ошибка чтения файла/)).toBeVisible();
+  await page.getByRole('link', { name: 'Исключения' }).click();
+  await expect(page.getByText('Ошибка чтения', { exact: true })).toBeVisible();
+  expect(statusCalls).toBe(1);
+  expect(findingsCalls).toBe(2);
+});
+
+test('a non-synthetic saved result with no rows has an explicit empty state', async ({ page }) => {
+  await page.route('**/api/v0/runs/empty-run', (route) => route.fulfill({ json: {
+    run_id: 'empty-run', status: 'completed', created_at: '2026-11-13T12:00:00Z', error: null,
+    progress: { processed_documents: 2, total_documents: 2 },
+  } }));
+  await page.route('**/api/v0/runs/empty-run/findings', (route) => route.fulfill({ json: {
+    ...example.result,
+    run_id: 'empty-run',
+    synthetic: false,
+    scope: { ...example.result.scope, report_row_locator: example.result.evidence[0].locator },
+    rows: [],
+    summary: {
+      counts: { verified: 0, discrepancy: 0, unverified: 0 },
+      primary_issues: [],
+      conclusion: 'Показатели отсутствуют.',
+    },
+  } }));
+
+  await page.goto('/checks/empty-run');
+  await expect(page.getByText('Показатели отсутствуют.', { exact: true })).toBeVisible();
+  await expect(page.getByText('Синтетический результат · сохранённая проверка')).toHaveCount(0);
+  await expect(page.getByRole('table')).toHaveCount(0);
+});
+
+test('mixed units stay visible even when all values in a row are unknown', async ({ page }) => {
+  const [money, missing] = example.result.rows;
+  const quantity = {
+    ...missing,
+    unit: 'ч',
+    reported_value: null,
+    reported_evidence_refs: [],
+  };
+  const result = {
+    ...example.result,
+    run_id: 'mixed-units',
+    rows: [money, quantity],
+  };
+  await page.route('**/api/v0/runs/mixed-units', (route) => route.fulfill({ json: {
+    run_id: 'mixed-units', status: 'completed_with_issues', created_at: '2026-11-13T12:00:00Z', error: null,
+    progress: { processed_documents: 4, total_documents: 4 },
+  } }));
+  await page.route('**/api/v0/runs/mixed-units/findings', (route) => route.fulfill({ json: result }));
+
+  await page.goto('/checks/mixed-units');
+  const rub = page.getByRole('row').filter({ hasText: money.label });
+  for (const value of ['RUB', '150,50', '120,50', '30,00']) {
+    await expect(rub.getByRole('cell', { name: value, exact: true })).toBeVisible();
+  }
+  const hours = page.getByRole('row').filter({ hasText: quantity.label });
+  await expect(hours.getByRole('cell', { name: 'ч', exact: true })).toBeVisible();
+  await expect(hours.getByRole('cell', { name: 'Не проверен', exact: true })).toBeVisible();
+  await expect(hours.getByRole('cell', { name: '—', exact: true })).toHaveCount(3);
+  await expect(hours.getByText(/Частичная сумма/)).toHaveCount(0);
+});
+
+test('the selected stored evidence opens its own original and address', async ({ page }) => {
+  const runId = 'run-with-source';
+  const result = { ...example.result, run_id: runId };
+  const requested: string[] = [];
+  await page.route('**/api/v0/runs/run-with-source', (route) => route.fulfill({ json: {
+    run_id: runId, status: 'completed_with_issues', created_at: '2026-11-13T12:00:00Z', error: null,
+    progress: { processed_documents: 4, total_documents: 4 },
+  } }));
+  await page.route('**/api/v0/runs/run-with-source/findings', (route) => route.fulfill({ json: result }));
+  await page.route('**/api/v0/runs/run-with-source/documents/**', (route) => {
+    const url = new URL(route.request().url());
+    requested.push(url.pathname + url.search);
+    const evidenceId = url.searchParams.get('evidence_id');
+    if (evidenceId === null) {
+      return route.fulfill({ body: 'Synthetic file', contentType: 'application/octet-stream' });
+    }
+    const evidence = result.evidence.find(({ id }) => id === evidenceId);
+    return route.fulfill({ json: evidence });
+  });
+  await page.goto('/checks/' + runId);
+
+  const open = page.getByRole('button', { name: 'Просмотреть источник' });
+  await expect(open).toBeVisible();
+  expect(requested).toEqual([]);
+  await open.click();
+  const preview = page.getByRole('region', { name: 'Просмотр источника' });
+  await expect(preview.getByRole('link', { name: 'Открыть страницу 1 PDF (в новой вкладке)' }))
+    .toHaveAttribute('href', /^blob:.*#page=1$/);
+  await expect(preview.getByRole('link', { name: 'Скачать оригинал' })).toHaveAttribute('download', 'synthetic-report.pdf');
+  expect(requested).toEqual(expect.arrayContaining([
+    '/api/v0/runs/run-with-source/documents/report',
+    '/api/v0/runs/run-with-source/documents/report/fragments?evidence_id=report-a',
+  ]));
+
+  await page.getByLabel('Доказательство').selectOption('amount-1');
+  await expect(preview).toHaveCount(0);
+  await open.click();
+  await expect(preview.getByText(/Лист «Синтетика», C6/)).toBeVisible();
+  await expect(preview.getByText('Для просмотра по адресу откройте скачанный файл в офисном приложении.')).toBeVisible();
+  expect(requested).toEqual(expect.arrayContaining([
+    '/api/v0/runs/run-with-source/documents/ledger',
+    '/api/v0/runs/run-with-source/documents/ledger/fragments?evidence_id=amount-1',
+  ]));
 });
