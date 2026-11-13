@@ -61,7 +61,8 @@ it('после ошибки получения состояния повторя
       run_id: 'saved-run', status: 'completed_with_issues', created_at: '2026-11-13T12:00:00Z',
       error: { code: 'test_issue', message: 'Проверка завершилась с замечаниями' },
       progress: { processed_documents: 2, total_documents: 2 },
-    }));
+    }))
+    .mockResolvedValueOnce(Response.json({ code: 'result_pending', message: 'Нет результата' }, { status: 409 }));
   vi.stubGlobal('fetch', fetchMock);
 
   render(<MemoryRouter initialEntries={['/checks/saved-run']}>
@@ -71,9 +72,9 @@ it('после ошибки получения состояния повторя
   expect(await screen.findByRole('alert')).toHaveTextContent('Не удалось получить состояние проверки.');
   fireEvent.click(screen.getByRole('button', { name: 'Повторить' }));
   expect(await screen.findByText('Результат проверки недоступен.')).toBeVisible();
-  expect(screen.getByRole('status')).toHaveTextContent('Завершена с замечаниями');
+  expect(screen.getByText('Состояние проверки · Завершена с замечаниями')).toBeVisible();
   expect(screen.getByRole('alert')).toHaveTextContent('Проверка завершилась с замечаниями');
-  expect(fetchMock).toHaveBeenCalledTimes(2);
+  expect(fetchMock).toHaveBeenCalledTimes(3);
 });
 
 it('показывает прогресс задания без готового результата и игнорирует ответ для старого ID', async () => {
@@ -117,6 +118,9 @@ it.each([
   ['failed', 'Не удалось выполнить проверку.'],
   ['completed', 'Результат проверки недоступен.'],
 ] as const)('показывает отсутствие результата для состояния %s', async (status, message) => {
+  const fetchMock = vi.fn<typeof fetch>()
+    .mockResolvedValueOnce(Response.json({ code: 'result_pending', message: 'Результат пока недоступен' }, { status: 409 }));
+  vi.stubGlobal('fetch', fetchMock);
   const loadRun = async (): Promise<RunDetails> => ({
     title: 'Проверка',
     status,
@@ -129,6 +133,7 @@ it.each([
 
   expect(await screen.findByText(message)).toBeVisible();
   expect(screen.queryByRole('table')).not.toBeInTheDocument();
+  expect(fetchMock).toHaveBeenCalledTimes(status === 'completed' ? 1 : 0);
 });
 
 it('показывает абзац и ячейку таблицы DOCX в списке доказательств и панели источника', async () => {
