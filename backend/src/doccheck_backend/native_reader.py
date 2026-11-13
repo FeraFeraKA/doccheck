@@ -28,7 +28,7 @@ from doccheck_backend.contracts.locators import (
 from doccheck_backend.native_observations import NativeDocument, NativeIssue, Observation
 from doccheck_backend.native_xlsx import read_workbook
 
-_SPACE = r"[ \u00a0\u202f]"
+_SPACE = r"[ \u00a0\u2009\u202f]"
 _NUMBER = re.compile(
     rf"(?P<sign>[+−-]?){_SPACE}*"
     rf"(?P<integer>[0-9]{{1,3}}(?:{_SPACE}[0-9]{{3}})+|[0-9]+)"
@@ -38,9 +38,9 @@ _CURRENCY = r"(?:₽|руб(?:лей|ля|ль|\.)?|RUB|р\.)"
 _KOPECKS = r"коп(?:еек|ейки|ейка|\.)?"
 # Capture the whole printed numeral before validating grouping and separators.
 _EXPLICIT_RUB = re.compile(
-    rf"(?<![\w./,+−-])([+−-]?{_SPACE}*[0-9](?:[0-9., \u00a0\u202f]*[0-9])?)"
-    rf"{_SPACE}*{_CURRENCY}(?!\w)"
-    rf"(?:{_SPACE}+([0-9]+){_SPACE}*{_KOPECKS}(?!\w))?",
+    rf"(?<![\w./,+−-])([+−-]?{_SPACE}*[0-9](?:(?:[0-9.,]|{_SPACE})*[0-9])?)"
+    rf"{_SPACE}*{_CURRENCY}"
+    rf"(?:{_SPACE}*([0-9]+){_SPACE}*{_KOPECKS}(?!\w)|(?!\w))",
     re.IGNORECASE,
 )
 _MONEY_HEADER = re.compile(r"^(?:сумма|стоимость)\s*[,\s(]+(?:руб\.?|₽|rub)\)?$", re.I)
@@ -59,7 +59,7 @@ def _text_amount(text: str, *, rub_column: bool = False) -> Decimal | None:
     if len(matches) != 1:
         return None
     numeral, kopecks = matches[0]
-    number = _NUMBER.fullmatch(numeral.lstrip(" \u00a0\u202f"))
+    number = _NUMBER.fullmatch(numeral.lstrip(" \u00a0\u2009\u202f"))
     if number is None:
         return None
     sign, integer, fraction = number.groups()
@@ -106,8 +106,6 @@ def _pdf_text_lines(page: Page, visible_box: tuple[float, float, float, float]) 
     positions = {}
     for char in page.chars:
         x0, y0, x1, y1 = char["x0"], char["top"], char["x1"], char["bottom"]
-        if x1 <= left or x0 >= right or y1 <= top or y0 >= bottom:
-            continue
         if page.rotation == 90:
             position = (y0, -x1, y1, -x0)
         elif page.rotation == 180:
@@ -117,6 +115,7 @@ def _pdf_text_lines(page: Page, visible_box: tuple[float, float, float, float]) 
         else:
             position = (x0, y0, x1, y1)
         ux0, uy0, ux1, uy1 = position
+        visible = x1 > left and x0 < right and y1 > top and y0 < bottom
         clipped = x0 < left or x1 > right or y0 < top or y1 > bottom
         item = {
             **char,
@@ -126,27 +125,38 @@ def _pdf_text_lines(page: Page, visible_box: tuple[float, float, float, float]) 
             "bottom": uy1,
             "doctop": uy0,
             "upright": char["upright"] if page.rotation in (0, 180) else not char["upright"],
-            # A partial digit or sign cannot become a different amount.
-            "text": "�" if clipped else char["text"],
         }
-        positions[id(item)] = (
+        visible_position = (
             max(left, x0),
             max(top, y0),
             min(right, x1),
             min(bottom, y1),
             clipped,
         )
+        positions[id(item)] = visible_position if visible else None
         chars.append(item)
 
     lines = chars_to_textmap(chars).extract_text_lines()
+    visible_lines = []
     for line in lines:
         glyphs = [positions[id(char)] for char in line["chars"]]
+        visible_glyphs = [box for box in glyphs if box is not None]
+        if not visible_glyphs:
+            continue
+        if len(visible_glyphs) != len(glyphs) or any(box[4] for box in visible_glyphs):
+            # Do not expose hidden text or reparse a visible tail as a complete amount.
+            line["text"] = "".join(
+                char["text"] if box is not None and not box[4] else "�"
+                for char, box in zip(line["chars"], glyphs, strict=True)
+            )
+            line["clipped"] = True
+        glyphs = visible_glyphs
         line["x0"] = min(box[0] for box in glyphs)
         line["top"] = min(box[1] for box in glyphs)
         line["x1"] = max(box[2] for box in glyphs)
         line["bottom"] = max(box[3] for box in glyphs)
-        line["clipped"] = any(box[4] for box in glyphs)
-    return lines
+        visible_lines.append(line)
+    return visible_lines
 
 
 def _read_pdf(path: Path, collected: _Collected) -> None:

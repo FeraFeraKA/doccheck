@@ -251,6 +251,21 @@ def test_pdf_cropbox_partial_glyph_does_not_become_a_different_amount(tmp_path):
     assert [item.code for item in result.issues] == ["clipped_pdf_text"]
 
 
+@pytest.mark.parametrize("rotation", [0, 90, 180, 270])
+def test_pdf_cropbox_hides_whole_minus_without_observing_positive_value(tmp_path, rotation):
+    path = _minimal_pdf(
+        tmp_path / "upload",
+        ["-120,35 RUB"],
+        page_attrs=f"/CropBox [34 125 225 170] /Rotate {rotation}".encode(),
+    )
+    result = read_native_document(path, "pdf")
+    (observation,) = result.observations
+    assert observation.raw_text.startswith("�")
+    assert "-" not in observation.raw_text
+    assert observation.amount is None
+    assert [item.code for item in result.issues] == ["clipped_pdf_text"]
+
+
 def test_docx_paragraph_table_and_nonamount_numbers_keep_real_addresses(tmp_path):
     path = tmp_path / "upload"
     doc = Document()
@@ -282,6 +297,8 @@ def test_docx_monetary_tokens_preserve_sign_and_kopecks_or_report_ambiguity(tmp_
         "Сумма: 12 34,56 руб.",
         "Сумма: 1 руб. 125 коп.",
         "Сумма: 1,23 руб. 25 коп.",
+        "Сумма: −\u20099,75 руб.",
+        "Сумма: 1 руб.25 коп.",
     )
     for text in texts:
         doc.add_paragraph(text)
@@ -296,6 +313,8 @@ def test_docx_monetary_tokens_preserve_sign_and_kopecks_or_report_ambiguity(tmp_
         None,
         None,
         None,
+        Decimal("-9.75"),
+        Decimal("1.25"),
     ]
     assert [(issue.code, issue.locator.paragraph) for issue in result.issues] == [
         ("ambiguous_rub_amount", 5),
