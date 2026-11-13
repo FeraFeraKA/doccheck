@@ -1,10 +1,13 @@
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from tempfile import SpooledTemporaryFile
 from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from httpx import Request
 from sqlalchemy import create_engine, select
+from starlette import formparsers
 
 from doccheck_backend import uploads
 from doccheck_backend.api import create_app
@@ -95,6 +98,113 @@ def test_too_many_documents_matches_contract(tmp_path, count):
     assert response.status_code == 422
     assert response.json()["code"] == "invalid_input"
     assert not list(tmp_path.iterdir())
+
+
+def test_malformed_multipart_header_returns_invalid_request(tmp_path):
+    root = tmp_path / "runs"
+    settings = Settings("postgresql+psycopg://localhost/doccheck_unused", upload_root=root)
+    with TestClient(create_app(settings)) as client:
+        response = client.post(
+            "/api/v0/runs",
+            headers={
+                "Idempotency-Key": str(uuid4()),
+                "Content-Type": "multipart/form-data; boundary=doccheck",
+            },
+            content=b"--doccheck\r\nBAD HEADER\r\n\r\nvalue\r\n--doccheck--\r\n",
+        )
+    assert response.status_code == 400
+    assert response.json()["code"] == "invalid_request"
+    assert not root.exists()
+
+
+def test_incomplete_multipart_does_not_queue_a_run(database_url, tmp_path):
+    root = tmp_path / "runs"
+    key = uuid4()
+    encoded = Request(
+        "POST", "http://testserver/api/v0/runs", data=FIELDS, files=[REPORT, DOCUMENT]
+    )
+    body = encoded.read()
+    incomplete = body.removesuffix(b"--\r\n") + b"\r\n"
+    with TestClient(create_app(Settings(database_url, upload_root=root))) as client:
+        response = client.post(
+            "/api/v0/runs",
+            headers={"Idempotency-Key": str(key), "Content-Type": encoded.headers["Content-Type"]},
+            content=incomplete,
+        )
+        assert response.status_code == 400
+        assert response.json()["code"] == "invalid_request"
+        assert not root.exists()
+        assert submit(client, key).status_code == 202
+
+
+def test_incomplete_multipart_closes_unfinished_upload(tmp_path, monkeypatch):
+    opened = []
+
+    def track_upload(*args, **kwargs):
+        upload = SpooledTemporaryFile(*args, **kwargs)
+        opened.append(upload)
+        return upload
+
+    monkeypatch.setattr(formparsers, "SpooledTemporaryFile", track_upload)
+    settings = Settings("postgresql+psycopg://localhost/doccheck_unused", upload_root=tmp_path)
+    with TestClient(create_app(settings)) as client:
+        response = client.post(
+            "/api/v0/runs",
+            headers={
+                "Idempotency-Key": str(uuid4()),
+                "Content-Type": "multipart/form-data; boundary=doccheck",
+            },
+            content=(
+                b'--doccheck\r\nContent-Disposition: form-data; name="report"; '
+                b'filename="report.pdf"\r\n\r\n%PDF-1.4 synthetic report'
+            ),
+        )
+    assert response.status_code == 400
+    assert response.json()["code"] == "invalid_request"
+    assert len(opened) == 1
+    assert opened[0].closed
+
+
+@pytest.mark.parametrize(
+    ("data", "field"),
+    [
+        ({**FIELDS, "contract_number": "DEMO\x00-1"}, "contract_number"),
+        (
+            {**FIELDS, "report_row_locator": r'{"kind":"page","page":1,"fragment_id":"f\u0000"}'},
+            "report_row_locator",
+        ),
+    ],
+)
+def test_null_character_in_scope_is_invalid_input(database_url, tmp_path, data, field):
+    root = tmp_path / "runs"
+    with TestClient(create_app(Settings(database_url, upload_root=root))) as client:
+        response = submit(client, uuid4(), data=data)
+    assert response.status_code == 422
+    assert response.json()["code"] == "invalid_input"
+    assert response.json()["field"] == field
+    assert not root.exists()
+
+
+def test_null_character_in_filename_is_invalid_input(tmp_path):
+    root = tmp_path / "runs"
+    encoded = Request(
+        "POST", "http://testserver/api/v0/runs", data=FIELDS, files=[REPORT, DOCUMENT]
+    )
+    body = encoded.read().replace(b'filename="support.png"', b'filename="sup\x00port.png"')
+    settings = Settings("postgresql+psycopg://localhost/doccheck_unused", upload_root=root)
+    with TestClient(create_app(settings)) as client:
+        response = client.post(
+            "/api/v0/runs",
+            headers={
+                "Idempotency-Key": str(uuid4()),
+                "Content-Type": encoded.headers["Content-Type"],
+            },
+            content=body,
+        )
+    assert response.status_code == 422
+    assert response.json()["code"] == "invalid_input"
+    assert response.json()["field"] == "documents"
+    assert not root.exists()
 
 
 def test_upload_limits(tmp_path, monkeypatch):

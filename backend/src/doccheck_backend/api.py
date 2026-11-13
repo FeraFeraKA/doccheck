@@ -1,5 +1,5 @@
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator, AsyncIterator
+from contextlib import aclosing, asynccontextmanager
 from uuid import UUID
 
 from fastapi import FastAPI, HTTPException, Request
@@ -7,8 +7,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.concurrency import run_in_threadpool
-from starlette.exceptions import HTTPException as StarletteHTTPException
-from starlette.types import Message
+from starlette.formparsers import MultiPartException, MultiPartParser
 
 from doccheck_backend.config import Settings
 from doccheck_backend.database import create_database_engine
@@ -22,6 +21,14 @@ from doccheck_backend.uploads import (
     size_error,
     store_run,
 )
+
+
+class _RunMultipartParser(MultiPartParser):
+    complete = False
+
+    def on_end(self) -> None:
+        # The underlying parser can return finished parts without a closing boundary.
+        self.complete = True
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -61,18 +68,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             except ValueError:
                 raise UploadError(422, "invalid_input", "Некорректный Idempotency-Key") from None
 
-            received = 0
+            async def bounded_stream() -> AsyncGenerator[bytes, None]:
+                received = 0
+                async with aclosing(request.stream()) as stream:
+                    async for chunk in stream:
+                        received += len(chunk)
+                        if received > MAX_MULTIPART_SIZE:
+                            raise size_error()
+                        yield chunk
+                if not parser.complete:
+                    # Fail inside parsing so Starlette closes any unfinished uploads.
+                    raise MultiPartException("Missing closing boundary in multipart.")
 
-            async def bounded_receive() -> Message:
-                nonlocal received
-                message = await request.receive()
-                received += len(message.get("body", b""))
-                if received > MAX_MULTIPART_SIZE:
-                    raise size_error()
-                return message
-
-            bounded_request = Request(request.scope, receive=bounded_receive)
-            async with bounded_request.form(max_files=MAX_DOCUMENTS + 1, max_fields=8) as form:
+            async with aclosing(bounded_stream()) as stream:
+                parser = _RunMultipartParser(
+                    request.headers, stream, max_files=MAX_DOCUMENTS + 1, max_fields=8
+                )
+                form = await parser.parse()
+            try:
                 run_id = await run_in_threadpool(
                     store_run,
                     request.app.state.engine,
@@ -80,8 +93,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     parsed_key,
                     form,
                 )
-        except StarletteHTTPException as exc:
-            if exc.detail.startswith(("Too many files.", "Too many fields.")):
+            finally:
+                await form.close()
+        except MultiPartException as exc:
+            if exc.message.startswith(("Too many files.", "Too many fields.")):
                 return JSONResponse(
                     status_code=422,
                     content={"code": "invalid_input", "message": "Слишком много частей формы"},

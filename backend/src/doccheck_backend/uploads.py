@@ -75,6 +75,8 @@ def _get_files(form: FormData, field: str, maximum: int) -> list[UploadFile]:
     for item in form.getlist(field):
         if not isinstance(item, UploadFile) or not item.filename:
             raise input_error("Ожидается файл", field)
+        if "\x00" in item.filename:
+            raise input_error("Недопустимый символ в имени файла", field)
         if item.size is None or item.size == 0:
             raise input_error("Файл пуст", field)
         if item.size > MAX_FILE_SIZE:
@@ -91,11 +93,15 @@ def _parse_scope(form: FormData, report_id: str, report_format: str) -> Scope:
         parts = form.getlist(field)
         if len(parts) != 1 or not isinstance(parts[0], str) or not parts[0].strip():
             raise input_error("Ожидается одно непустое значение", field)
+        if "\x00" in parts[0]:
+            raise input_error("Недопустимый символ в значении поля", field)
         values[field] = parts[0]
     try:
         locator = locator_adapter.validate_json(values["report_row_locator"])
     except ValidationError:
         raise input_error("Некорректный адрес строки КФЗ", "report_row_locator") from None
+    if any(isinstance(value, str) and "\x00" in value for value in locator.model_dump().values()):
+        raise input_error("Недопустимый символ в адресе строки КФЗ", "report_row_locator")
     if locator.kind not in LOCATOR_KINDS[report_format]:
         raise input_error("Адрес не соответствует формату КФЗ", "report_row_locator")
     try:
