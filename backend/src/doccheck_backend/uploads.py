@@ -22,7 +22,7 @@ MAX_FILE_SIZE = 50 * 1024**2
 MAX_PACKAGE_SIZE = 250 * 1024**2
 MAX_MULTIPART_SIZE = MAX_PACKAGE_SIZE + 2 * 1024**2
 MAX_DOCUMENTS = 100
-SCOPE_FIELDS = {"contract_number", "period_start", "period_end", "report_row_locator"}
+SCOPE_FIELDS = ("contract_number", "period_start", "period_end", "report_row_locator")
 LOCATOR_KINDS = {
     "pdf": {"page"},
     "png": {"page"},
@@ -139,7 +139,7 @@ def _sync_directory(path: Path) -> None:
 
 
 def store_run(engine: Engine, root: Path, key: UUID, form: FormData) -> UUID:
-    if set(form) - (SCOPE_FIELDS | {"report", "documents"}):
+    if set(form) - {*SCOPE_FIELDS, "report", "documents"}:
         raise input_error("Неизвестное поле")
     (report,) = _get_files(form, "report", 1)
     uploads = [report, *_get_files(form, "documents", MAX_DOCUMENTS)]
@@ -147,7 +147,9 @@ def store_run(engine: Engine, root: Path, key: UUID, form: FormData) -> UUID:
         raise size_error()
     formats = [_file_format(upload) for upload in uploads]
     ids = [uuid4().hex for _ in uploads]
-    scope = _parse_scope(form, ids[0], formats[0])
+    stored_scope = {}
+    if any(field in form for field in SCOPE_FIELDS):
+        stored_scope = _parse_scope(form, ids[0], formats[0]).model_dump(mode="json")
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
     staging = Path(mkdtemp(prefix=".upload-", dir=root))
     try:
@@ -164,8 +166,10 @@ def store_run(engine: Engine, root: Path, key: UUID, form: FormData) -> UUID:
                 zip(uploads, ids, formats, strict=True)
             )
         ]
+        fingerprint_scope = stored_scope.copy()
+        fingerprint_scope.pop("report_document_id", None)
         fingerprint = {
-            "scope": scope.model_dump(mode="json", exclude={"report_document_id"}),
+            "scope": fingerprint_scope,
             "files": [[doc["name"], doc["sha256"]] for doc in documents],
         }
         digest = sha256(json.dumps(fingerprint, sort_keys=True).encode()).hexdigest()
@@ -178,7 +182,7 @@ def store_run(engine: Engine, root: Path, key: UUID, form: FormData) -> UUID:
                     idempotency_key=key,
                     request_digest=digest,
                     status="queued",
-                    scope=scope.model_dump(mode="json"),
+                    scope=stored_scope,
                     documents=documents,
                 )
                 .on_conflict_do_nothing(index_elements=[Run.idempotency_key])

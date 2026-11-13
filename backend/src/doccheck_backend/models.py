@@ -41,6 +41,7 @@ class Run(Base):
     idempotency_key: Mapped[UUID] = mapped_column(Uuid, unique=True)
     request_digest: Mapped[str] = mapped_column(String(64))
     status: Mapped[str] = mapped_column(String(24))
+    # An empty object means the upload did not include a user-supplied scope.
     scope: Mapped[dict[str, object]] = mapped_column(JSONB)
     documents: Mapped[list[dict[str, object]]] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
