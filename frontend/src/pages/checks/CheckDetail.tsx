@@ -27,6 +27,13 @@ const componentEvidenceFields = [
 
 type CheckView = 'table' | 'documents' | 'exceptions' | 'conclusion' | 'log';
 
+function formatSourceChoice(locator: ReviewResult['evidence'][number]['locator']) {
+  const location = formatLocation(locator);
+  return 'bbox' in locator && locator.bbox
+    ? `${location} · Рамка (${locator.bbox.join(', ')})`
+    : location;
+}
+
 export function CheckDetail({ view, loadRun = loadCheckRun }: {
   view: CheckView;
   loadRun?: (
@@ -335,7 +342,7 @@ function Reconciliation({ result, storedRunId }: { result: ReviewResult; storedR
                         return <li key={field + ':' + id}>
                           {item && file ? (
                             <button type="button" aria-pressed={source?.id === id} onClick={() => selectSource(id)}>
-                              {label} · {file.name} · {formatLocation(item.locator)}
+                              {label} · {file.name} · {formatSourceChoice(item.locator)}
                             </button>
                           ) : <span>{label} · Адрес источника недоступен.</span>}
                         </li>;
@@ -356,7 +363,7 @@ function Reconciliation({ result, storedRunId }: { result: ReviewResult; storedR
               <select value={source?.id} onChange={(event) => selectSource(event.target.value)}>
                 {sources.map((item) => (
                   <option key={item.id} value={item.id}>{documentsById.get(item.document_id)?.name}
-                    {' · '}{formatLocation(item.locator)}</option>
+                    {' · '}{formatSourceChoice(item.locator)}</option>
                 ))}
               </select>
               </label>
