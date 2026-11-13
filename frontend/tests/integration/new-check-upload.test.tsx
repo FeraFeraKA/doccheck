@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useParams } from 'react-router';
 import { afterEach, expect, it, vi } from 'vitest';
 import { NewCheck } from '../../src/pages/checks';
@@ -25,7 +25,6 @@ function pick(label: string, files: File[]) {
 
 function selectPacket() {
   pick('Выберите КФЗ', [new File(['synthetic report'], 'report.pdf')]);
-  fireEvent.click(screen.getByRole('button', { name: /^Первичные документы$/ }));
   pick('Выберите первичные документы', [
     new File(['synthetic second'], 'B.xlsx'),
     new File(['synthetic first'], 'A.docx'),
@@ -102,4 +101,20 @@ it('не отправляет синтетический пример и отм�
   expect(await screen.findByRole('heading', { name: 'Карточка synthetic-example' })).toBeVisible();
   await waitFor(() => expect(state?.signal?.aborted).toBe(true));
   expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+
+it('принимает первичные документы до отчёта и показывает ошибки отдельно', () => {
+  renderWizard();
+  const report = screen.getByRole('region', { name: 'КФЗ' });
+  const documents = screen.getByRole('region', { name: 'Первичные документы' });
+
+  pick('Выберите КФЗ', [new File([], 'empty.pdf')]);
+  pick('Выберите первичные документы', [new File(['support'], 'support.xlsx')]);
+  expect(within(documents).getByText('support.xlsx')).toBeVisible();
+  expect(within(report).getByRole('alert')).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Отправить на проверку' })).toBeDisabled();
+
+  pick('Выберите КФЗ', [new File(['synthetic report'], 'report.docx')]);
+  expect(within(report).queryByRole('alert')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Отправить на проверку' })).toBeEnabled();
 });
