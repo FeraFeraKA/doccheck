@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { Link, NavLink, useParams } from 'react-router';
 import { loadCheckRun, runStatusLabels } from './checkData';
 import type { RunDetails } from './checkData';
@@ -160,6 +160,9 @@ function Reconciliation({ result, storedRunId }: { result: ReviewResult; storedR
   const [selectedId, setSelectedId] = useState(() => rows.find(({ status }) => status === 'discrepancy')?.id);
   const [evidenceId, setEvidenceId] = useState<string>();
   const [openSourceId, setOpenSourceId] = useState<string>();
+  const tableScroll = useRef<HTMLDivElement>(null);
+  const selectedRow = useRef<HTMLTableRowElement>(null);
+  const pendingIssueScroll = useRef<string>(undefined);
   const discrepancies = rows.filter(({ status }) => status === 'discrepancy');
   const search = query.trim().toLocaleLowerCase('ru');
   const visible = rows.filter(({ label, status }) =>
@@ -167,6 +170,28 @@ function Reconciliation({ result, storedRunId }: { result: ReviewResult; storedR
   );
   const row = visible.find(({ id }) => id === selectedId) ?? visible[0];
   const issueIndex = discrepancies.findIndex(({ id }) => id === row?.id);
+
+  useLayoutEffect(() => {
+    if (pendingIssueScroll.current === undefined || pendingIssueScroll.current !== selectedId) return;
+    pendingIssueScroll.current = undefined;
+    const container = tableScroll.current;
+    const selected = selectedRow.current;
+    if (!container || !selected) return;
+
+    const rowBounds = selected.getBoundingClientRect();
+    const containerBounds = container.getBoundingClientRect();
+    const headerHeight = selected.closest('table')?.tHead?.offsetHeight ?? 0;
+    const top = rowBounds.top - containerBounds.top - headerHeight;
+    const bottom = rowBounds.bottom - containerBounds.top - container.clientHeight;
+    if (top < 0) container.scrollTop += top;
+    else if (bottom > 0) container.scrollTop += bottom;
+
+    // On a narrow screen the table itself can sit below the viewport.
+    const visibleBounds = selected.getBoundingClientRect();
+    const viewportHeight = window.document.documentElement.clientHeight;
+    if (visibleBounds.top < 0) window.scrollBy(0, visibleBounds.top);
+    else if (visibleBounds.bottom > viewportHeight) window.scrollBy(0, visibleBounds.bottom - viewportHeight);
+  }, [filter, query, selectedId]);
 
   function selectRow(id?: string) {
     setSelectedId(id);
@@ -178,6 +203,7 @@ function Reconciliation({ result, storedRunId }: { result: ReviewResult; storedR
     const next = issueIndex < 0 ? (direction === 1 ? 0 : discrepancies.length - 1) : issueIndex + direction;
     const issue = discrepancies[next];
     if (!issue) return;
+    pendingIssueScroll.current = issue.id;
     setQuery('');
     setFilter('discrepancy');
     selectRow(issue.id);
@@ -222,7 +248,10 @@ function Reconciliation({ result, storedRunId }: { result: ReviewResult; storedR
           <strong>Сверка с документами</strong>
         </div>
         <div className="issue-navigation">
-          <p className="issue-counter" aria-live="polite">Расхождения: {summary.counts.discrepancy}</p>
+          <p className="issue-counter">Расхождения: {summary.counts.discrepancy}</p>
+          {discrepancies.length > 0 && <p aria-live="polite">
+            Расхождение {issueIndex < 0 ? '—' : issueIndex + 1} из {discrepancies.length}
+          </p>}
           <button type="button" aria-label="Предыдущее расхождение" disabled={discrepancies.length === 0 || issueIndex === 0}
             onClick={() => moveIssue(-1)}>↑</button>
           <button type="button" aria-label="Следующее расхождение" disabled={discrepancies.length === 0 || issueIndex === discrepancies.length - 1}
@@ -246,11 +275,11 @@ function Reconciliation({ result, storedRunId }: { result: ReviewResult; storedR
             <input type="search" aria-label="Поиск показателя" placeholder="Поиск показателя…" value={query}
               onChange={(event) => { setQuery(event.target.value); selectRow(); }} />
           </div>
-          <div className="reconcile-table-scroll" role="region" aria-label="Таблица показателей" tabIndex={0}>
+          <div ref={tableScroll} className="reconcile-table-scroll" role="region" aria-label="Таблица показателей" tabIndex={0}>
             <table className="reconcile-table">
               <thead><tr><th scope="col">Показатель</th><th scope="col">Ед. изм.</th><th scope="col">КФЗ</th><th scope="col">По первичным документам</th><th scope="col">Δ</th><th scope="col">Статус</th></tr></thead>
               <tbody>{visible.map((item) => (
-                <tr key={item.id} data-selected={item.id === row?.id} data-status={item.status}>
+                <tr key={item.id} ref={item.id === row?.id ? selectedRow : undefined} data-selected={item.id === row?.id} data-status={item.status}>
                   <td><button className="row-name-button" type="button" aria-pressed={item.id === row?.id} onClick={() => selectRow(item.id)}>
                     <span className="row-status" data-status={item.status} aria-hidden="true">{item.status === 'verified' ? '✓' : item.status === 'discrepancy' ? '!' : '–'}</span>
                     {item.label}
