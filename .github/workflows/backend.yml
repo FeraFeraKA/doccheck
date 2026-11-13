@@ -44,5 +44,7 @@ jobs:
         run: |
           uv run --frozen ruff check src migrations tests
           uv run --frozen ruff format --check src migrations tests
+      - name: Validate OpenAPI and referenced schemas
+        run: uv run --frozen openapi-spec-validator ../contracts/doccheck-api.v0.openapi.yaml
       - name: Test PostgreSQL, real HTTP and separate worker
         run: uv run --frozen pytest tests --ignore=tests/ml_module -v
