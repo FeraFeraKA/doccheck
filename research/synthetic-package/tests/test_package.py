@@ -81,9 +81,9 @@ class PackageTests(unittest.TestCase):
             target = Path(directory) / "kit"
             shutil.copytree(PACKAGE, target)
             path = target / "expectations/manifest.json"
-            data = json.loads(path.read_text())
+            data = json.loads(path.read_text(encoding="utf-8"))
             data["rows"][0]["expected_amount"] = "0.00"
-            path.write_text(json.dumps(data))
+            path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
             with self.assertRaises(AssertionError):
                 verify(target)
 
