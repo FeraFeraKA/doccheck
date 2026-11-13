@@ -27,3 +27,20 @@ class SyntheticJob(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class Run(Base):
+    __tablename__ = "runs"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('queued', 'processing', 'completed', 'completed_with_issues', 'failed')"
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    idempotency_key: Mapped[UUID] = mapped_column(Uuid, unique=True)
+    request_digest: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(24))
+    scope: Mapped[dict[str, object]] = mapped_column(JSONB)
+    documents: Mapped[list[dict[str, object]]] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
