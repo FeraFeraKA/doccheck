@@ -106,6 +106,7 @@ Worker передаёт `DocumentInput` с `id`, `source_path`, `source_sha256`,
   },
   "calculation": {
     "policy_id": "demo-sum/1",
+    "operation": "sum",
     "formula": "Сумма допущенных операций",
     "components": [{
       "amount": "120.25",
@@ -139,7 +140,7 @@ Worker передаёт `DocumentInput` с `id`, `source_path`, `source_sha256`,
 | `ev-demo-period` | `period` | `demo-support` | `{"start":"2025-02-01","end":"2025-02-28"}` | `{"kind":"sheet","sheet":"Синтетика","range":"A3"}` |
 | `ev-demo-article` | `article` | `demo-support` | `"DEMO-A"` | `{"kind":"sheet","sheet":"Синтетика","range":"A6"}` |
 
-Адрес ячейки DOCX может выглядеть как `{"kind":"table_cell","table":1,"row":2,"cell":2}`. Машинная схема, полный синтетический результат и проверки сумм, ссылок и координат следуют в NRT-86/NRT-18.
+Адрес ячейки DOCX может выглядеть как `{"kind":"table_cell","table":1,"row":2,"cell":2}`. Полный синтетический результат и машинная схема той же версии находятся в [контракте NRT-86/NRT-18](../contracts/README.md).
 
 У синтетического PNG со строками и денежными колонками `{"kind":"page","page":1,"bbox":null}` открывает страницу. Сумма без другого источника остаётся `null`. Адрес `{"kind":"page","page":1,"bbox":null,"table_row":3,"table_column":4}` пригоден для доказательства, если таблица однозначна и эта ячейка проверена. Для текстового PDF `{"kind":"page","page":1,"bbox":null,"line":7}` пригоден, если сохранённое извлечение воспроизводит строку и однозначно указывает на значение.
 
