@@ -21,13 +21,14 @@ export function CheckDetail({ view }: { view: string }) {
       <h1>Синтетическая сверка</h1>
       <p>Договор {scope.contract_number} · {scope.period_start} — {scope.period_end}</p>
       <nav className="checks-tabs" aria-label="Разделы проверки">
-        {tabs.filter(([suffix]) => suffix !== '/exceptions' || role === 'Бухгалтер').map(([suffix, label]) => <NavLink key={suffix} to={demoRunPath + suffix} end>{label}</NavLink>)}
+        {tabs.map(([suffix, label]) => <NavLink key={suffix} to={demoRunPath + suffix} end>{label}</NavLink>)}
       </nav>
       {view === 'table' && <Reconciliation />}
       {view === 'documents' && <Documents documents={documents} />}
-      {view === 'exceptions' && (role === 'Бухгалтер'
-        ? <Documents documents={documents.filter((doc) => doc.decision.state !== 'include')} />
-        : <section className="checks-card"><h2>Исключения</h2><p>Откройте этот раздел в представлении бухгалтера.</p></section>)}
+      {view === 'exceptions' && (
+        <Documents title="Исключения" documents={documents.filter((doc) => doc.decision.state !== 'include')}
+          notice={role === 'Аспирант' ? 'Режим просмотра' : 'Действия бухгалтера недоступны в синтетическом режиме.'} />
+      )}
       {view === 'conclusion' && <section className="checks-card">
         <h2>Заключение</h2><p>{summary.conclusion}</p>
         <ul>{summary.primary_issues.map((issue) => <li key={issue.id}>{issue.message}</li>)}</ul>
@@ -106,9 +107,14 @@ const decisions: Record<string, string> = {
   include: 'Включён', exclude: 'Исключён', needs_review: 'Требует проверки', parse_error: 'Ошибка чтения',
 };
 
-function Documents({ documents }: { documents: typeof demoResult.documents }) {
+function Documents({ documents, title = 'Документы', notice }: {
+  documents: typeof demoResult.documents;
+  title?: string;
+  notice?: string;
+}) {
   return <section className="checks-card">
-    <h2>Документы</h2>
+    <h2>{title}</h2>
+    {notice && <p role="status" className="checks-caption">{notice}</p>}
     <div className="checks-table-scroll">
       <table>
         <thead><tr><th>Файл</th><th>Роль</th><th>Решение</th><th>Основание</th></tr></thead>

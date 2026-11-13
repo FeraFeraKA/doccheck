@@ -24,13 +24,14 @@ test('Lovable workspace uses local examples and links values to their sources', 
   await row.getByRole('button').click();
   await expect(page.getByText('Страница 1, строка 4, столбец 2', { exact: true })).toBeVisible();
 
-  await expect(page.getByRole('link', { name: 'Исключения' })).toHaveCount(0);
-  await page.getByRole('button', { name: 'Бухгалтер' }).click();
   await page.getByRole('link', { name: 'Исключения' }).click();
+  await expect(page.getByText('Режим просмотра')).toBeVisible();
+  await expect(page.getByText('Ошибка чтения', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Бухгалтер' }).click();
+  await expect(page.getByText('Действия бухгалтера недоступны в синтетическом режиме.')).toBeVisible();
   await expect(page.getByText('Ошибка чтения', { exact: true })).toBeVisible();
   await page.reload();
-  await expect(page.getByText('Откройте этот раздел в представлении бухгалтера.')).toBeVisible();
-  await page.getByRole('button', { name: 'Бухгалтер' }).click();
+  await expect(page.getByText('Режим просмотра')).toBeVisible();
   await expect(page.getByText('Ошибка чтения', { exact: true })).toBeVisible();
   expect(apiRequests).toEqual([]);
 });
