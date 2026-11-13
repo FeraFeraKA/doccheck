@@ -30,11 +30,12 @@ function Card({ title, children }: { title: string; children: ReactNode }) {
   </section>;
 }
 
-export function ResultSummary({ id, runPath, result, stored }: {
+export function ResultSummary({ id, runPath, result, stored, onOpenRow }: {
   id: string;
   runPath: string;
   result: ReviewResult;
   stored: boolean;
+  onOpenRow?: (rowId: string) => void;
 }) {
   const noteId = useId();
   const { counts, conclusion, primary_issues: issues } = result.summary;
@@ -80,7 +81,17 @@ export function ResultSummary({ id, runPath, result, stored }: {
         <Card title="Найденные проблемы">
           {issues.length > 0 ? (
             <ul className="space-y-2 text-[13px]">
-              {issues.map((issue) => <li key={issue.id}>{issue.message}</li>)}
+              {issues.map((issue) => {
+                const row = result.rows.find((item) => item.root_issue_id === issue.id);
+                return <li key={issue.id}>
+                  <span>{issue.message}</span>
+                  {row && onOpenRow && <button type="button"
+                    className="mt-1 block text-left underline"
+                    onClick={() => onOpenRow(row.id)}>
+                    К показателю «{row.label}»
+                  </button>}
+                </li>;
+              })}
             </ul>
           ) : <p className="result-summary-muted text-sm">Первичные замечания отсутствуют.</p>}
           <Link to={runPath + '/exceptions'} className="mt-2 inline-block text-[13px]">Исключения</Link>

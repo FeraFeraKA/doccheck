@@ -125,6 +125,7 @@ interface ResultContentProps {
 }
 
 function ResultContent({ id, view, result, run, synthetic, stored }: ResultContentProps) {
+  const [rowJump, setRowJump] = useState<{ id: string }>();
   const { summary, documents, scope } = result;
   const runPath = '/checks/' + encodeURIComponent(id);
   const tone = resultTone(summary.counts);
@@ -136,11 +137,12 @@ function ResultContent({ id, view, result, run, synthetic, stored }: ResultConte
       <ResultHeader title={run.title} runPath={runPath} view={view} scope={scope}
         conclusion={resultHeadline[tone]} tone={tone} syntheticLabel={syntheticLabel} />
       {stored && <div className="stored-run-status mt-3 text-[13px]"><RunState run={run} /></div>}
-      {(view === 'table' || view === 'conclusion') && <ResultSummary id={id} runPath={runPath} result={result} stored={stored} />}
+      {(view === 'table' || view === 'conclusion') && <ResultSummary id={id} runPath={runPath} result={result} stored={stored}
+        onOpenRow={view === 'table' ? (rowId) => setRowJump({ id: rowId }) : undefined} />}
       {view === 'table' && <>
         <div className="mt-6">
           {result.rows.length > 0
-            ? <Reconciliation result={result} storedRunId={stored ? id : undefined} />
+            ? <Reconciliation result={result} storedRunId={stored ? id : undefined} rowJump={rowJump} />
             : <section className="checks-card"><h2>Показатели</h2><p>Показатели отсутствуют.</p></section>}
         </div>
         {synthetic && summary.counts.discrepancy > 0 && <section className="checks-card">
@@ -178,7 +180,11 @@ function resultRowEvidenceIds(
   ];
 }
 
-function Reconciliation({ result, storedRunId }: { result: ReviewResult; storedRunId?: string }) {
+function Reconciliation({ result, storedRunId, rowJump }: {
+  result: ReviewResult;
+  storedRunId?: string;
+  rowJump?: { id: string };
+}) {
   const { rows, evidence, documents, summary } = result;
   const [filter, setFilter] = useState('all');
   const [query, setQuery] = useState('');
@@ -189,6 +195,7 @@ function Reconciliation({ result, storedRunId }: { result: ReviewResult; storedR
   const tableScroll = useRef<HTMLDivElement>(null);
   const selectedRow = useRef<HTMLTableRowElement>(null);
   const pendingIssueScroll = useRef<{ id: string; focus: boolean }>(undefined);
+  const lastRowJump = useRef<typeof rowJump>(undefined);
   const discrepancies = rows.filter(({ status }) => status === 'discrepancy');
   const documentsById = new Map(documents.map((item) => [item.id, item]));
   const allEvidenceById = new Map(evidence.map((item) => [item.id, item]));
@@ -208,12 +215,25 @@ function Reconciliation({ result, storedRunId }: { result: ReviewResult; storedR
   const issueIndex = discrepancies.findIndex(({ id }) => id === row?.id);
 
   useLayoutEffect(() => {
+    if (!rowJump || rowJump === lastRowJump.current) return;
+    lastRowJump.current = rowJump;
+    const { id } = rowJump;
+    pendingIssueScroll.current = { id, focus: true };
+    setFilter('all');
+    setQuery('');
+    setSelectedId(id);
+    setEvidenceId(undefined);
+    setOpenSourceId(undefined);
+    setExpanded((previous) => new Set(previous).add(id));
+  }, [rowJump]);
+
+  useLayoutEffect(() => {
     const target = pendingIssueScroll.current;
-    if (!target || target.id !== selectedId) return;
-    pendingIssueScroll.current = undefined;
+    if (!target || target.id !== selectedId || row?.id !== target.id) return;
     const container = tableScroll.current;
     const selected = selectedRow.current;
     if (!container || !selected) return;
+    pendingIssueScroll.current = undefined;
 
     if (target.focus) selected.querySelector<HTMLButtonElement>('button')?.focus({ preventScroll: true });
     const rowBounds = selected.getBoundingClientRect();
@@ -229,7 +249,7 @@ function Reconciliation({ result, storedRunId }: { result: ReviewResult; storedR
     const viewportHeight = window.document.documentElement.clientHeight;
     if (visibleBounds.top < 0) window.scrollBy(0, visibleBounds.top);
     else if (visibleBounds.bottom > viewportHeight) window.scrollBy(0, visibleBounds.bottom - viewportHeight);
-  }, [filter, query, selectedId]);
+  }, [expanded, filter, query, row?.id, selectedId]);
 
   function selectRow(id?: string) {
     setSelectedId(id);

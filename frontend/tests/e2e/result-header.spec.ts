@@ -11,6 +11,11 @@ test('the result opens with a conclusion and retains legacy document routes', as
   await expect(summary.getByText(/По статье A обнаружено расхождение/)).toBeVisible();
   await expect(summary.getByText('0 из 2 подтверждено')).toBeVisible();
   await expect(summary.getByRole('button', { name: 'Скачать XLSX' })).toBeDisabled();
+  const indicator = page.getByRole('button', { name: 'Синтетическая статья A', exact: true });
+  await summary.getByRole('button', { name: 'К показателю «Синтетическая статья A»' }).click();
+  await expect(indicator).toBeFocused();
+  await expect(indicator).toHaveAttribute('aria-expanded', 'true');
+  await expect(indicator).toBeInViewport();
   await summary.getByRole('link', { name: 'Исключения' }).click();
   await expect(page).toHaveURL(/\/exceptions$/);
   await expect(tabs.getByRole('link', { name: 'Документы' })).toHaveAttribute('aria-current', 'page');
