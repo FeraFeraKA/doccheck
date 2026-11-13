@@ -229,6 +229,8 @@ def test_pdf_wrapped_amounts_are_unknown_without_joining_other_lines():
         ("ambiguous_rub_amount", 11, 1),
         ("ambiguous_rub_amount", 15, 1),
         ("ambiguous_rub_amount", 16, 1),
+        ("ambiguous_rub_amount", 20, 1),
+        ("ambiguous_rub_amount", 21, 1),
     ]
     first_pages = [item.raw_text for item in result.observations if item.locator.page <= 3]
     assert first_pages == [
@@ -255,6 +257,15 @@ def test_pdf_wrapped_amounts_are_unknown_without_joining_other_lines():
         (17, Decimal(1)),
         (18, Decimal(1)),
         (19, Decimal(1)),
+        (22, Decimal(3)),
+        (23, Decimal(9)),
+        (24, Decimal(9)),
+        (25, Decimal(9)),
+        (26, Decimal(25)),
+        (27, Decimal(25)),
+        (28, Decimal(25)),
+        (29, Decimal(9)),
+        (30, Decimal(9)),
     ]
     assert [item.raw_text for item in result.observations if item.locator.page in (10, 11)] == [
         "Итого: 1 руб. 25",
@@ -267,6 +278,14 @@ def test_pdf_wrapped_amounts_are_unknown_without_joining_other_lines():
         "коп.",
         "Итого: 1 руб. 25 ко",
         "п.",
+    ]
+    assert [item.raw_text for item in result.observations if item.locator.page in (20, 21)] == [
+        "Итого: 9 руб.",
+        "15",
+        "коп.",
+        "Итого: 3 руб.",
+        "45",
+        "коп.",
     ]
 
 

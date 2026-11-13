@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
+from typing import Literal
 from unicodedata import category
 from xml.etree.ElementTree import ParseError
 from zipfile import BadZipFile, ZipFile
@@ -45,6 +46,10 @@ _NUMBER = re.compile(
 _RUB_UNITS = ("рублей", "рубля", "рубль", "руб.", "руб", "rub", "р.", "₽")
 _KOPECK_UNITS = ("копеек", "копейки", "копейка", "коп.", "коп")
 _RUB_START = re.compile(r"[рr₽]", re.IGNORECASE)
+_NON_AMOUNT_LABEL = re.compile(
+    r"^\s*(?:код\s+статьи|договор|контракт|номер\s+документа|ИНН|КПП|дата)\b",
+    re.IGNORECASE,
+)
 _MONEY_HEADER = re.compile(r"^(?:сумма|стоимость)\s*[,\s(]+(?:руб\.?|₽|rub)\)?$", re.I)
 
 
@@ -297,7 +302,44 @@ def _pdf_text_lines(page: Page, visible_box: tuple[float, float, float, float]) 
     return visible_lines
 
 
-def _wrapped_pdf_lines(lines: list[dict]) -> set[int]:
+def _adjacent_pdf_lines(
+    previous: dict, current: dict, *, alignment: Literal["left", "right", "either"]
+) -> bool:
+    if current.get("clipped") or previous.get("clipped"):
+        return False
+    px0, py0, px1, py1 = previous["reading_box"]
+    cx0, cy0, cx1, cy1 = current["reading_box"]
+    height = max(py1 - py0, cy1 - cy0)
+    overlap = min(px1, cx1) - max(px0, cx0)
+    left = abs(cx0 - px0) <= 1.5 * height
+    right = abs(cx1 - px1) <= height / 2
+    aligned = (alignment != "right" and left) or (alignment != "left" and right)
+    return 0 < cy0 - py0 <= 1.8 * height and overlap >= 0.5 * min(px1 - px0, cx1 - cx0) and aligned
+
+
+def _pdf_dividers(page: Page) -> list[tuple[float, float, float]]:
+    dividers = []
+    for edge in page.edges:
+        if page.rotation in (90, 270):
+            if edge["orientation"] != "v":
+                continue
+            x = edge["x0"]
+            top, bottom = edge["top"], edge["bottom"]
+            dividers.append((top, bottom, -x) if page.rotation == 90 else (-bottom, -top, x))
+        elif edge["orientation"] == "h":
+            left, right, y = edge["x0"], edge["x1"], edge["top"]
+            dividers.append((-right, -left, -y) if page.rotation == 180 else (left, right, y))
+    return dividers
+
+
+def _split_by_divider(previous: dict, current: dict, dividers: list) -> bool:
+    px0, _, px1, py1 = previous["reading_box"]
+    cx0, cy0, cx1, _ = current["reading_box"]
+    left, right = max(px0, cx0), min(px1, cx1)
+    return any(x0 <= left and right <= x1 and py1 <= y <= cy0 for x0, x1, y in dividers)
+
+
+def _wrapped_pdf_lines(lines: list[dict], dividers: list) -> set[int]:
     """Mark plausibly interrupted values in reading coordinates, without joining their text."""
     interrupted = set()
     for index, (previous, current) in enumerate(zip(lines, lines[1:])):
@@ -309,6 +351,27 @@ def _wrapped_pdf_lines(lines: list[dict]) -> set[int]:
         before = previous["text"].rstrip(_SPACE_CHARS)
         if not before:
             continue
+        if index + 2 < len(lines) and re.fullmatch(r"[0-9]{1,2}", tail):
+            final = lines[index + 2]
+            suffix = final["text"].strip(_SPACE_CHARS)
+            unit = _match_unit(suffix, 0, _KOPECK_UNITS)
+            if (
+                unit is not None
+                and unit[0] == len(suffix)
+                and any(
+                    _adjacent_pdf_lines(previous, current, alignment=side)
+                    and _adjacent_pdf_lines(current, final, alignment=side)
+                    for side in ("left", "right")
+                )
+                and not _split_by_divider(previous, current, dividers)
+                and not _split_by_divider(current, final, dividers)
+                and any(
+                    not numeral and cents
+                    for numeral, cents in _rub_tokens(before + "\n" + tail + "\n" + suffix)
+                )
+            ):
+                interrupted.add(index)
+                continue
         decimals = tail[0] in _DIGITS and before[-1] in _NUMBER_CHARACTERS + _SIGNS
         # Inspect the two lines only for a boundary split. Keep their own source
         # addresses and never promote a value from their concatenated text.
@@ -324,6 +387,8 @@ def _wrapped_pdf_lines(lines: list[dict]) -> set[int]:
         if not (kopecks or (decimals and _rub_tokens(tail))):
             continue
         if decimals and not kopecks:
+            if _NON_AMOUNT_LABEL.match(before):
+                continue
             # Numeric suffixes of identifiers (e.g. 31-001) are not amounts.
             end = len(before)
             start = end
@@ -334,14 +399,9 @@ def _wrapped_pdf_lines(lines: list[dict]) -> set[int]:
                 continue
             if not any(char in _DIGITS + _SIGNS for char in before[start:]):
                 continue
-        px0, py0, px1, py1 = previous["reading_box"]
-        cx0, cy0, cx1, cy1 = current["reading_box"]
-        height = max(py1 - py0, cy1 - cy0)
-        overlap = min(px1, cx1) - max(px0, cx0)
-        aligned = abs(cx0 - px0) <= 1.5 * height or (kopecks and abs(cx1 - px1) <= height / 2)
-        if not (
-            0 < cy0 - py0 <= 1.8 * height and overlap >= 0.5 * min(px1 - px0, cx1 - cx0) and aligned
-        ):
+        if not _adjacent_pdf_lines(previous, current, alignment="either" if kopecks else "left"):
+            continue
+        if _split_by_divider(previous, current, dividers):
             continue
         interrupted.add(index + (0 if kopecks else 1))
     return interrupted
@@ -362,7 +422,7 @@ def _read_pdf(path: Path, collected: _Collected) -> None:
                 continue
             x0, top, x1, bottom = visible_box
             width, height = x1 - x0, bottom - top
-            interrupted = _wrapped_pdf_lines(lines)
+            interrupted = _wrapped_pdf_lines(lines, _pdf_dividers(page))
             for number, line in enumerate(lines, 1):
                 box = (
                     max(0.0, (line["x0"] - x0) / width),
