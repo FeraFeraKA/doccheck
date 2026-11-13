@@ -5,10 +5,9 @@ import { demoFiles, demoRunPath } from './demoData';
 const steps = ['КФЗ', 'Первичные документы'];
 const formats = ['.pdf', '.docx', '.xlsx', '.png'];
 
-interface SelectedFile {
-  id: string;
-  name: string;
-}
+type SelectedFile =
+  | { id: string; kind: 'local'; file: File }
+  | { id: string; kind: 'example'; name: string };
 
 export function NewCheck() {
   const nextFileId = useRef(0);
@@ -27,18 +26,26 @@ export function NewCheck() {
 
   function takeFiles(incoming: FileList) {
     const selected = Array.from(incoming);
+    if (isReport && selected.length > 1) {
+      setError('Выберите один файл КФЗ.');
+      return;
+    }
     const accepted = selected.filter((file) => file.size > 0 && formats.some(
       (extension) => file.name.toLowerCase().endsWith(extension),
     ));
     setError(accepted.length < selected.length ? 'Добавьте непустые PDF, DOCX, XLSX или PNG.' : '');
     if (accepted.length === 0) return;
-    const items = accepted.map((file) => ({ id: 'local-' + nextFileId.current++, name: file.name }));
+    const items = accepted.map((file): SelectedFile => ({
+      id: 'local-' + nextFileId.current++,
+      kind: 'local',
+      file,
+    }));
     setFiles((previous) => isReport ? items.slice(0, 1) : [...previous, ...items]);
   }
 
   function loadExample() {
     setFiles(demoFiles.filter((file) => (file.role === 'report') === isReport)
-      .map((file) => ({ id: file.id, name: file.file.replace('inputs/', '') })));
+      .map((file) => ({ id: file.id, kind: 'example', name: file.file.replace('inputs/', '') })));
     setError('');
   }
 
@@ -76,12 +83,17 @@ export function NewCheck() {
           <p>Можно также перетащить файлы сюда.</p>
         </div>
         {error && <p role="alert" className="checks-error">{error}</p>}
-        {files.length > 0 && <ul className="checks-files">
-          {files.map(({ id, name }) => <li key={id}>
-            <span>{name}</span>
-            <button type="button" aria-label={'Удалить ' + name}
-              onClick={() => setFiles(files.filter((file) => file.id !== id))}>Удалить</button>
-          </li>)}
+        {files.length === 0 ? <p className="checks-caption">
+          {isReport ? 'КФЗ пока не выбрана.' : 'Первичные документы пока не выбраны.'}
+        </p> : <ul className="checks-files">
+          {files.map((item) => {
+            const name = item.kind === 'local' ? item.file.name : item.name;
+            return <li key={item.id}>
+              <span>{name}</span>
+              <button type="button" aria-label={'Удалить ' + name}
+                onClick={() => setFiles((previous) => previous.filter(({ id }) => id !== item.id))}>Удалить</button>
+            </li>;
+          })}
         </ul>}
         <div className="checks-actions">
           {isReport ? (
