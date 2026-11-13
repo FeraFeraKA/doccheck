@@ -67,28 +67,29 @@ Python в копейках или `Decimal`. UI показывает получ�
 | Данные | Содержание |
 | --- | --- |
 | Происхождение | `id`, `run_id`, `result_revision` сохранённого результата, `row_id`, область сверки из результата, `policy_id` и версия правила. ID строк и доказательств разрешаются только в этой версии задания |
-| Цель и значения | Поле `reported_value`, ID документа, SHA исходной версии и точный локатор. `changes` содержит основное поле и вычисленные зависимости с денежными строками `before` и `after`. Значение `"0.00"` допустимо при подтверждённом нуле |
+| Цель и значения | Поле `reported_value`, ID документа, SHA исходной версии и точный локатор. `changes` содержит основное поле и вычисленные зависимости. `before` берётся из `based_on_draft_version`, `after` вычисляет сервер. Значение `"0.00"` допустимо при подтверждённом нуле |
 | Основание и уверенность | Машинная причина предложения, ссылки на отчёт и первичку, правило и оценка `confirmed_evidence` для подтверждённого предложения. Оценка выражает пригодность доказательств. Для OCR можно показывать происхождение и исходный score отдельно, если он доступен. Числовой общий балл в этом проекте отсутствует |
 | Состояние и авторство | `status`, `created_at`, `created_by`, версия черновика, на которой создано предложение. Кто, когда и почему принял, отклонил, применил или отменил правку, видно из событий |
-| Черновик и события | Версия 0 указывает на исходный отчёт. Следующие версии содержат изменения и ссылку на предыдущую версию. Событие содержит действие, прежнее и новое состояния, серверные ID автора и время UTC, причину, ссылки, версии черновика и результата, ссылку на предложенные значения и ключ повторного запроса |
+| Черновик и события | Версия 0 указывает на исходный отчёт. Следующие версии содержат изменения и ссылку на предыдущую версию. Событие содержит действие, прежнее и новое состояния, серверные ID автора и время UTC, причину, ссылки, версии черновика и результата, ссылку на предложенные значения и ключ повторного запроса. При перевыпуске обе карточки связаны идентификаторами |
 
 Для каждой версии результата используется своя цепочка черновика.
 Черновик и предложение наследуют признак `synthetic` от исходной сверки.
 Интерфейс показывает этот признак в списке и карточке.
-Предложение неизменно в части источников, значений и области. Если
-изменилась эта основа, сервер выдаёт новое предложение на новой версии.
-Изменение статуса, запись события, создание версии черновика и сохранение
-успешного ответа для повтора запроса выполняются одной транзакцией в
-PostgreSQL. Журнал хранит идентификаторы, адреса, нужные значения и
-причины в рамках доступа к заданию. Копии OCR-текста в журнале не нужны.
+Предложение неизменно в части источников, значений и области. Сервер
+проверяет это основание заново при перевыпуске. Изменение статуса, запись
+события, создание версии черновика при применении или отмене и сохранение
+квитанции выполняются одной транзакцией в PostgreSQL. Перевыпуск сохраняет
+старую и новую карточки, связь и событие в одной транзакции. Журнал хранит
+идентификаторы, адреса, значения и причины в рамках доступа к заданию.
 [Режим данных](../data-policy.md)
 
 ## Действия пользователя
 
 1. В карточке расхождения открыть предложение `proposed`. Предпросмотр
-   показывает исходную и новую суммы, формулу, допущенные слагаемые, ссылки
-   на фрагменты, зависимые строки и версию черновика. Для неподдерживаемых
-   случаев карточка показывает причину, по которой предложения нет.
+   показывает `before` из версии черновика, `after`, формулу, слагаемые и
+   ссылки на фрагменты. Исходная сумма видна отдельно по адресу в отчёте.
+   Для неподдерживаемых случаев карточка показывает причину, по которой
+   предложения нет.
 2. «Принять» переводит предложение в `accepted`. «Отклонить» переводит
    `proposed` или `accepted` в `rejected`. Сотрудник указывает причину.
    Оба действия сохраняются в журнале.
@@ -96,14 +97,38 @@ PostgreSQL. Журнал хранит идентификаторы, адреса
    Сервер повторно проверяет источники, правило, права, исходное значение
    в черновике и версии. Интерфейс показывает ход запроса, затем статус
    `applied`, новую версию черновика и событие. При конфликте версий
-   черновик не меняется. UI загружает актуальное состояние и показывает
-   причину. Предложение со сменившимся основанием требует нового просмотра
-   и принятия.
+   UI загружает актуальное состояние. Если изменилась версия черновика,
+   карточка предлагает перевыпуск по правилам ниже.
 4. «Отменить применение» для `applied` доступно, пока применённая им
    версия является последней. Сервер создаёт компенсирующую версию
    с прежними значениями, сохраняет обе записи и переводит предложение
    в `reverted`. При наличии более новой версии UI показывает её и причину
-   отказа в отмене. `rejected` и `reverted` завершают это предложение.
+   отказа в отмене. `rejected`, `reverted` и `superseded` завершают предложение.
+
+### Перевыпуск на текущую версию
+
+Если `based_on_draft_version` отличается от текущей версии, сервер
+отключает `accept` и `apply` для старой карточки. Свежий `ETag` позволяет
+выполнить `refresh` для `proposed` или `accepted`. Сервер заново проверяет
+адреса и версии источников, правило, пригодность суммы, зависимости и
+значения из текущей версии. Проверка требуется и для независимой строки,
+когда изменилась только версия черновика. При успехе сервер создаёт
+новый ID со статусом `proposed` и текущей базовой версией, переводит
+старую карточку в `superseded` и сохраняет событие перевыпуска. Старые
+значения, принятие и события видны в истории. Квитанция содержит
+`replacement_proposal_id`. UI открывает новый предпросмотр и запрашивает
+принятие. Если исправление утратило основание или уже не нужно, сервер
+возвращает `409 basis_changed` с пояснением. Пользователь может отклонить
+предложение, оставшееся в `proposed` или `accepted`.
+
+Предложения A и B могут относиться к двум независимым строкам одного
+итога. На версии 0 строки `"157.00"` и `"30.00"` дают `"187.00"`.
+Применение A меняет первую строку на `"149.50"` и создаёт версию 1 с
+итогом `"179.50"`. Перевыпущенное B на версии 1 показывает для итога
+`"179.50" → "174.50"` после замены второй строки на `"25.00"`.
+Если сначала отменить A, сервер создаёт версию 2 с итогом `"187.00"`.
+Перевыпуск B на версии 2 покажет `"187.00" → "182.00"`. Если B уже
+применено после A, отмена A заблокирована более новой версией.
 
 ## Черновик API
 
@@ -113,18 +138,22 @@ OpenAPI 3.1.1 описывает локальные операции. Ядро �
 включая текущую версию черновика. Команда с `If-Match` выполняется в
 том же ресурсе и сравнивает тег в транзакции. Для `accept` и `apply`
 сервер сверяет `based_on_draft_version` с текущей версией черновика и
-проверяет версию результата. Для `revert` сервер сверяет текущую версию
-с версией, созданной событием `apply`. Предложение с устаревшим
-основанием можно отклонить. [OpenAPI 3.1.1][oas] ·
+проверяет версию результата. Для `refresh` сервер использует текущий
+черновик и сохранённую сверку. Для `revert` сверяет текущую версию с той,
+которую создало событие `apply`. Попытка `accept` или `apply` со свежим
+тегом старой карточки возвращает `409 draft_changed`. [OpenAPI 3.1.1][oas] ·
 [RFC 9110, If-Match][if-match] · [RFC 6585, код 428][precondition]
 
 Для команды требуется уникальный ключ `Idempotency-Key` в пределах
 пользователя, задания и предложения. После проверки доступа повтор
 успешного запроса с тем же ключом, тегом и телом возвращает сохранённую
 квитанцию с ID события. Повтор не создаёт новую версию или событие.
-Использование ключа с другим тегом или телом даёт `409`. После ответа на
-команду UI перечитывает карточку и получает её текущий `ETag`. Параллельные
-команды по одному черновику сериализуются по его текущей версии.
+Использование ключа с другим тегом или телом даёт `409`. После ответа UI
+перечитывает карточку. При перевыпуске он открывает новую карточку по
+`replacement_proposal_id`. После `apply` или `revert` UI читает точную
+версию черновика через `GET /runs/{run_id}/drafts/{result_revision}/versions/{draft_version}`.
+Версия возвращает денежные поля в состоянии на момент её создания.
+Параллельные команды по одному черновику сериализуются по его текущей версии.
 Сервер проверяет право чтения задания и право на действие. Чужое или
 отсутствующее задание возвращает `404`, отсутствие права на изменение
 доступного задания — `403`.
@@ -200,6 +229,28 @@ paths:
         '412': {description: Тег карточки устарел. Получите актуальное состояние через GET.}
         '422': {description: Тело запроса не соответствует схеме.}
         '428': {description: Требуется If-Match.}
+  /runs/{run_id}/drafts/{result_revision}/versions/{draft_version}:
+    parameters:
+      - $ref: '#/components/parameters/RunId'
+      - name: result_revision
+        in: path
+        required: true
+        schema: {type: string, minLength: 1}
+      - name: draft_version
+        in: path
+        required: true
+        schema: {type: integer, minimum: 0}
+    get:
+      operationId: getCorrectionDraftVersion
+      responses:
+        '200':
+          description: Денежные поля указанной версии черновика.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DraftVersion'
+        '401': {description: Требуется вход.}
+        '404': {description: Версия отсутствует или недоступна.}
 components:
   parameters:
     RunId:
@@ -228,15 +279,15 @@ components:
             properties:
               code:
                 type: string
-                enum: [invalid_transition, basis_changed, newer_draft_exists, idempotency_key_reused]
+                enum: [invalid_transition, draft_changed, basis_changed, newer_draft_exists, idempotency_key_reused]
               message: {type: string, minLength: 1}
   schemas:
     Status:
       type: string
-      enum: [proposed, accepted, rejected, applied, reverted]
+      enum: [proposed, accepted, rejected, applied, reverted, superseded]
     Action:
       type: string
-      enum: [accept, reject, apply, revert]
+      enum: [accept, reject, apply, revert, refresh]
     Transition:
       type: object
       additionalProperties: false
@@ -275,6 +326,8 @@ components:
             result_revision: {type: string, minLength: 1}
             based_on_draft_version: {type: integer, minimum: 0}
             draft_version: {type: integer, minimum: 0}
+            replaces_proposal_id: {type: string, minLength: 1}
+            replacement_proposal_id: {type: string, minLength: 1}
             policy_id: {type: string, minLength: 1}
             rules_version: {type: string, minLength: 1}
             reason: {type: string, minLength: 1}
@@ -292,9 +345,15 @@ components:
             events:
               type: array
               items: {$ref: '#/components/schemas/Event'}
+          if:
+            required: [status]
+            properties:
+              status: {const: superseded}
+          then:
+            required: [replacement_proposal_id]
     Change:
       type: object
-      required: [row_id, field, unit, before, after, reported_evidence_ref, support_evidence_refs]
+      required: [row_id, field, unit, before, after, reported_evidence_ref, support_evidence_refs, calculation]
       properties:
         row_id: {type: string, minLength: 1}
         field: {const: reported_value}
@@ -306,17 +365,70 @@ components:
           type: array
           minItems: 1
           items: {type: string, minLength: 1}
+        calculation: {$ref: '#/components/schemas/PreviewCalculation'}
+    PreviewCalculation:
+      type: object
+      required: [formula, components]
+      properties:
+        formula: {type: string, minLength: 1}
+        components:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [label, amount, evidence_refs]
+            properties:
+              label: {type: string, minLength: 1}
+              amount: {$ref: '#/components/schemas/Money'}
+              draft_row_id: {type: string, minLength: 1}
+              evidence_refs:
+                type: array
+                minItems: 1
+                items: {type: string, minLength: 1}
+    DraftVersion:
+      type: object
+      required: [run_id, result_revision, draft_version, previous_version, synthetic, rows]
+      properties:
+        run_id: {type: string, minLength: 1}
+        result_revision: {type: string, minLength: 1}
+        draft_version: {type: integer, minimum: 0}
+        previous_version: {type: [integer, 'null'], minimum: 0}
+        synthetic: {type: boolean}
+        rows:
+          type: array
+          items:
+            type: object
+            required: [row_id, label, unit, value, reported_evidence_ref]
+            properties:
+              row_id: {type: string, minLength: 1}
+              label: {type: string, minLength: 1}
+              unit: {const: RUB}
+              value:
+                anyOf:
+                  - $ref: '#/components/schemas/Money'
+                  - type: 'null'
+              reported_evidence_ref: {type: [string, 'null'], minLength: 1}
     Money:
       type: string
-      pattern: '^-?(0|[1-9][0-9]*)\.[0-9]{2}$'
+      pattern: '^-?(0|[1-9][0-9]*)\.[0-9]{2}(?![\s\S])'
       not: {const: '-0.00'}
     ActionReceipt:
       type: object
-      required: [event_id, status, draft_version]
+      required: [event_id, action, status, result_revision, draft_version]
       properties:
         event_id: {type: string, minLength: 1}
+        action: {$ref: '#/components/schemas/Action'}
         status: {$ref: '#/components/schemas/Status'}
+        result_revision: {type: string, minLength: 1}
         draft_version: {type: integer, minimum: 0}
+        replacement_proposal_id: {type: string, minLength: 1}
+      if:
+        properties:
+          action: {const: refresh}
+      then:
+        required: [replacement_proposal_id]
+        properties:
+          status: {const: superseded}
     Event:
       type: object
       required: [id, action, actor_id, occurred_at, reason, status_before, status_after, draft_before, draft_after]
@@ -330,12 +442,26 @@ components:
         status_after: {$ref: '#/components/schemas/Status'}
         draft_before: {type: integer, minimum: 0}
         draft_after: {type: integer, minimum: 0}
+        replacement_proposal_id: {type: string, minLength: 1}
 ~~~
 
 `reported_evidence_ref` разрешается в исходный отчёт, его SHA и
-локатор. `support_evidence_refs` ведут к основаниям соответствующего
-изменения. Карточка показывает действия, разрешённые текущим состоянием.
-Журнал действий в карточке дополняет данные о создании предложения.
+локатор. Он остаётся адресом исходного значения. Значение `before`
+сервер берёт из `based_on_draft_version` и сохраняет в предпросмотре.
+`calculation.formula` и `calculation.components` описывают серверный
+пересчёт для `after`. У суммы из первички есть ссылки на её доказательства.
+У компонента зависимого итога `draft_row_id` указывает строку черновика.
+Его `amount` учитывает изменения из выбранной версии и из текущего
+предложения, а `evidence_refs` ведут к основаниям строки. UI показывает
+формулу и слагаемые, а сумму берёт из `after`. Для проверки `before`
+можно открыть ту же строку в версии `based_on_draft_version`.
+
+`DraftVersion.rows` возвращает текущее значение каждой денежной строки
+в запрошенной исторической версии, включая зависимые итоги. `null`
+остаётся неизвестным. `previous_version` у версии 0 равен `null`, у
+следующей версии указывает на её предшественника. Квитанция содержит
+`result_revision` и точный `draft_version` созданного черновика. Журнал
+в карточке сохраняет действия, а для перевыпуска — ссылку на новую карточку.
 Формат ошибок и маршруты просмотра доказательств согласуются с NRT-13.
 [NRT-13][nrt13]
 
