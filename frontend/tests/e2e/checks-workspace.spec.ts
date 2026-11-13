@@ -48,6 +48,7 @@ test('the accountant opens the synthetic reconciliation and sees discrepancies a
 for (const width of [320, 390]) {
   test(`reconciliation shows the discrepancy count on entry at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 844 });
+    await page.route('**/api/v0/runs', (route) => route.fulfill({ json: { items: [], next_cursor: null } }));
     await page.goto('/checks');
     await page.getByRole('link', { name: 'Синтетическая сверка' }).click();
 
@@ -73,6 +74,11 @@ test('the upload wizard selects files without secure-context APIs', async ({ pag
 });
 
 test('the accountant distinguishes missing files, invalid selection and unknown checks', async ({ page }) => {
+  await page.route('**/api/v0/runs/unknown', (route) => route.fulfill({ status: 404 }));
+  await page.route('**/api/v0/runs', (route) => route.fulfill({ json: {
+    items: [{ run_id: 'saved-run', status: 'queued', error: null, created_at: '2026-11-13T12:00:00Z' }],
+    next_cursor: null,
+  } }));
   await page.goto('/checks/new');
   await expect(page.getByText('КФЗ пока не выбрана.')).toBeVisible();
   await page.getByLabel('Выберите КФЗ').setInputFiles({
@@ -91,11 +97,40 @@ test('the accountant distinguishes missing files, invalid selection and unknown 
   await expect(page.getByRole('heading', { name: 'Проверка не найдена' })).toBeVisible();
   await page.getByRole('link', { name: 'Все проверки' }).click();
   await expect(page.getByRole('link', { name: 'Синтетическая сверка' })).toBeVisible();
-  await page.getByRole('searchbox', { name: 'Поиск' }).fill('нет совпадений');
+  await page.getByRole('searchbox', { name: 'Поиск на странице' }).fill('нет совпадений');
   await expect(page.getByText('Проверки не найдены.')).toBeVisible();
 });
 
+test('saved run and history cursor are recovered from the URL', async ({ page }) => {
+  const summary = {
+    run_id: 'saved-run', status: 'completed', error: null, created_at: '2026-11-13T12:00:00Z',
+  };
+  const cursor = 'older-page';
+  await page.route('**/api/v0/runs*', (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname !== '/api/v0/runs') return route.fallback();
+    return route.fulfill({ json: url.searchParams.get('cursor') === cursor
+      ? { items: [{ ...summary, run_id: 'older-run' }], next_cursor: null }
+      : { items: [summary], next_cursor: cursor } });
+  });
+  await page.route('**/api/v0/runs/saved-run', (route) => route.fulfill({ json: {
+    ...summary, progress: { processed_documents: 2, total_documents: 2 },
+  } }));
+  await page.goto('/checks');
+  await expect(page.getByRole('link', { name: 'Синтетическая сверка' })).toBeVisible();
+  await page.getByRole('link', { name: 'Более ранние проверки' }).click();
+  await page.reload();
+  await expect(page.getByRole('link', { name: 'Проверка older-run' })).toBeVisible();
+  await page.getByRole('link', { name: 'К новым проверкам' }).click();
+  await page.getByRole('link', { name: 'Проверка saved-run' }).click();
+  await page.reload();
+  await expect(page.getByRole('heading', { name: 'Проверка saved-run' })).toBeVisible();
+  await expect(page.getByText('Обработано документов: 2 из 2')).toBeVisible();
+  await expect(page.getByText('Результат проверки недоступен.')).toBeVisible();
+});
+
 test('the synthetic conclusion shows XLSX export as unavailable', async ({ page }) => {
+  await page.route('**/api/v0/runs', (route) => route.fulfill({ json: { items: [], next_cursor: null } }));
   await page.goto('/checks');
   await page.getByRole('link', { name: 'Синтетическая сверка' }).click();
   await page.getByRole('link', { name: 'Заключение' }).click();

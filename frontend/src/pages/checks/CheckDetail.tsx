@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { Link, NavLink, useParams } from 'react-router';
-import { loadDemoRun, runStatusLabels } from './checkData';
+import { loadCheckRun, runStatusLabels } from './checkData';
 import type { RunDetails } from './checkData';
+import { demoJob } from './demoData';
 import { formatDecimal, formatLocation, statusLabels } from './reviewResult';
 import type { ReviewResult } from './reviewResult';
 import { useCheckData } from './useCheckData';
@@ -13,9 +14,11 @@ const tabs = [
 
 type CheckView = 'table' | 'documents' | 'exceptions' | 'conclusion' | 'log';
 
-export function CheckDetail({ view, loadRun = loadDemoRun }: {
+export function CheckDetail({ view, loadRun = loadCheckRun }: {
   view: CheckView;
-  loadRun?: (id: string, signal: AbortSignal) => Promise<RunDetails | null>;
+  loadRun?: (
+    id: string, signal: AbortSignal, onUpdate: (run: RunDetails) => void,
+  ) => Promise<RunDetails | null>;
 }) {
   const { id = '' } = useParams();
   const { state, retry } = useCheckData(id, loadRun);
@@ -25,7 +28,7 @@ export function CheckDetail({ view, loadRun = loadDemoRun }: {
       <Link to="/checks">← Все проверки</Link>
       {state.phase === 'loading' && <p role="status">Загрузка проверки…</p>}
       {state.phase === 'failed' && <section className="checks-card">
-        <p role="alert">Не удалось загрузить проверку.</p>
+        <p role="alert">Не удалось получить состояние проверки.</p>
         <button type="button" onClick={retry}>Повторить</button>
       </section>}
       {state.phase === 'ready' && (state.data
@@ -42,13 +45,16 @@ function RunContent({ id, view, run }: { id: string; view: CheckView; run: RunDe
 
   return (
     <>
+      {id === demoJob.run_id && <p className="checks-demo">Синтетическая сверка · готовый пример</p>}
       <h1>{run.title}</h1>
       {scope && <p>Договор {scope.contract_number} · {scope.period_start} — {scope.period_end}</p>}
       <p role="status">Состояние проверки · {runStatusLabels[status]}</p>
-      {isPending && run.progress && (
+      {run.progress && (
         <p>Обработано документов: {run.progress.processed} из {run.progress.total}</p>
       )}
+      {status === 'processing' && !run.progress && <p>Число обработанных документов пока неизвестно.</p>}
       {status === 'failed' && <p role="alert">{run.error ?? 'Не удалось выполнить проверку.'}</p>}
+      {status === 'completed_with_issues' && run.error && <p role="alert">{run.error}</p>}
       {result && <ResultContent id={id} view={view} result={result} />}
       {!result && !isPending && status !== 'failed' && (
         <section className="checks-card"><p>Результат проверки недоступен.</p></section>

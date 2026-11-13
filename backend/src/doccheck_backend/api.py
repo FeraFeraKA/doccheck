@@ -1,15 +1,23 @@
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import aclosing, asynccontextmanager
+from typing import Annotated, BinaryIO
+from urllib.parse import quote
 from uuid import UUID
 
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.concurrency import run_in_threadpool
 from starlette.formparsers import MultiPartException, MultiPartParser
+from starlette.types import Receive, Scope, Send
 
+from doccheck_backend import run_reads
 from doccheck_backend.config import Settings
+from doccheck_backend.contracts import CheckResult
+from doccheck_backend.contracts.result import Evidence
 from doccheck_backend.database import create_database_engine
 from doccheck_backend.jobs import create_job, get_job
 from doccheck_backend.models import SyntheticJob
@@ -31,6 +39,28 @@ class _RunMultipartParser(MultiPartParser):
         self.complete = True
 
 
+class _OriginalFileResponse(StreamingResponse):
+    def __init__(self, stream: BinaryIO, size: int, name: str) -> None:
+        self._stream = stream
+        encoded = quote(name, safe="")
+        disposition = (
+            f'attachment; filename="{name}"'
+            if name == encoded
+            else f"attachment; filename*=utf-8''{encoded}"
+        )
+        super().__init__(
+            iter(lambda: stream.read(64 * 1024), b""),
+            media_type="application/octet-stream",
+            headers={"Content-Disposition": disposition, "Content-Length": str(size)},
+        )
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            self._stream.close()
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
@@ -43,16 +73,40 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             application.state.engine.dispose()
 
     application = FastAPI(
-        title="DocCheck synthetic scaffold",
+        title="DocCheck",
         version="0.1.0",
-        description="Synthetic lifecycle only. No OCR or financial reconciliation.",
+        description="Saved document runs and the standalone synthetic lifecycle.",
         lifespan=lifespan,
     )
 
     @application.exception_handler(SQLAlchemyError)
     async def database_error(request: Request, exc: SQLAlchemyError) -> JSONResponse:
         # Do not put a DSN, SQL parameters or raw driver error in an HTTP response.
+        if request.scope["path"].startswith("/api/v0/runs"):
+            return await run_read_error(request, run_reads.unavailable())
         return JSONResponse(status_code=503, content={"detail": "Database unavailable"})
+
+    @application.exception_handler(run_reads.RunReadError)
+    async def run_read_error(request: Request, exc: run_reads.RunReadError) -> JSONResponse:
+        content = {"code": exc.code, "message": str(exc)}
+        if exc.field is not None:
+            content["field"] = exc.field
+        return JSONResponse(status_code=exc.status, content=content)
+
+    @application.exception_handler(RequestValidationError)
+    async def request_error(request: Request, exc: RequestValidationError) -> JSONResponse:
+        path = request.scope["path"]
+        if (
+            request.method == "GET"
+            and path.startswith("/api/v0/runs")
+            and (path == "/api/v0/runs" or path.endswith("/fragments"))
+        ):
+            field = str(exc.errors()[0]["loc"][-1])
+            return await run_read_error(
+                request,
+                run_reads.RunReadError(422, "invalid_input", "Некорректный параметр", field),
+            )
+        return await request_validation_exception_handler(request, exc)
 
     @application.post("/api/v0/runs", status_code=202)
     async def post_run(request: Request) -> JSONResponse:
@@ -120,6 +174,57 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             status_code=202,
             content={"run_id": str(run_id), "status": "queued"},
             headers={"Location": f"/api/v0/runs/{run_id}"},
+        )
+
+    @application.get("/api/v0/runs")
+    def list_runs(
+        request: Request, limit: Annotated[int, Query(ge=1, le=100)] = 20, cursor: str | None = None
+    ) -> run_reads.RunPage:
+        return run_reads.list_runs(request.app.state.engine, limit, cursor)
+
+    @application.get("/api/v0/runs/{run_id}")
+    def get_run(request: Request, run_id: str) -> run_reads.RunState:
+        return run_reads.get_run_state(request.app.state.engine, run_id)
+
+    @application.get("/api/v0/runs/{run_id}/findings")
+    def get_findings(request: Request, run_id: str) -> CheckResult:
+        return run_reads.get_run_findings(request.app.state.engine, run_id)
+
+    @application.get(
+        "/api/v0/runs/{run_id}/documents/{document_id}",
+        response_class=StreamingResponse,
+        responses={200: {"content": {"application/octet-stream": {}}}},
+    )
+    def get_document(request: Request, run_id: str, document_id: str) -> StreamingResponse:
+        stream, size, name = run_reads.get_run_document(
+            request.app.state.engine, request.app.state.upload_root, run_id, document_id
+        )
+        return _OriginalFileResponse(stream, size, name)
+
+    @application.get("/api/v0/runs/{run_id}/documents/{document_id}/fragments/{evidence_id}")
+    def get_fragment(request: Request, run_id: str, document_id: str, evidence_id: str) -> Evidence:
+        return run_reads.get_run_fragment(
+            request.app.state.engine,
+            request.app.state.upload_root,
+            run_id,
+            document_id,
+            evidence_id,
+            path_segment=True,
+        )
+
+    @application.get("/api/v0/runs/{run_id}/documents/{document_id}/fragments")
+    def get_fragment_by_id(
+        request: Request,
+        run_id: str,
+        document_id: str,
+        evidence_id: Annotated[str, Query(min_length=1)],
+    ) -> Evidence:
+        return run_reads.get_run_fragment(
+            request.app.state.engine,
+            request.app.state.upload_root,
+            run_id,
+            document_id,
+            evidence_id,
         )
 
     @application.get("/health", response_model=HealthResponse)
