@@ -67,6 +67,23 @@ services:
         condition: service_healthy
     networks: [backend]
 
+  document-worker:
+    profiles: [document-worker]
+    image: "${DOCCHECK_DOCUMENT_WORKER_IMAGE:-doccheck-backend:local}"
+    environment:
+      DATABASE_URL: "postgresql+psycopg://doccheck:${DOCCHECK_DB_PASSWORD:?Set DOCCHECK_DB_PASSWORD in .env}@db:5432/doccheck"
+      DOCCHECK_UPLOAD_ROOT: /var/lib/doccheck/runs
+      WORKER_POLL_SECONDS: "${WORKER_POLL_SECONDS:-0.5}"
+    volumes:
+      - run-files:/var/lib/doccheck/runs:ro
+    command: ["python", "-m", "doccheck_backend.run_worker", "--processor", "${DOCCHECK_DOCUMENT_PROCESSOR:-}"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      db:
+        condition: service_healthy
+    networks: [backend]
+
   frontend:
     image: doccheck-frontend:local
     build:
