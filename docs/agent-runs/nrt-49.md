@@ -23,3 +23,26 @@ Backend CI отдельно валидирует OpenAPI NRT-13 с `openapi-spec
 и копию со ссылкой на отсутствующее определение в `$defs` существующей схемы.
 Повторный запуск штатных тестов контракта прошёл, 102 теста. Проверка
 OpenAPI статическая. Запуск CI для актуальной пары base/head предстоит.
+
+## Проверки после обновления базы
+
+На базе `3b199025ffa678c7d41fe74950f855b91f36ada7` проверено дерево
+`df2e1f06c0a0b644aff45fc0dc46f80f8d92dfd4`. После объединения lockfile
+сохранены все 35 версий пакетов из базы, включая `python-multipart` 0.0.33.
+`openapi-spec-validator` 0.7.2 с его зависимостями и `jsonschema` 4.26.0
+устанавливаются из общего `backend/uv.lock`, `uv lock --check` прошёл.
+
+- На Python 3.12.12 прошли `uv sync --frozen --managed-python`, Ruff check
+  и Ruff format check. `uv run --frozen openapi-spec-validator
+  ../contracts/doccheck-api.v0.openapi.yaml` принял контракт. Две копии
+  с отсутствующим файлом схемы и отсутствующим определением отклонены.
+- На отдельном PostgreSQL 18.4 прошли 124 теста командой `uv run --frozen
+  pytest tests --ignore=tests/ml_module -q`. TestClient выдал предупреждение
+  Starlette об устаревшей поддержке `httpx`.
+- На Node 26.12.1 и pnpm 12.14.0 прошли `pnpm install --frozen-lockfile`,
+  `pnpm lint`, `pnpm typecheck`, `pnpm test` (13 тестов) и `pnpm build`.
+  Контрольный TSX с дублирующимся `id` отклонён правилом
+  `react(jsx-no-duplicate-props)`. После удаления файла линтер прошёл.
+- `docker compose config --quiet` и `git diff --check` прошли.
+  Docker daemon локально недоступен. Локальный Playwright ждёт
+  освобождения порта 4173. GitHub Actions проверяется после публикации.
