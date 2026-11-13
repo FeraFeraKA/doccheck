@@ -25,12 +25,12 @@ test('the accountant opens the synthetic reconciliation and sees discrepancies a
 
   const discrepancy = page.getByRole('row').filter({ hasText: 'Синтетическая статья A' });
   await expect(discrepancy.getByRole('cell', { name: 'Расхождение', exact: true })).toBeVisible();
-  await expect(discrepancy.getByRole('cell', { name: '30,00 RUB', exact: true })).toBeVisible();
+  await expect(discrepancy.getByRole('cell', { name: '30,00', exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Возможные причины расхождений' })).toBeVisible();
   await expect(page.getByText(/В этом примере таких гипотез нет/)).toBeVisible();
 
   const row = page.getByRole('row').filter({ hasText: 'Синтетическая статья B' });
-  await expect(row.getByRole('cell', { name: '0,00 RUB', exact: true })).toBeVisible();
+  await expect(row.getByRole('cell', { name: '0,00', exact: true })).toBeVisible();
   await expect(row.getByRole('cell', { name: '—', exact: true })).toHaveCount(2);
   await page.getByLabel('Доказательство').selectOption('amount-1');
   await expect(page.getByText('Лист «Синтетика», C6', { exact: true })).toBeVisible();
@@ -209,7 +209,7 @@ test('the finished check loads stored findings and can retry without repeating s
   await expect(page.getByText(/Операция в строке 6 совпала по договору/)).toBeVisible();
 
   const zero = page.getByRole('row').filter({ hasText: 'Синтетическая статья B' });
-  await expect(zero.getByRole('cell', { name: '0,00 RUB', exact: true })).toBeVisible();
+  await expect(zero.getByRole('cell', { name: '0,00', exact: true })).toBeVisible();
   await zero.getByRole('button').click();
   await expect(page.getByText('Источник статьи B не прочитан')).toBeVisible();
   await expect(page.getByText(/Ошибка чтения файла/)).toBeVisible();
@@ -243,19 +243,18 @@ test('a non-synthetic saved result with no rows has an explicit empty state', as
   await expect(page.getByRole('table')).toHaveCount(0);
 });
 
-test('mixed units stay visible for confirmed and unverified values', async ({ page }) => {
+test('mixed units stay visible even when all values in a row are unknown', async ({ page }) => {
   const [money, missing] = example.result.rows;
   const quantity = {
     ...missing,
     unit: 'ч',
-    reported_value: '34',
+    reported_value: null,
+    reported_evidence_refs: [],
   };
   const result = {
     ...example.result,
     run_id: 'mixed-units',
     rows: [money, quantity],
-    evidence: example.result.evidence.map((item) =>
-      item.id === 'report-b' ? { ...item, raw_value: '34', normalized_value: '34', unit: 'ч' } : item),
   };
   await page.route('**/api/v0/runs/mixed-units', (route) => route.fulfill({ json: {
     run_id: 'mixed-units', status: 'completed_with_issues', created_at: '2026-11-13T12:00:00Z', error: null,
@@ -265,11 +264,12 @@ test('mixed units stay visible for confirmed and unverified values', async ({ pa
 
   await page.goto('/checks/mixed-units');
   const rub = page.getByRole('row').filter({ hasText: money.label });
-  for (const value of ['150,50 RUB', '120,50 RUB', '30,00 RUB']) {
+  for (const value of ['RUB', '150,50', '120,50', '30,00']) {
     await expect(rub.getByRole('cell', { name: value, exact: true })).toBeVisible();
   }
   const hours = page.getByRole('row').filter({ hasText: quantity.label });
-  await expect(hours.getByRole('cell', { name: '34 ч', exact: true })).toBeVisible();
-  await expect(hours.getByRole('cell', { name: '—', exact: true })).toHaveCount(2);
+  await expect(hours.getByRole('cell', { name: 'ч', exact: true })).toBeVisible();
+  await expect(hours.getByRole('cell', { name: 'Не проверен', exact: true })).toBeVisible();
+  await expect(hours.getByRole('cell', { name: '—', exact: true })).toHaveCount(3);
   await expect(hours.getByText(/Частичная сумма/)).toHaveCount(0);
 });

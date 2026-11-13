@@ -137,10 +137,6 @@ function ResultContent({ id, view, result, synthetic }: ResultContentProps) {
   );
 }
 
-function formatResultValue(value: string | null, unit: string) {
-  return value === null ? formatDecimal(null) : `${formatDecimal(value)} ${unit}`;
-}
-
 function Reconciliation({ result }: { result: ReviewResult }) {
   const { rows, evidence, documents, summary } = result;
   const [selectedId, setSelectedId] = useState(rows[0]?.id);
@@ -175,21 +171,22 @@ function Reconciliation({ result }: { result: ReviewResult }) {
         </p>
         <div className="checks-table-scroll">
           <table>
-            <thead><tr><th>Показатель</th><th>КФЗ</th><th>По первичным документам</th><th>Δ</th><th>Статус</th></tr></thead>
+            <thead><tr><th>Показатель</th><th>Ед. изм.</th><th>КФЗ</th><th>По первичным документам</th><th>Δ</th><th>Статус</th></tr></thead>
             <tbody>{rows.map((item) => (
               <tr key={item.id} data-selected={item.id === row?.id}>
                 <td><button type="button" aria-pressed={item.id === row?.id} onClick={() => {
                   setSelectedId(item.id);
                   setEvidenceId(undefined);
                 }}>{item.label}</button></td>
-                <td>{formatResultValue(item.reported_value, item.unit)}</td>
+                <td>{item.unit}</td>
+                <td>{formatDecimal(item.reported_value)}</td>
                 <td>
-                  {formatResultValue(item.expected_value, item.unit)}
+                  {formatDecimal(item.expected_value)}
                   {item.expected_value === null && item.observed_evidence_sum != null && (
                     <p className="checks-caption">Частичная сумма: {formatDecimal(item.observed_evidence_sum)} {item.unit}</p>
                   )}
                 </td>
-                <td>{formatResultValue(item.delta, item.unit)}</td>
+                <td>{formatDecimal(item.delta)}</td>
                 <td><span className="checks-status" data-status={item.status}>{statusLabels[item.status]}</span></td>
               </tr>
             ))}</tbody>
