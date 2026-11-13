@@ -18,9 +18,11 @@ from defusedxml.common import DefusedXmlException
 from docx import Document
 from docx.opc.exceptions import PackageNotFoundError
 from lxml.etree import XMLSyntaxError
+from pdfminer.layout import LTChar, LTItem, LTPage
 from pdfminer.pdfexceptions import PDFException
+from pdfminer.pdfinterp import PDFPageInterpreter
 from pdfminer.psexceptions import PSException
-from pdfplumber.page import Page
+from pdfplumber.page import Page, PDFPageAggregatorWithMarkedContent
 from pdfplumber.utils import chars_to_textmap, objects_to_bbox
 from pdfplumber.utils.exceptions import PdfminerException
 
@@ -243,6 +245,40 @@ def _visible_pdf_box(page: Page) -> tuple[float, float, float, float]:
     return max(left, x0), max(top, y0), min(right, x1), min(bottom, y1)
 
 
+class _PDFShowAggregator(PDFPageAggregatorWithMarkedContent):
+    show_id = 0
+
+    def render_string(self, *args, **kwargs) -> None:
+        self.show_id += 1
+        super().render_string(*args, **kwargs)
+
+    def render_char(self, *args, **kwargs) -> float:
+        width = super().render_char(*args, **kwargs)
+        self.cur_item._objs[-1].doccheck_show_id = self.show_id
+        return width
+
+
+class _NativePDFPage(Page):
+    @property
+    def layout(self) -> LTPage:
+        if not hasattr(self, "_layout"):
+            aggregator = _PDFShowAggregator(
+                self.pdf.rsrcmgr, pageno=self.page_number, laparams=self.pdf.laparams
+            )
+            try:
+                PDFPageInterpreter(self.pdf.rsrcmgr, aggregator).process_page(self.page_obj)
+            except Exception as error:
+                raise PdfminerException(error) from error
+            self._layout = aggregator.get_result()
+        return self._layout
+
+    def process_object(self, obj: LTItem) -> dict:
+        item = super().process_object(obj)
+        if isinstance(obj, LTChar):
+            item["show_id"] = obj.doccheck_show_id
+        return item
+
+
 def _pdf_line_fragments(
     chars: list[dict], column_rules: list[tuple[float, float, float]]
 ) -> Iterator[tuple[int, str, list[dict], bool]]:
@@ -252,6 +288,7 @@ def _pdf_line_fragments(
     for number, match in enumerate(re.finditer(r"[^\n]+", text_map.as_string), 1):
         start = match.start()
         previous = None
+        previous_index = start
         glyphs = []
         ambiguous = False
         for index in range(start, match.end()):
@@ -268,26 +305,41 @@ def _pdf_line_fragments(
                     previous["x1"] <= x <= char["x0"] and top <= midpoint <= bottom
                     for top, bottom, x in column_rules
                 )
-                if ruled or gap > 1.5 * height:
+                if ruled or gap > 0:
+                    numeric_boundary = (
+                        previous["text"] in _NUMBER_CHARACTERS + _SIGNS and char["text"] in _DIGITS
+                    )
+                    same_show = previous["show_id"] == char["show_id"]
                     written_space = False
-                    if (
-                        not ruled
-                        and gap <= 3 * height
-                        and previous["text"].isdigit()
-                        and char["text"].isdigit()
-                    ):
+                    if not ruled and numeric_boundary and not same_show:
                         first = bisect_left(space_starts, previous["x1"] - 0.1)
                         last = bisect_left(space_starts, char["x0"])
                         written_space = any(
                             abs(top - previous["top"]) <= 1 and end <= char["x0"] + 0.1
                             for _, top, end in spaces[first:last]
                         )
-                    yield number, text_map.as_string[start:index].strip(), glyphs, ambiguous
-                    start = index
-                    glyphs = []
-                    ambiguous = written_space
+                    # Across text-show operations, a terminal blank can be padding.
+                    # Within one operation, a wide shift may still cross a cell boundary.
+                    separate_operators = (
+                        not same_show and text_map.as_string[previous_index + 1 : index].isspace()
+                    )
+                    if ruled or gap > 1.5 * height or (numeric_boundary and separate_operators):
+                        yield number, text_map.as_string[start:index].strip(), glyphs, ambiguous
+                        start = index
+                        glyphs = []
+                        ambiguous = (
+                            not ruled
+                            and numeric_boundary
+                            and (
+                                same_show
+                                or written_space
+                                or gap <= 1.5 * height
+                                or previous["text"] in ".," + _SIGNS
+                            )
+                        )
             glyphs.append(char)
             previous = char
+            previous_index = index
         if glyphs:
             yield number, text_map.as_string[start : match.end()].strip(), glyphs, ambiguous
 
@@ -542,7 +594,10 @@ def _wrapped_pdf_lines(lines: list[dict], dividers: list) -> set[int]:
 
 def _read_pdf(path: Path, collected: _Collected) -> None:
     with pdfplumber.open(path) as document:
-        for page in document.pages:
+        for original in document.pages:
+            page = _NativePDFPage(
+                document, original.page_obj, original.page_number, original.initial_doctop
+            )
             visible_box = _visible_pdf_box(page)
             if visible_box[0] >= visible_box[2] or visible_box[1] >= visible_box[3]:
                 collected.issues.append(NativeIssue("invalid_pdf_cropbox", page=page.page_number))

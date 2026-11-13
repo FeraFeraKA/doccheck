@@ -175,16 +175,25 @@ def _minimal_pdf(path: Path, lines: list[str], *, page_attrs: bytes = b"", left:
 
 
 def _single_page_pdf(
-    path: Path, stream: bytes, *, page_attrs: bytes = b"", font: bytes = b"Helvetica"
+    path: Path,
+    stream: bytes,
+    *,
+    page_attrs: bytes = b"",
+    font: bytes = b"Helvetica",
+    extra_resources: bytes = b"",
+    extra_objects: tuple[bytes, ...] = (),
 ) -> Path:
     objects = (
         b"<< /Type /Catalog /Pages 2 0 R >>",
         b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
         b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] "
         + page_attrs
-        + b" /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+        + b" /Resources << /Font << /F1 4 0 R >> "
+        + extra_resources
+        + b" >> /Contents 5 0 R >>",
         b"<< /Type /Font /Subtype /Type1 /BaseFont /" + font + b" >>",
         b"<< /Length " + str(len(stream)).encode() + b" >>\nstream\n" + stream + b"\nendstream",
+        *extra_objects,
     )
     output = bytearray(b"%PDF-1.4\n")
     offsets = []
@@ -311,13 +320,24 @@ def test_pdf_other_column_does_not_interrupt_wrapped_value(tmp_path):
 
 
 @pytest.mark.parametrize("rotation", [0, 90, 180, 270])
-def test_pdf_wide_numeric_gap_with_written_space_is_ambiguous(tmp_path, rotation):
-    stream = b"BT /F1 12 Tf 20 140 Td [(Paid: 1 ) -1500 (234,56 RUB)] TJ ET"
+@pytest.mark.parametrize(
+    ("prefix", "shift", "tail"),
+    [
+        ("Paid: 1 ", 1500, "234,56 RUB"),
+        ("Paid: 1 ", 2500, "234,56 RUB"),
+        ("Paid: -", 2100, "234,56 RUB"),
+        ("Paid: 1,", 2100, "23 RUB"),
+    ],
+)
+def test_pdf_wide_numeric_gap_in_one_operation_is_ambiguous(
+    tmp_path, rotation, prefix, shift, tail
+):
+    stream = f"BT /F1 12 Tf 20 140 Td [({prefix}) -{shift} ({tail})] TJ ET".encode()
     path = _single_page_pdf(
         tmp_path / "upload", stream, font=b"Courier", page_attrs=f"/Rotate {rotation}".encode()
     )
     result = read_native_document(path, "pdf")
-    assert [item.raw_text for item in result.observations] == ["Paid: 1", "234,56 RUB"]
+    assert [item.raw_text for item in result.observations] == [prefix.rstrip(), tail]
     assert all(item.amount is None for item in result.observations)
     assert [(i.code, i.locator) for i in result.issues] == [
         ("ambiguous_rub_amount", result.observations[1].locator),
@@ -327,18 +347,19 @@ def test_pdf_wide_numeric_gap_with_written_space_is_ambiguous(tmp_path, rotation
 @pytest.mark.parametrize("rotation", [0, 90, 180, 270])
 @pytest.mark.parametrize("boundary", ["none", "vertical", "horizontal", "both"])
 @pytest.mark.parametrize("terminal_space", [False, True])
+@pytest.mark.parametrize("right", [55, 65])
 def test_pdf_terminal_space_does_not_join_id_to_amount(
-    tmp_path, rotation, boundary, terminal_space
+    tmp_path, rotation, boundary, terminal_space, right
 ):
-    left = b"123 " if terminal_space else b"123"
+    left = "123 " if terminal_space else "123"
     stream = (
-        b"BT /F1 12 Tf 20 160 Td (ID) Tj ET\n"
-        b"BT /F1 12 Tf 65 160 Td (Amount) Tj ET\n"
-        b"BT /F1 12 Tf 20 140 Td (" + left + b") Tj ET\n"
-        b"BT /F1 12 Tf 65 140 Td (456 RUB) Tj ET\n"
-    )
+        "BT /F1 12 Tf 20 160 Td (ID) Tj ET\n"
+        f"BT /F1 12 Tf {right} 160 Td (Amount) Tj ET\n"
+        f"BT /F1 12 Tf 20 140 Td ({left}) Tj ET\n"
+        f"BT /F1 12 Tf {right} 140 Td (456 RUB) Tj ET\n"
+    ).encode()
     if boundary in ("vertical", "both"):
-        stream += b"58 125 m 58 174 l S\n"
+        stream += f"{right - 4} 125 m {right - 4} 174 l S\n".encode()
     if boundary in ("horizontal", "both"):
         stream += b"10 152 m 135 152 l S\n"
     path = _single_page_pdf(
@@ -347,11 +368,39 @@ def test_pdf_terminal_space_does_not_join_id_to_amount(
     result = read_native_document(path, "pdf")
     observed = result.observations[-2:]
     assert [item.raw_text for item in observed] == ["123", "456 RUB"]
-    ambiguous = terminal_space and boundary in ("none", "horizontal")
+    ambiguous = (terminal_space or right == 55) and boundary in ("none", "horizontal")
     assert [item.amount for item in observed] == [None, None if ambiguous else Decimal(456)]
     assert [(i.code, i.locator) for i in result.issues] == (
         [("ambiguous_rub_amount", observed[1].locator)] if ambiguous else []
     )
+
+
+@pytest.mark.parametrize("rotation", [0, 90, 180, 270])
+def test_pdf_reused_form_has_distinct_show_operations(tmp_path, rotation):
+    stream = b"/FormA Do\nq 1 0 0 1 145 0 cm /FormA Do Q"
+    text = b"BT /F1 12 Tf 20 140 Td [(1 ) -2500 (234,56 RUB)] TJ ET"
+    form = (
+        b"<< /Type /XObject /Subtype /Form /BBox [0 0 125 200] "
+        b"/Resources << /Font << /F1 4 0 R >> >> /Length "
+        + str(len(text)).encode()
+        + b" >>\nstream\n"
+        + text
+        + b"\nendstream"
+    )
+    path = _single_page_pdf(
+        tmp_path / "upload",
+        stream,
+        font=b"Courier",
+        page_attrs=f"/Rotate {rotation}".encode(),
+        extra_resources=b"/XObject << /FormA 6 0 R >>",
+        extra_objects=(form,),
+    )
+    result = read_native_document(path, "pdf")
+    assert [item.raw_text for item in result.observations] == ["1", "234,56 RUB"] * 2
+    assert all(item.amount is None for item in result.observations)
+    assert [(issue.code, issue.locator) for issue in result.issues] == [
+        ("ambiguous_rub_amount", result.observations[index].locator) for index in (1, 3)
+    ]
 
 
 @pytest.mark.parametrize(
