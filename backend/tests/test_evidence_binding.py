@@ -1,4 +1,6 @@
 from dataclasses import replace
+from datetime import date
+from decimal import Decimal
 from hashlib import sha256
 from uuid import UUID
 
@@ -173,3 +175,32 @@ def test_invalid_number_or_ocr_text_stays_local():
     assert not result.evidence
     assert [item.error.code for item in result.errors] == ["invalid_reading", "invalid_reading"]
     assert result.errors[-1].raw_value == invalid_text.raw_value
+
+
+@pytest.mark.parametrize("invalid_page", [date(2026, 11, 14), Decimal("2.5")])
+def test_malformed_typed_locator_cannot_drop_other_observations(invalid_page):
+    report = ObservationAssertion(
+        RUN,
+        REPORT.id,
+        HASH,
+        "pdf",
+        "reported_value",
+        "12,34",
+        "12.34",
+        "RUB",
+        "ocr",
+        ADDRESS,
+    )
+    malformed_address = ADDRESS.model_copy(update={"page": invalid_page})
+    malformed = replace(report, locator=malformed_address, raw_value="исходный фрагмент")
+    first = bind_observations(RUN, [REPORT], [malformed, report])
+    second = bind_observations(RUN, [REPORT], [report, malformed])
+
+    assert first.evidence == second.evidence
+    assert len(first.evidence) == 1 and first.evidence[0].normalized_value == "12.34"
+    (diagnostic,) = first.errors
+    assert diagnostic.error.code == "invalid_locator"
+    assert diagnostic.error.id == second.errors[0].error.id
+    assert diagnostic.raw_value == malformed.raw_value
+    assert diagnostic.locator is malformed_address
+    assert diagnostic.raw_value not in diagnostic.error.model_dump_json()

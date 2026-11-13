@@ -108,10 +108,14 @@ def _file_error(
     run_id: UUID, document: ManifestDocument, assertion: ObservationAssertion, code: DiagnosticCode
 ) -> BoundFileError:
     locator = assertion.locator
-    try:
-        address = None if locator is None else locator.model_dump(mode="python")
-    except PydanticSerializationError:
-        address = None
+    address = None
+    if locator is not None:
+        try:
+            checked = _LOCATOR.validate_python(locator.model_dump(mode="python", warnings=False))
+            address = checked.model_dump(mode="json")
+        except (ValidationError, PydanticSerializationError, ValueError, UnicodeError):
+            # Keep the original locator locally, but exclude it from the wire error ID.
+            pass
     return BoundFileError(
         document.id,
         FileError(
@@ -157,7 +161,9 @@ def _bind(
     if assertion.locator is None:
         return _file_error(run_id, document, assertion, "invalid_locator")
     try:
-        locator = _LOCATOR.validate_python(assertion.locator.model_dump(mode="python"))
+        locator = _LOCATOR.validate_python(
+            assertion.locator.model_dump(mode="python", warnings=False)
+        )
         if not _locator_matches(document.format, locator):
             raise ValueError("Locator format mismatch")
     except (ValidationError, PydanticSerializationError, ValueError, UnicodeError):
