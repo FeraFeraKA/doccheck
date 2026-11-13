@@ -20,6 +20,8 @@
 *.safetensors
 *.gguf
 /logs/
+/pgdata/
+/secrets/
 *.log
 *.db
 
