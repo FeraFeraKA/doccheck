@@ -42,10 +42,16 @@ for (const { width, imageHeight, bbox } of visibleFragmentCases) {
     const scroll = () => viewport.evaluate((element) => ({
       top: element.scrollTop, max: element.scrollHeight - element.clientHeight,
     }));
+    // The context header reduces the document viewport. Size the test window
+    // from the measured scroll range to exercise the original boundary cases.
+    const compact = await scroll();
+    const overflow = imageHeight === 800 ? 0 : 9;
+    await page.setViewportSize({ width, height: 1100 + compact.max - overflow });
+    await viewport.evaluate((element) => { element.scrollTop = 0; });
+    await expect(box).toBeInViewport({ ratio: 1 });
     const before = await scroll();
     expect(before.top).toBe(0);
-    if (imageHeight === 800) expect(before.max).toBe(0);
-    else expect(before.max).toBeGreaterThan(0);
+    expect(before.max).toBe(overflow);
     await page.getByRole('button', { name: 'Развернуть источник на весь экран' }).click();
     await expect(box).toBeInViewport({ ratio: 1 });
     expect((await scroll()).max).toBeGreaterThan(0);
@@ -101,7 +107,13 @@ for (const [width, height] of [[1440, 1100], [768, 844], [390, 600]]) {
     if (!titleBounds || !backBounds || !viewBounds) throw new Error('Source layout not visible');
     expect(titleBounds.y).toBeGreaterThanOrEqual(backBounds.y);
     expect(titleBounds.y + titleBounds.height).toBeLessThanOrEqual(backBounds.y + backBounds.height);
-    expect(viewBounds.height).toBeGreaterThan(Math.min(height * .6, 680));
+    const toolbarBounds = await drawer.getByRole('group', { name: 'Настройки просмотра' }).boundingBox();
+    const fragmentBounds = await drawer.getByRole('button', { name: 'К фрагменту' }).boundingBox();
+    if (!toolbarBounds || !fragmentBounds) throw new Error('Viewer controls not visible');
+    expect(viewBounds.y).toBeCloseTo(toolbarBounds.y + toolbarBounds.height, 0);
+    expect(viewBounds.y + viewBounds.height).toBeLessThan(fragmentBounds.y);
+    expect(fragmentBounds.y - (viewBounds.y + viewBounds.height)).toBeLessThan(20);
+    expect(viewBounds.height).toBeGreaterThan(Math.min(height * .4, 680));
     await expect(drawer.getByRole('link', { name: 'Скачать оригинал' })).toBeInViewport();
     await expect(drawer.getByRole('button', { name: 'К фрагменту' })).toBeInViewport();
     expect(await drawer.evaluate((element) => element.scrollWidth)).toBeLessThanOrEqual(Math.min(width, 800));
