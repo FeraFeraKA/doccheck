@@ -615,6 +615,9 @@ components:
           required: [progress]
           properties:
             archived_at: {type: [string, 'null'], format: date-time}
+            synthetic:
+              type: boolean
+              description: Серверная маркировка синтетического комплекта или сохранённого результата.
             progress:
               description: |
                 Число документов, для которых завершилась обработка. КФЗ входит

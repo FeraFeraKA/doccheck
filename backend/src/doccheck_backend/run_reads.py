@@ -59,6 +59,7 @@ class RunProgress(BaseModel):
 class RunState(RunSummary):
     progress: RunProgress | None
     archived_at: datetime | None = None
+    synthetic: bool = False
 
 
 class HistoryRun(RunSummary):
@@ -220,8 +221,24 @@ def get_editable_run(engine: Engine, run_id: str) -> Run:
 
 
 def get_run_state(engine: Engine, run_id: str) -> RunState:
-    run = _load_run(engine, run_id)
-    total = len(run.documents)
+    key = _run_key(run_id)
+    totals = func.jsonb_array_length(Run.documents)
+    with Session(engine) as session:
+        run = session.execute(
+            select(
+                Run.id,
+                Run.status,
+                Run.created_at,
+                Run.error,
+                Run.archived_at,
+                totals.label("document_count"),
+                Run.documents[0]["synthetic"].as_boolean().label("synthetic_package"),
+                Run.result["synthetic"].as_boolean().label("synthetic_result"),
+            ).where(Run.id == key, Run.status != "prepared")
+        ).one_or_none()
+    if run is None:
+        raise RunReadError(404, "run_not_found", "Проверка не найдена")
+    total = run.document_count
     progress = None
     if run.status == "queued":
         progress = RunProgress(processed_documents=0, total_documents=total)
@@ -234,6 +251,7 @@ def get_run_state(engine: Engine, run_id: str) -> RunState:
         error=run.error,
         progress=progress,
         archived_at=run.archived_at.astimezone(UTC) if run.archived_at is not None else None,
+        synthetic=run.synthetic_package is True or run.synthetic_result is True,
     )
 
 

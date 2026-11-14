@@ -186,6 +186,7 @@ test('an older active check stays observable in the queue until its result is re
   } }));
   await page.route(`**/api/v0/runs/${id}`, (route) => route.fulfill({ json: {
     run_id: id, status: finished ? 'completed' : 'processing', error: null, created_at: created,
+    synthetic: true,
     progress: finished ? { processed_documents: 2, total_documents: 2 } : null,
   } }));
   await page.route(`**/api/v0/runs/${id}/findings`, (route) => route.fulfill({
@@ -195,14 +196,15 @@ test('an older active check stays observable in the queue until its result is re
   await page.goto(`/checks/${id}`);
   await expect(page).toHaveURL(/\/checks\/new\?run=older-active-run#queue$/);
   const queue = page.getByRole('region', { name: 'Последние проверки' });
-  const bar = queue.getByRole('progressbar', { name: `Проверка КФЗ №${id}` });
+  const bar = queue.getByRole('progressbar', { name: 'Синтетическая сверка' });
   await expect(bar).toHaveAttribute('aria-valuetext', 'Обработка документов');
   await expect(bar).not.toHaveAttribute('aria-valuenow');
   await page.reload();
   await expect(bar).toBeVisible();
+  await expect(queue.getByText('Синтетика', { exact: true })).toBeVisible();
 
   finished = true;
-  await queue.getByRole('link', { name: `Проверка КФЗ №${id}` }).click();
+  await queue.getByRole('link', { name: 'Синтетическая сверка' }).click();
   await expect(page).toHaveURL(`/checks/${id}`);
   await expect(page.getByRole('table', { name: 'Показатели КФЗ' })).toBeVisible();
 });

@@ -91,6 +91,7 @@ function FollowedRun({ id, listed }: { id: string; listed?: HistoryEntry }) {
   const entry = {
     ...listed, ...state.data, title: listed?.title ?? state.data.title,
     documentCount: state.data.documentCount ?? listed?.documentCount,
+    synthetic: state.data.synthetic ?? listed?.synthetic,
   };
   return <RunQueueItem {...toQueueItem(entry)} />;
 }

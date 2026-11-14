@@ -41,8 +41,9 @@ export async function loadFollowedRun(
   function toEntry(run: RunState): HistoryEntry {
     return {
       id: run.run_id,
-      title: runTitle(run.run_id),
+      title: run.synthetic ? demoTitle : runTitle(run.run_id),
       status: run.status,
+      synthetic: run.synthetic,
       createdAt: run.created_at,
       documentCount: run.progress?.total_documents,
       progress: run.progress ? {
