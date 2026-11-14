@@ -2,7 +2,6 @@ import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { Link, MemoryRouter, Route, Routes } from 'react-router';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { CheckDetail, ChecksOverview } from '../../src/pages/checks';
-import { HomePage } from '../../src/pages/home/HomePage';
 import { loadDemoRun } from '../../src/pages/checks/checkData';
 import type { RunDetails } from '../../src/pages/checks/checkData';
 
@@ -15,25 +14,16 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-it.each(['/checks', '/'])('открывает публичный обзор с %s без запроса закрытой истории', async (entry) => {
+it('открывает публичный обзор без запроса закрытой истории', () => {
   vi.stubEnv('VITE_DOCCHECK_PUBLIC_DEMO', '1');
   const loadHistory = vi.fn();
-  const fetchMock = vi.fn().mockResolvedValue(Response.json({ status: 'ok', database: 'ok' }));
-  vi.stubGlobal('fetch', fetchMock);
-
-  render(<MemoryRouter initialEntries={[entry]}>
-    <Routes>
-      <Route path="/" element={<HomePage />} />
-      <Route path="/checks" element={<ChecksOverview loadHistory={loadHistory} />} />
-      <Route path="/checks/:id" element={<CheckDetail view="table" />} />
-    </Routes>
+  render(<MemoryRouter initialEntries={['/checks']}>
+    <ChecksOverview loadHistory={loadHistory} />
   </MemoryRouter>);
 
-  if (entry === '/') fireEvent.click(screen.getByRole('link', { name: 'Открыть интерфейс сверки' }));
   expect(screen.getByText('История рабочих проверок доступна в локальной установке.')).toBeVisible();
   expect(screen.queryByRole('link', { name: 'Синтетическая сверка' })).not.toBeInTheDocument();
   expect(loadHistory).not.toHaveBeenCalled();
-  expect(fetchMock.mock.calls.every(([path]) => path === '/health')).toBe(true);
 });
 
 it('различает загрузку истории, ошибку и пустой список после повтора', async () => {

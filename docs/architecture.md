@@ -69,7 +69,7 @@ PostgreSQL: сохранённый результат → FastAPI → React: т�
 по `/checks`, таблицу и состояние запуска по `/checks/:id`. У результата
 есть отдельные разделы по `/checks/:id/documents`, `/checks/:id/exceptions`,
 `/checks/:id/conclusion` и `/checks/:id/log`. Общий журнал открывается по
-`/log`, проверка сервисов по `/system-status`.
+`/log`. API проверяет готовность PostgreSQL по `GET /health`.
 [Маршруты frontend](../frontend/src/app/App.tsx)
 
 В результате видны вкладки «Результат» и «Документы». Первая объединяет

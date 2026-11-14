@@ -38,7 +38,10 @@ export function Sidebar() {
     return () => window.removeEventListener('keydown', closeOnEscape);
   }, [expanded]);
 
-  const mark = <span className="brand-symbol"><WorkspaceIcon name="scan" size={23} /></span>;
+  const mark = <>
+    <span className="brand-symbol"><WorkspaceIcon name="scan" size={23} /></span>
+    <span className="brand-name">doccheck<span className="brand-dot" aria-hidden="true" /></span>
+  </>;
 
   return (
     <aside ref={sidebar} className="app-sidebar" aria-label="Меню DocCheck" data-expanded={expanded} data-mobile-open={open}
@@ -58,8 +61,8 @@ export function Sidebar() {
       onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget)) setKeyboardExpanded(false);
       }}>
-      <Link to="/checks/new" className="brand" aria-label="На страницу новой проверки">{mark}</Link>
-      <button ref={trigger} type="button" className="brand sidebar-mobile-trigger" aria-label="Меню разделов"
+      <Link to="/checks/new" className="brand" aria-label="DocCheck — на страницу новой проверки">{mark}</Link>
+      <button ref={trigger} type="button" className="brand sidebar-mobile-trigger" aria-label="Меню разделов DocCheck"
         aria-expanded={open} aria-controls="doccheck-navigation" onClick={() => {
           setKeyboardExpanded(false);
           setOpen((previous) => !previous);
@@ -80,9 +83,6 @@ export function Sidebar() {
           </Link>;
         })}
       </nav>
-      <Link className="system-status-link" to="/system-status" aria-label="Проверка системы">
-        <WorkspaceIcon name="status" size={19} /><span>Проверка системы</span>
-      </Link>
     </aside>
   );
 }

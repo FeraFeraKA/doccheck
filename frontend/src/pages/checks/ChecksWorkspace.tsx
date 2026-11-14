@@ -1,5 +1,5 @@
 import { useLayoutEffect } from 'react';
-import { Link, Outlet, useLocation, useNavigationType } from 'react-router';
+import { Outlet, useLocation, useNavigationType } from 'react-router';
 import { Sidebar } from './Sidebar';
 import './workspace.css';
 import './accountant-workspace.css';
@@ -19,7 +19,6 @@ export function ChecksWorkspace() {
         <main className="app-main checks-content">
           <div className="page-content">
             <Outlet />
-            <Link className="mobile-system-status-link" to="/system-status">Проверка системы</Link>
           </div>
         </main>
       </div>
