@@ -152,20 +152,21 @@ test('saved run and history cursor are recovered from the URL', async ({ page })
   await expect(page.getByText('Результат проверки недоступен.')).toBeVisible();
 });
 
-test('the synthetic conclusion shows XLSX export as unavailable', async ({ page }) => {
-  await page.route('**/api/v0/runs', (route) => route.fulfill({ json: { items: [], next_cursor: null } }));
-  await page.goto('/checks');
-  await page.getByRole('link', { name: 'Синтетическая сверка', exact: true }).click();
-
-  const download = page.getByRole('button', { name: 'Скачать XLSX' });
-  await expect(download).toBeVisible();
-  await expect(download).toBeDisabled();
-  const note = 'Скачивание XLSX доступно для сохранённой проверки.';
-  await expect(download).toHaveAccessibleDescription(note);
-  await expect(page.getByText(note)).toBeVisible();
+test('the synthetic result and its document routes have no XLSX action', async ({ page }) => {
+  const exportCalls: string[] = [];
+  page.on('request', (request) => {
+    if (new URL(request.url()).pathname.endsWith('/exports/xlsx')) exportCalls.push(request.url());
+  });
+  const runPath = '/checks/synthetic-example';
+  for (const suffix of ['', '/documents', '/exceptions', '/conclusion']) {
+    await page.goto(runPath + suffix);
+    await expect(page.getByRole('navigation', { name: 'Разделы проверки' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Скачать XLSX' })).toHaveCount(0);
+  }
+  expect(exportCalls).toEqual([]);
 });
 
-test('the stored conclusion downloads XLSX from its own run', async ({ page }) => {
+test('documents and the direct stored conclusion download XLSX for the same run', async ({ page }) => {
   const runId = 'saved-xlsx';
   const path = `/api/v0/runs/${runId}`;
   await page.route(`**${path}`, (route) => route.fulfill({ json: {
@@ -185,17 +186,26 @@ test('the stored conclusion downloads XLSX from its own run', async ({ page }) =
     });
   });
 
-  await page.goto(`/checks/${runId}/conclusion`);
+  await page.goto(`/checks/${runId}`);
+  await expect(page.getByText('Вывод по проверке')).toBeVisible();
   const button = page.getByRole('button', { name: 'Скачать XLSX' });
+  await expect(button).toHaveCount(0);
+  await page.getByRole('navigation', { name: 'Разделы проверки' }).getByRole('link', { name: 'Документы' }).click();
+  await expect(page).toHaveURL(`/checks/${runId}/documents`);
+  await expect(page.getByRole('region', { name: 'Документы' }).getByRole('button', { name: 'Скачать XLSX' })).toBeVisible();
   await button.click();
   await expect(page.getByRole('alert')).toHaveText('Не удалось скачать XLSX. Повторите попытку.');
-  const downloaded = page.waitForEvent('download');
-  await button.click();
-  const file = await downloaded;
-  expect(file.suggestedFilename()).toBe(`doccheck-${runId}.xlsx`);
-  expect(await file.failure()).toBeNull();
-  expect(exportCalls).toBe(2);
-  await expect(page).toHaveURL(`/checks/${runId}/conclusion`);
+
+  for (const suffix of ['/documents', '/conclusion']) {
+    await page.goto(`/checks/${runId}${suffix}`);
+    const downloaded = page.waitForEvent('download');
+    await button.click();
+    const file = await downloaded;
+    expect(file.suggestedFilename()).toBe(`doccheck-${runId}.xlsx`);
+    expect(await file.failure()).toBeNull();
+    await expect(page).toHaveURL(`/checks/${runId}${suffix}`);
+  }
+  expect(exportCalls).toBe(3);
 });
 
 test('the finished check loads stored findings and can retry without repeating status polling', async ({ page }) => {
