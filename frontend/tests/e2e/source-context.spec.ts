@@ -33,8 +33,7 @@ test('a PNG fragment received on the rule tab is centered once when shown', asyn
   });
 
   await page.goto('/checks/' + id);
-  await page.getByText('Основания выбранного показателя', { exact: true }).click();
-  await page.getByRole('button', { name: 'Просмотреть источник' }).click();
+  await page.getByRole('button', { name: /^150,50\s*₽$/ }).click();
   const drawer = page.getByLabel('Источник документа', { exact: true }).and(page.locator('.source-workspace-panel[open]'));
   const image = drawer.getByRole('img', { name: 'synthetic-report.png' });
   await drawer.getByRole('button', { name: 'Увеличить масштаб' }).click();
@@ -107,8 +106,7 @@ for (const width of [390, 768]) {
     });
 
     await page.goto('/checks/' + id);
-    await page.getByText('Основания выбранного показателя', { exact: true }).click();
-    const opener = page.getByRole('button', { name: 'Просмотреть источник' });
+    const opener = page.getByRole('button', { name: /^150,50\s*₽$/ });
     await opener.click();
     const drawer = page.getByLabel('Источник документа', { exact: true }).and(page.locator('.source-workspace-panel[open]'));
     await drawer.getByRole('button', { name: 'Развернуть источник на весь экран' }).click();
@@ -148,7 +146,7 @@ for (const width of [390, 768]) {
     await expect(drawer).toHaveAttribute('data-fullscreen', 'true');
     await page.keyboard.press('Escape');
     await expect(opener).toBeFocused();
-    await expect(page.getByRole('combobox', { name: 'Доказательство' })).toHaveValue('amount-1');
+    await expect(drawer).toHaveCount(0);
   });
 }
 

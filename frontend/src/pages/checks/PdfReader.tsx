@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { getPdfPage } from './documentPreviewApi';
-import { WorkspaceIcon } from './WorkspaceIcon';
+import { ReaderArrow } from './ReaderArrow';
 
 export function PdfReader({ runId, documentId, startPage, sourceId, fallback, renderPage }: {
   runId: string;
@@ -45,13 +45,13 @@ export function PdfReader({ runId, documentId, startPage, sourceId, fallback, re
 
   return <>
     {pages !== undefined && <div className="document-reader-controls document-reader-paging" role="group" aria-label="Страницы PDF">
-      <button type="button" aria-label="Предыдущая страница" aria-disabled={page === 1}
-        tabIndex={page === 1 ? -1 : undefined}
-        onClick={() => go(page - 1)}><WorkspaceIcon name="chevron" size={15} /></button>
-      <span aria-live="polite">Страница {page} / {pages}</span>
-      <button type="button" aria-label="Следующая страница" aria-disabled={page === pages}
-        tabIndex={page === pages ? -1 : undefined}
-        onClick={() => go(page + 1)}><WorkspaceIcon name="chevron" size={15} /></button>
+      <div className="reader-range">
+        <ReaderArrow label="Предыдущая страница" direction="left" edge={page === 1}
+          unavailable={page === 1} onNavigate={() => go(page - 1)} />
+        <span aria-live="polite">Страница {page} / {pages}</span>
+        <ReaderArrow label="Следующая страница" direction="right" edge={page === pages}
+          unavailable={page === pages} onNavigate={() => go(page + 1)} />
+      </div>
       <button className="reader-source-jump" type="button" aria-disabled={page === startPage}
         tabIndex={page === startPage ? -1 : undefined}
         onClick={() => go(startPage)}>{sourceId === null ? 'К началу' : 'К источнику'}</button>

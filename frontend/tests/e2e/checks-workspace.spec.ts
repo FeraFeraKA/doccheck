@@ -296,8 +296,8 @@ test('the finished check loads stored findings and can retry without repeating s
   await expect(zero.getByRole('cell', { name: '0,00 ₽', exact: true })).toBeVisible();
   await zero.getByRole('button', { name: 'Синтетическая статья B', exact: true }).click();
   const reconciliation = page.getByRole('region', { name: 'Рабочее место сверки' });
-  await expect(reconciliation.getByText('Источник статьи B не прочитан')).toBeVisible();
-  await expect(reconciliation.getByText(/Ошибка чтения файла/).first()).toBeVisible();
+  await expect(reconciliation.getByRole('region', { name: 'Подробности: Синтетическая статья B' }))
+    .toContainText('Источник ожидаемого значения не прочитан');
   await page.getByRole('link', { name: 'Исключения' }).click();
   await expect(page.getByRole('region', { name: 'Исключения', exact: true })
     .getByText('Ошибка чтения', { exact: true })).toBeVisible();
@@ -328,7 +328,7 @@ test('a complete document sum stays complete when the reported amount is missing
   await page.goto(`/checks/${id}`);
   const unverified = page.getByRole('region', { name: 'Недостаточно подтверждений' });
   await expect(unverified.getByText('Нет суммы в КФЗ')).toBeVisible();
-  await expect(unverified.getByText('Сумма по документам: 120,50 RUB')).toBeVisible();
+  await expect(unverified.getByText('Сумма по документам: 120,50 ₽')).toBeVisible();
   await expect(unverified.getByText(/Частичная сумма/)).toHaveCount(0);
 });
 

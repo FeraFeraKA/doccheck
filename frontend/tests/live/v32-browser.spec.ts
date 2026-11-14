@@ -18,7 +18,7 @@ for (const { name, contract, partial } of packages) {
 
     const [accepted] = await Promise.all([
       page.waitForResponse((response) => response.request().method() === 'POST'
-        && new URL(response.url()).pathname === '/api/v0/runs'),
+        && /^\/api\/v0\/runs\/uploads\/[^/]+\/start$/.test(new URL(response.url()).pathname)),
       page.getByRole('button', { name: 'Запустить проверку' }).click(),
     ]);
     expect(accepted.status()).toBe(202);
@@ -26,7 +26,8 @@ for (const { name, contract, partial } of packages) {
     if (!isRunId(runId)) throw new Error('The API did not return a valid run ID.');
     expect(accepted.headers().location).toBe(`/api/v0/runs/${runId}`);
     await testInfo.attach('run-id', { body: runId, contentType: 'text/plain' });
-    await page.locator(`a[href="/checks/${runId}"]`).first().click();
+    const queue = page.getByRole('region', { name: 'Последние проверки' });
+    await queue.locator(`a[href="/checks/${runId}"]`).click({ timeout: 240_000 });
     await expect(page).toHaveURL(`/checks/${runId}`);
 
     const table = page.getByRole('table', { name: 'Показатели КФЗ' });
@@ -46,6 +47,7 @@ for (const { name, contract, partial } of packages) {
 
     await row.getByRole('button', { name: 'Общехозяйственные расходы' }).click();
     const detail = page.getByRole('region', { name: 'Подробности: Общехозяйственные расходы' });
+    await detail.getByText('Адреса и основание', { exact: true }).first().click();
     const [fragmentResponse, fileResponse] = await Promise.all([
       page.waitForResponse((response) => new URL(response.url()).pathname.startsWith(`/api/v0/runs/${runId}/documents/`)
         && new URL(response.url()).pathname.endsWith('/fragments')),
@@ -57,8 +59,7 @@ for (const { name, contract, partial } of packages) {
     expect(fileResponse.status()).toBe(200);
     expect(await fileResponse.body()).toEqual(await readFile(act));
     const viewer = page.getByRole('region', { name: 'Просмотр источника' });
-    await expect(viewer.getByText('Абзац 6', { exact: true })).toBeVisible();
-    await expect(viewer.getByText('Выбранный фрагмент')).toBeVisible();
+    await expect(page.getByLabel('Доказательство').locator('option:checked')).toContainText('Абзац 6');
     await expect(viewer.getByText(partial).last()).toBeVisible();
     await expect(viewer.getByRole('link', { name: 'Скачать оригинал' })).toHaveAttribute('download', 'act.docx');
     await page.screenshot({ path: testInfo.outputPath('source.png') });

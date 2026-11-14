@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { discardPreparedRun, prepareRunTransfer } from './createRun';
+import { discardPreparedRun, prepareRunTransfer, RunUploadHttpError } from './createRun';
 
 type TransferPacket = Parameters<typeof prepareRunTransfer>[0];
 
@@ -57,6 +57,9 @@ export function usePreparedRun(packet: TransferPacket | null) {
       attempt.uploadId = uploadId;
       publish({ phase: 'ready', uploadId });
     } catch (error) {
+      if (error instanceof RunUploadHttpError && (error.status === 404 || error.status === 410)) {
+        attempt.send = prepareRunTransfer(attempt.packet, newIdempotencyKey());
+      }
       publish({ phase: 'failed', error });
     } finally {
       attempt.controller = undefined;
@@ -98,6 +101,7 @@ export function usePreparedRun(packet: TransferPacket | null) {
   function replaceExpired(uploadId: string) {
     const attempt = current.current;
     if (!attempt || attempt.packet !== packet || attempt.uploadId !== uploadId) return;
+    release(uploadId);
     attempt.uploadId = undefined;
     attempt.startRequested = false;
     attempt.send = prepareRunTransfer(attempt.packet, newIdempotencyKey());

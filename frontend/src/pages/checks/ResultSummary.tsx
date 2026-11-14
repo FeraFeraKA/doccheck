@@ -57,8 +57,10 @@ export function AdditionalChecks({ result, runPath, onOpenRow, onOpenDocument, o
   onOpenDocument?: (id: string, trigger: HTMLElement) => void;
   onOpenEvidence?: (id: string, trigger: HTMLElement) => void;
 }) {
-  const files = result.documents.filter(({ decision, errors }) => decision.state !== 'include' || errors.length > 0);
-  const hasExceptions = files.some(({ decision }) => decision.state !== 'include');
+  const files = result.documents.filter(({ decision, errors }) =>
+    decision.state === 'include' && errors.length > 0,
+  );
+  const hasExceptions = result.documents.some(({ decision }) => decision.state !== 'include');
   const rowIssueIds = new Set(result.rows.map(({ root_issue_id }) => root_issue_id));
   const issues = result.summary.primary_issues.filter(({ id }) => !rowIssueIds.has(id));
   const evidenceById = new Map(result.evidence.map((item) => [item.id, item]));
@@ -98,7 +100,7 @@ export function AdditionalChecks({ result, runPath, onOpenRow, onOpenDocument, o
     {issues.length > 0 && <ul className="list-disc pl-5 text-sm">{issues.map((issue) => <li key={issue.id}>{issue.message}{sourceLinks(issue.evidence_refs)}</li>)}</ul>}
     <UnverifiedIndicators rows={result.rows} onOpenRow={onOpenRow} />
     {hasExceptions && <Link to={runPath + '/documents#exceptions'} className="inline-block text-[13px] underline">Исключения</Link>}
-    {files.length === 0 && issues.length === 0 && result.summary.counts.unverified === 0
+    {!hasExceptions && files.length === 0 && issues.length === 0 && result.summary.counts.unverified === 0
       && <p className="result-summary-muted text-sm">Дополнительные замечания отсутствуют.</p>}
   </section>;
 }

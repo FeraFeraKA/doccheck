@@ -10,7 +10,7 @@ const tabs = [
 
 export type CheckView = 'table' | 'documents' | 'exceptions' | 'conclusion' | 'log';
 
-export function ResultHeader({ title, runPath, view, scope, syntheticLabel, documentFilters, editPackPath, archiveAction }: {
+export function ResultHeader({ title, runPath, view, scope, syntheticLabel, documentFilters, editPackPath }: {
   title: string;
   runPath: string;
   view: CheckView;
@@ -18,8 +18,6 @@ export function ResultHeader({ title, runPath, view, scope, syntheticLabel, docu
   syntheticLabel?: string;
   documentFilters?: ReactNode;
   editPackPath?: string;
-  documentActions?: ReactNode;
-  archiveAction?: ReactNode;
 }) {
   const documents = view === 'documents' || view === 'exceptions';
   const editLink = import.meta.env.VITE_DOCCHECK_PUBLIC_DEMO === '1' ? undefined : editPackPath;
@@ -52,7 +50,6 @@ export function ResultHeader({ title, runPath, view, scope, syntheticLabel, docu
             Изменить комплект
           </Link>
         </div> : <div className="result-header-actions">
-          {archiveAction}
           <nav aria-label="Путь к проверке">
             <Link className="result-history-link" to="/checks">Все проверки</Link>
           </nav>

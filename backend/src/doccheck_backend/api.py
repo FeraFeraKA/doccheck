@@ -1,6 +1,6 @@
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import aclosing, asynccontextmanager
-from typing import Annotated, BinaryIO
+from typing import Annotated, BinaryIO, Literal
 from urllib.parse import quote
 from uuid import UUID
 
@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response, StreamingResponse
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.concurrency import run_in_threadpool
@@ -30,7 +31,10 @@ from doccheck_backend.uploads import (
     MAX_DOCUMENTS,
     MAX_MULTIPART_SIZE,
     UploadError,
+    discard_expired_uploads,
+    discard_prepared_run,
     size_error,
+    start_prepared_run,
     store_run,
 )
 
@@ -41,6 +45,25 @@ class _RunMultipartParser(MultiPartParser):
     def on_end(self) -> None:
         # The underlying parser can return finished parts without a closing boundary.
         self.complete = True
+
+
+class EditableDocument(BaseModel):
+    id: str
+    name: str
+    size: int
+    role: Literal["report", "supporting"]
+
+
+class EditablePack(BaseModel):
+    documents: list[EditableDocument]
+
+
+def _accepted_run(run_id: UUID) -> JSONResponse:
+    return JSONResponse(
+        status_code=202,
+        content={"run_id": str(run_id), "status": "queued"},
+        headers={"Location": f"/api/v0/runs/{run_id}"},
+    )
 
 
 class _OriginalFileResponse(StreamingResponse):
@@ -101,6 +124,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             content["field"] = exc.field
         return JSONResponse(status_code=exc.status, content=content)
 
+    @application.exception_handler(UploadError)
+    async def upload_error(request: Request, exc: UploadError) -> JSONResponse:
+        content = {"code": exc.code, "message": str(exc)}
+        if exc.field is not None:
+            content["field"] = exc.field
+        return JSONResponse(status_code=exc.status, content=content)
+
     @application.exception_handler(RequestValidationError)
     async def request_error(request: Request, exc: RequestValidationError) -> JSONResponse:
         path = request.scope["path"]
@@ -127,8 +157,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     document_runs = APIRouter(prefix="/api/v0/runs", dependencies=[Depends(require_document_runs)])
 
-    @document_runs.post("", status_code=202)
-    async def post_run(request: Request) -> JSONResponse:
+    async def accept_upload(request: Request, *, prepared: bool) -> UUID:
         try:
             media_type = request.headers.get("content-type", "").partition(";")[0].strip().lower()
             if media_type != "multipart/form-data":
@@ -155,7 +184,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
             async with aclosing(bounded_stream()) as stream:
                 parser = _RunMultipartParser(
-                    request.headers, stream, max_files=MAX_DOCUMENTS + 1, max_fields=8
+                    request.headers,
+                    stream,
+                    max_files=MAX_DOCUMENTS + 1,
+                    max_fields=MAX_DOCUMENTS + 9 if prepared else 8,
                 )
                 form = await parser.parse()
             try:
@@ -165,35 +197,54 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     request.app.state.upload_root,
                     parsed_key,
                     form,
+                    prepared=prepared,
                 )
+                if prepared:
+                    await run_in_threadpool(
+                        discard_expired_uploads,
+                        request.app.state.engine,
+                        request.app.state.upload_root,
+                    )
             finally:
                 await form.close()
         except MultiPartException as exc:
             if exc.message.startswith(("Too many files.", "Too many fields.")):
-                return JSONResponse(
-                    status_code=422,
-                    content={"code": "invalid_input", "message": "Слишком много частей формы"},
-                )
-            return JSONResponse(
-                status_code=400,
-                content={"code": "invalid_request", "message": "Некорректная multipart-форма"},
-            )
-        except UploadError as exc:
-            content = {"code": exc.code, "message": str(exc)}
-            if exc.field is not None:
-                content["field"] = exc.field
-            return JSONResponse(status_code=exc.status, content=content)
+                raise UploadError(422, "invalid_input", "Слишком много частей формы") from None
+            raise UploadError(400, "invalid_request", "Некорректная multipart-форма") from None
         except (OSError, SQLAlchemyError):
-            return JSONResponse(
-                status_code=503,
-                content={"code": "service_unavailable", "message": "Хранилище недоступно"},
-            )
+            raise UploadError(503, "service_unavailable", "Хранилище недоступно") from None
+        return run_id
 
+    @document_runs.post("", status_code=202)
+    async def post_run(request: Request) -> JSONResponse:
+        return _accepted_run(await accept_upload(request, prepared=False))
+
+    @document_runs.post("/uploads", status_code=201)
+    async def prepare_run(request: Request) -> JSONResponse:
+        upload_id = await accept_upload(request, prepared=True)
         return JSONResponse(
-            status_code=202,
-            content={"run_id": str(run_id), "status": "queued"},
-            headers={"Location": f"/api/v0/runs/{run_id}"},
+            status_code=201,
+            content={"upload_id": str(upload_id)},
+            headers={"Cache-Control": "no-store"},
         )
+
+    @document_runs.post("/uploads/{upload_id}/start", status_code=202)
+    def start_run(request: Request, upload_id: str) -> JSONResponse:
+        try:
+            run_id = start_prepared_run(
+                request.app.state.engine, request.app.state.upload_root, upload_id
+            )
+        except OSError:
+            raise run_reads.unavailable() from None
+        return _accepted_run(run_id)
+
+    @document_runs.delete("/uploads/{upload_id}", status_code=204, response_class=Response)
+    def discard_run_upload(request: Request, upload_id: str) -> Response:
+        try:
+            discard_prepared_run(request.app.state.engine, request.app.state.upload_root, upload_id)
+        except OSError:
+            raise run_reads.unavailable() from None
+        return Response(status_code=204)
 
     @document_runs.get("", response_model_exclude_unset=True)
     def list_runs(
@@ -208,6 +259,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @document_runs.get("/{run_id}")
     def get_run(request: Request, run_id: str) -> run_reads.RunState:
         return run_reads.get_run_state(request.app.state.engine, run_id)
+
+    @document_runs.get("/{run_id}/pack")
+    def editable_pack(request: Request, run_id: str) -> EditablePack:
+        run = run_reads.get_editable_run(request.app.state.engine, run_id)
+        return EditablePack(
+            documents=[EditableDocument.model_validate(item) for item in run.documents]
+        )
 
     @document_runs.put("/{run_id}/archive")
     def archive_run(request: Request, run_id: str) -> run_reads.ArchiveState:

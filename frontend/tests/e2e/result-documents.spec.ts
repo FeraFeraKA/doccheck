@@ -27,7 +27,8 @@ test('synthetic document decisions, addresses and row links work without the doc
   const dialog = page.getByLabel('Источник документа', { exact: true }).and(page.locator('.source-workspace-panel[open]'));
   await expect(dialog.getByText(/^Оригинал (в готовом примере|документа) недоступен\.$/)).toBeVisible();
   await dialog.getByRole('combobox', { name: 'Адрес доказательства' }).selectOption('amount-2');
-  await expect(dialog.getByRole('paragraph').filter({ hasText: 'Лист «Синтетика», C7' })).toBeVisible();
+  await expect(dialog.getByRole('combobox', { name: 'Адрес доказательства' }).locator('option:checked'))
+    .toHaveText('Лист «Синтетика», C7');
   await page.keyboard.press('Escape');
   await expect(file).toBeFocused();
 
@@ -140,8 +141,9 @@ test('reading filters separate partial, pending and legacy states without changi
 test('diagnostics return keyboard focus and the documents route restores selected evidence', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/checks/synthetic-example');
-  const diagnostics = page.getByRole('region', { name: 'Дополнительные проверки' });
-  const excludedDocument = diagnostics.getByRole('button', { name: 'synthetic-ledger-copy.xlsx' });
+  await page.getByRole('link', { name: 'Исключения', exact: true }).press('Enter');
+  const exceptions = page.getByRole('region', { name: 'Исключения', exact: true });
+  const excludedDocument = exceptions.getByRole('button', { name: 'synthetic-ledger-copy.xlsx' });
   const source = page.getByRole('region', { name: 'Источник документа', exact: true });
   await excludedDocument.press('Enter');
   await expect(source.getByLabel('Документы комплекта')).toHaveValue('ledger-copy');
@@ -180,5 +182,7 @@ test('a distinct primary issue remains visible beside the related file error', a
   await page.goto('/checks/' + id);
   const diagnostics = page.getByRole('region', { name: 'Дополнительные проверки' });
   await expect(diagnostics.getByText(detail, { exact: true })).toBeVisible();
-  await expect(diagnostics.getByText('Ошибка чтения файла', { exact: true })).toBeVisible();
+  await diagnostics.getByRole('link', { name: 'Исключения', exact: true }).click();
+  await expect(page.getByRole('region', { name: 'Исключения', exact: true })
+    .getByText('Ошибка чтения файла', { exact: true })).toBeVisible();
 });

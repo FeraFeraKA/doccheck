@@ -6,7 +6,7 @@ import { getSourceFragmentPreview } from './sourceApi';
 import type { SourceEvidence } from './sourceApi';
 import { strongestTone } from './sourceHighlights';
 import type { SourceHighlight, SourceTone } from './sourceHighlights';
-import { WorkspaceIcon } from './WorkspaceIcon';
+import { ReaderArrow } from './ReaderArrow';
 import './document-reader.css';
 
 type Locator = SourceEvidence['locator'];
@@ -223,20 +223,22 @@ export function OfficeReader({ runId, documentId, format, locator, evidenceId, t
           {sheets.map((title) => <option key={title}>{title}</option>)}
         </select></label>
         <div className="document-reader-paging" role="group" aria-label="Область листа">
-          <button type="button" title="Предыдущие строки" aria-label="Предыдущие строки" aria-disabled={!matchingPreview || row === 1}
-            tabIndex={row === 1 ? -1 : undefined}
-            onClick={() => pageRow(-rows.length)}><WorkspaceIcon name="chevron" size={15} /></button>
-          <span aria-live="polite">Строки {row}–{row + rows.length - 1} из {last_row}</span>
-          <button type="button" title="Следующие строки" aria-label="Следующие строки" aria-disabled={!matchingPreview || row + rows.length > last_row}
-            tabIndex={row + rows.length > last_row ? -1 : undefined}
-            onClick={() => pageRow(rows.length)}><WorkspaceIcon name="chevron" size={15} /></button>
-          <button type="button" title="Предыдущие столбцы" aria-label="Предыдущие столбцы" aria-disabled={!matchingPreview || column === 1}
-            tabIndex={column === 1 ? -1 : undefined}
-            onClick={() => pageColumn(-columns)}><WorkspaceIcon name="chevron" size={15} /></button>
-          <span>Столбцы {columnName(column)}–{columnName(column + columns - 1)}</span>
-          <button type="button" title="Следующие столбцы" aria-label="Следующие столбцы" aria-disabled={!matchingPreview || column + columns > last_column}
-            tabIndex={column + columns > last_column ? -1 : undefined}
-            onClick={() => pageColumn(columns)}><WorkspaceIcon name="chevron" size={15} /></button>
+          <div className="reader-range">
+            <ReaderArrow label="Предыдущие строки" direction="left" edge={row === 1}
+              unavailable={!matchingPreview || row === 1} onNavigate={() => pageRow(-rows.length)} />
+            <span aria-live="polite">Строки {row}–{row + rows.length - 1} из {last_row}</span>
+            <ReaderArrow label="Следующие строки" direction="right" edge={row + rows.length > last_row}
+              unavailable={!matchingPreview || row + rows.length > last_row}
+              onNavigate={() => pageRow(rows.length)} />
+          </div>
+          <div className="reader-range">
+            <ReaderArrow label="Предыдущие столбцы" direction="left" edge={column === 1}
+              unavailable={!matchingPreview || column === 1} onNavigate={() => pageColumn(-columns)} />
+            <span>Столбцы {columnName(column)}–{columnName(column + columns - 1)}</span>
+            <ReaderArrow label="Следующие столбцы" direction="right" edge={column + columns > last_column}
+              unavailable={!matchingPreview || column + columns > last_column}
+              onNavigate={() => pageColumn(columns)} />
+          </div>
         </div>
         {locator?.kind === 'sheet' && <button className="reader-source-jump" type="button"
           tabIndex={manualWindow ? undefined : -1}
