@@ -277,6 +277,109 @@ def test_wrapped_month_range_withholds_a_partial_period():
     )
 
 
+@pytest.mark.parametrize(
+    "printed",
+    [
+        "Период: с 01.01.2031 по 31.01.2031 и с 01.03.2031 по 31.03.2031",
+        "Период: с 01.03.2031 по 31.03.2031 и с 01.01.2031 по 31.01.2031",
+        "Период: 2031-01-01 — 2031-01-31; 2031-03-01 — 2031-03-31",
+        "Период: Январь 2031 и Март 2031",
+        "Период: Январь 2031 — Февраль 2031, Апрель 2031",
+        "Период: 01.01.2031 — 31.01.2031 | Период: 01.03.2031 — 31.03.2031",
+        "Период: 01.01.2031 — 31.01.2031 и с неразборчивой даты",
+    ],
+)
+def test_multiple_or_unresolved_periods_do_not_fall_back_to_first_or_document_date(printed):
+    address = PageLocator(kind="page", page=1, bbox=(0.1, 0.2, 0.8, 0.3))
+    date = PageLocator(kind="page", page=1, bbox=(0.1, 0.4, 0.8, 0.5))
+    assert _periods((Observation(printed, address), Observation("Дата: 31.01.2031", date))) == []
+
+
+def test_period_field_keeps_unrelated_requisites_and_separate_readings():
+    first = PageLocator(kind="page", page=1, bbox=(0.1, 0.2, 0.8, 0.3))
+    second = PageLocator(kind="page", page=1, bbox=(0.1, 0.4, 0.8, 0.5))
+    observations = (
+        Observation("Период: 01.01.2031 — 31.01.2031 | Договор: A-12", first),
+        Observation("Период: 01.03.2031 — 31.03.2031", second),
+    )
+    readings = _periods(observations)
+    assert [(p.start, p.end, o.locator) for p, o in readings] == [
+        ("2031-01-01", "2031-01-31", first),
+        ("2031-03-01", "2031-03-31", second),
+    ]
+    date = Observation("Дата документа: 31.01.2031", second)
+    assert [(p.start, p.end) for p, _ in _periods((date,))] == [("2031-01-31", "2031-01-31")]
+    field = Observation("Период: 01.01.2031 — 31.01.2031; Договор № A-12 от 01.03.2031", first)
+    assert [(p.start, p.end) for p, _ in _periods((field,))] == [("2031-01-01", "2031-01-31")]
+
+
+def test_multiple_periods_wrapped_within_same_observation_are_not_truncated():
+    address = PageLocator(kind="page", page=1, bbox=(0.1, 0.2, 0.8, 0.3))
+    assert (
+        _periods(
+            (
+                Observation("Период: 01.01.2031 — 31.01.2031", address),
+                Observation("и с 01.03.2031 по 31.03.2031", address),
+            )
+        )
+        == []
+    )
+
+
+@pytest.mark.parametrize(
+    ("document_date", "operation_line"),
+    [
+        ("Дата документа: 15.02.2031", "Услуги оказаны 20.01.2031"),
+        ("Дата: 05.03.2031", "Услуги оказаны 20.02.2031"),
+        ("Акт № ACT-1 от 05.03.2031", "Работы выполнены 20.02.2031"),
+    ],
+)
+@pytest.mark.parametrize("reverse", [False, True])
+def test_conflicting_operation_date_vetoes_document_date_fallback(
+    document_date, operation_line, reverse
+):
+    first = PageLocator(kind="page", page=1, bbox=(0.1, 0.2, 0.8, 0.3))
+    second = PageLocator(kind="page", page=1, bbox=(0.1, 0.4, 0.8, 0.5))
+    lines = (Observation(document_date, first), Observation(operation_line, second))
+    assert _periods(tuple(reversed(lines)) if reverse else lines) == []
+
+
+def test_explicit_period_takes_precedence_over_different_document_date():
+    first = PageLocator(kind="page", page=1, bbox=(0.1, 0.2, 0.8, 0.3))
+    second = PageLocator(kind="page", page=1, bbox=(0.1, 0.4, 0.8, 0.5))
+    third = PageLocator(kind="page", page=1, bbox=(0.1, 0.6, 0.8, 0.7))
+    readings = _periods(
+        (
+            Observation("Дата документа: 05.03.2031", first),
+            Observation("Услуги оказаны 20.02.2031", second),
+            Observation("Период: Февраль 2031", third),
+        )
+    )
+    assert [(p.start, p.end, o.locator) for p, o in readings] == [
+        ("2031-02-01", "2031-02-28", third)
+    ]
+
+
+def test_weak_ocr_operation_date_can_veto_document_date(monkeypatch, tmp_path):
+    from doccheck_backend import grounded_amounts
+
+    path = tmp_path / "synthetic.png"
+    Image.new("RGB", (300, 200), "white").save(path)
+    monkeypatch.setattr(
+        grounded_amounts,
+        "recognize_lines",
+        lambda _: [
+            OcrLine("Дата документа: 15.02.2031", (5, 10, 230, 20), 95),
+            OcrLine("Услуги оказаны 20.01.2031", (5, 30, 230, 40), 45),
+            OcrLine("Итого: 120,00 руб.", (5, 70, 200, 80), 95),
+        ],
+    )
+    source = grounded_amounts.ground_document(uuid4(), "e" * 32, path, "png", "b" * 64)
+    assert source.period is None and source.period_date_conflict
+    assert source.amount == "120.00"
+    assert not any(item.kind == "period" for item in source.assertions)
+
+
 def test_unbound_final_label_blocks_the_intermediate_total():
     lines = ("Итого: 100,00 руб.", "Итого к оплате:", "120,00 руб.")
     document = NativeDocument(

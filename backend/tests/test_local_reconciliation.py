@@ -168,6 +168,127 @@ def test_calculates_status_and_total_from_admitted_sources(database_url, tmp_pat
 
 
 @pytest.mark.parametrize(
+    ("period", "amount", "decision", "reason"),
+    [
+        (
+            "Период: с 01.02.2031 по 28.02.2031 и с 01.04.2031 по 30.04.2031",
+            "399,12",
+            "needs_review",
+            "period_ambiguous",
+        ),
+        (
+            "Период: с 01.04.2031 по 30.04.2031 и с 01.02.2031 по 28.02.2031",
+            "1 905,73",
+            "needs_review",
+            "period_ambiguous",
+        ),
+        ("Период: с 01.04.2031 по 30.04.2031", "399,12", "exclude", "outside_period"),
+        ("Период: с 01.02.2031 по 28.02.2031", "399,12", "include", "addressed_amount"),
+    ],
+)
+def test_worker_does_not_admit_total_for_multiple_periods(
+    database_url, tmp_path, period, amount, decision, reason
+):
+    report, files = write_reconciliation_case(tmp_path)
+    primary = next(path for path in files if path.name == "ADM-72.docx")
+    document = Document(primary)
+    document.paragraphs[2].text = period
+    document.paragraphs[4].text = f"Итого: {amount} руб."
+    document.save(primary)
+    settings = Settings(database_url, upload_root=tmp_path / "uploads")
+    with TestClient(create_app(settings)) as client:
+        run_id = _prepare_and_start(
+            client,
+            [
+                ("report", (report.name, report.read_bytes())),
+                *(("documents", (path.name, path.read_bytes())) for path in reversed(files)),
+            ],
+        )
+        assert run_document_worker(
+            client.app.state.engine,
+            settings.upload_root,
+            V32Processor(no_model, no_model),
+            once=True,
+        )
+        response = client.get(f"/api/v0/runs/{run_id}/findings")
+        assert response.status_code == 200, client.get(f"/api/v0/runs/{run_id}").json()
+        result = response.json()
+    source = next(item for item in result["documents"] if item["name"] == primary.name)
+    row = next(item for item in result["rows"] if item["id"] == "general_admin")
+    assert (source["decision"]["state"], source["decision"]["reason_code"]) == (decision, reason)
+    if decision == "needs_review":
+        assert row["status"] == "unverified"
+        assert row["expected_value"] is None and row["delta"] is None
+        assert row["observed_evidence_sum"] is None
+        assert reason in {item["code"] for item in row["reasons"]}
+        assert not any(
+            item["document_id"] == source["id"] and item["kind"] == "period"
+            for item in result["evidence"]
+        )
+    elif decision == "include":
+        assert row["status"] == "verified"
+        assert row["expected_value"] == "399.12" and row["delta"] == "0.00"
+    else:
+        assert row["calculation"]["components"] == []
+
+
+@pytest.mark.parametrize(
+    ("document_date", "operation_date", "amount", "reverse"),
+    [
+        ("15.02.2031", "20.01.2031", "399,12", False),
+        ("05.03.2031", "20.02.2031", "1 905,73", True),
+    ],
+)
+def test_worker_does_not_use_conflicting_document_date_as_operation_period(
+    database_url, tmp_path, document_date, operation_date, amount, reverse
+):
+    report, files = write_reconciliation_case(tmp_path)
+    primary = next(path for path in files if path.name == "ADM-72.docx")
+    document = Document(primary)
+    document.paragraphs[2].text = f"Дата документа: {document_date}"
+    document.paragraphs[4].text = f"Итого: {amount} руб."
+    document.add_paragraph(f"Услуги оказаны {operation_date}")
+    document.save(primary)
+    settings = Settings(database_url, upload_root=tmp_path / "uploads")
+    with TestClient(create_app(settings)) as client:
+        run_id = _prepare_and_start(
+            client,
+            [
+                ("report", (report.name, report.read_bytes())),
+                *(
+                    ("documents", (path.name, path.read_bytes()))
+                    for path in (reversed(files) if reverse else files)
+                ),
+            ],
+        )
+        assert run_document_worker(
+            client.app.state.engine,
+            settings.upload_root,
+            V32Processor(no_model, no_model),
+            once=True,
+        )
+        response = client.get(f"/api/v0/runs/{run_id}/findings")
+        assert response.status_code == 200, client.get(f"/api/v0/runs/{run_id}").json()
+        result = response.json()
+    source = next(item for item in result["documents"] if item["name"] == primary.name)
+    row = next(item for item in result["rows"] if item["id"] == "general_admin")
+    assert source["decision"]["state"] == "needs_review"
+    assert source["decision"]["reason_code"] == "period_date_conflict"
+    assert row["status"] == "unverified"
+    assert row["expected_value"] is None and row["delta"] is None
+    assert row["observed_evidence_sum"] is None
+    assert "period_date_conflict" in {item["code"] for item in row["reasons"]}
+    assert not any(
+        item["document_id"] == source["id"] and item["kind"] == "period"
+        for item in result["evidence"]
+    )
+    assert any(
+        item["document_id"] == source["id"] and item["kind"] == "amount"
+        for item in result["evidence"]
+    )
+
+
+@pytest.mark.parametrize(
     ("filename", "code"),
     [
         ("truncated.pdf", "pdf_unreadable"),

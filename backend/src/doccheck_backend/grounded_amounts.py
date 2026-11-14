@@ -55,6 +55,13 @@ _MONTH_RANGE_END = re.compile(rf"\s*(?:[—–\-/]|\bпо\b|\bдо\b)\s*{_MONTH_
 _PERIOD_CONTINUATION = re.compile(r"^\s*(?:[—–\-/]|\bпо\b|\bдо\b)", re.I)
 _PERIOD_FIELD = re.compile(_PERIOD_TITLE, re.I)
 _DAY = r"(?:[0-9]{2}\.[0-9]{2}\.[0-9]{4}|[0-9]{4}-[0-9]{2}-[0-9]{2})"
+_ADDITIONAL_PERIOD = re.compile(
+    rf"^\s*(?:г(?:ода?)?\.?\s*)?(?:[.,;+/&]\s*)?"
+    rf"(?:(?:и|или|а\s+также)\s+)?(?:с\s+|за\s+|в\s+)?"
+    rf"(?:{_DAY}|[0-9]{{1,2}}[./][0-9]{{1,2}}|(?:{'|'.join(_MONTH)})\b|период\b)",
+    re.I,
+)
+_ADDITIONAL_PERIOD_PREFIX = re.compile(r"^\s*(?:и|или|а\s+также)\s+с\s+", re.I)
 _DATE_RANGE = re.compile(
     rf"(?:{_PERIOD_LABEL})(?:с\s+)?({_DAY})(?:\s+г\.?)?\s*(?:по|до|[–—-])\s*({_DAY})\b",
     re.I,
@@ -62,6 +69,11 @@ _DATE_RANGE = re.compile(
 _DATE = re.compile(rf"^дата(?:\s+документа)?\s*[:№]?\s*({_DAY})(?:\s*г\.?)?$", re.I)
 _HEADER_DATE = re.compile(
     rf"^(?:акт|счет-акт|счёт-акт|упд)\b[^\n]{{0,72}}?\bот\s+({_DAY})(?:\s*г\.?)?$", re.I
+)
+_OPERATION_DATE = re.compile(
+    rf"^(?:услуги\s+оказаны|услуга\s+оказана|работы\s+выполнены)\s*"
+    rf"(?:[:—–-]\s*)?({_DAY})(?:\s*г\.?)?\.?$",
+    re.I,
 )
 _CONTRACT_ID = r"[\w]+(?:[/-][\w]+)*"
 _STAGE_FIELD = re.compile(
@@ -134,6 +146,8 @@ class GroundedDocument:
     issuer_key: str | None
     issuer_tax_id: str | None
     stage_uncertain: bool
+    period_ambiguous: bool
+    period_date_conflict: bool
 
 
 def _norm(text: str) -> str:
@@ -247,22 +261,48 @@ def _contracts(
     return results
 
 
-def _periods(observations: tuple[Observation, ...]) -> list[tuple[Period, Observation]]:
+def _period_readings(
+    observations: tuple[Observation, ...],
+) -> tuple[list[tuple[Period, Observation]], bool, bool]:
     periods, dates = [], []
+    operation_dates = set()
     unresolved_period = False
+    ambiguous_period = False
     for i, observation in enumerate(observations):
         raw = observation.raw_text.strip()
+        # A second labelled field at the same address is not evidence that the
+        # document total belongs to only the first one.
+        if len(list(_PERIOD_FIELD.finditer(raw))) > 1:
+            unresolved_period = ambiguous_period = True
+            continue
         # Separate OCR lines do not share a single exact address for both bounds.
         following = observations[i + 1] if i + 1 < len(observations) else None
+        next_text = following.raw_text.strip() if following else ""
+        additional_line = bool(
+            _ADDITIONAL_PERIOD_PREFIX.match(next_text)
+            or (
+                re.match(r"^(?:(?:и|или|а\s+также)\b|[,;+/&])", next_text, re.I)
+                and _ADDITIONAL_PERIOD.match(next_text)
+            )
+        )
         if (
             following
-            and _following(observation, following)
-            and _PERIOD_CONTINUATION.match(following.raw_text.strip())
+            and (_following(observation, following) or observation.locator == following.locator)
+            and (_PERIOD_CONTINUATION.match(next_text) or additional_line)
             and (_PERIOD_FIELD.search(raw) or _MONTH_PERIOD.search(raw))
         ):
             unresolved_period = True
+            ambiguous_period |= additional_line
             continue
         if match := _DATE_RANGE.search(raw):
+            tail = raw[match.end() :].split("|", 1)[0]
+            if (
+                _PERIOD_CONTINUATION.match(tail)
+                or _ADDITIONAL_PERIOD.match(tail)
+                or _ADDITIONAL_PERIOD_PREFIX.match(tail)
+            ):
+                unresolved_period = ambiguous_period = True
+                continue
             low, high = (normalize_document_date(value).value for value in match.groups())
             if low and high and low <= high:
                 periods.append((Period(start=low, end=high), observation))
@@ -275,6 +315,10 @@ def _periods(observations: tuple[Observation, ...]) -> list[tuple[Period, Observ
             if end_month := _MONTH_RANGE_END.match(tail):
                 last_month, last_year = _MONTH[end_month[1].casefold()], int(end_month[2])
                 tail = tail[end_month.end() :]
+            tail = tail.split("|", 1)[0]
+            if _ADDITIONAL_PERIOD.match(tail) or _ADDITIONAL_PERIOD_PREFIX.match(tail):
+                unresolved_period = ambiguous_period = True
+                continue
             if (
                 _PERIOD_CONTINUATION.match(tail)
                 or not first_year
@@ -290,6 +334,9 @@ def _periods(observations: tuple[Observation, ...]) -> list[tuple[Period, Observ
                 periods.append((period, observation))
         elif _PERIOD_FIELD.search(raw.translate(_OCR_LABEL_MAP)):
             unresolved_period = True
+        if match := _OPERATION_DATE.fullmatch(raw):
+            if value := normalize_document_date(match[1]).value:
+                operation_dates.add(value)
         if match := _DATE.fullmatch(raw) or _HEADER_DATE.fullmatch(raw):
             if value := normalize_document_date(match[1]).value:
                 dates.append((Period(start=value, end=value), observation))
@@ -298,7 +345,23 @@ def _periods(observations: tuple[Observation, ...]) -> list[tuple[Period, Observ
             if _following(observation, candidate):
                 if value := normalize_document_date(candidate.raw_text.strip()).value:
                     dates.append((Period(start=value, end=value), candidate))
-    return [] if unresolved_period else periods or dates
+    # This guard does not promote a date of service to a period. It only vetoes
+    # the legacy document-date fallback when an explicit operation date differs.
+    date_conflict = bool(
+        not periods
+        and dates
+        and operation_dates
+        and any(day != period.start for period, _ in dates for day in operation_dates)
+    )
+    return (
+        ([] if unresolved_period or date_conflict else periods or dates),
+        ambiguous_period,
+        date_conflict,
+    )
+
+
+def _periods(observations: tuple[Observation, ...]) -> list[tuple[Period, Observation]]:
+    return _period_readings(observations)[0]
 
 
 def format_rubles(amount: Decimal | None, *, xlsx: bool = False) -> str | None:
@@ -584,7 +647,7 @@ def ground_document(
         for raw, o in _contracts(observations, template=template)
         if (value := normalize_contract_number(raw).value)
     ]
-    period_hits = _periods(observations)
+    period_hits, period_ambiguous, period_date_conflict = _period_readings(observations)
     stage_hits, stage_uncertain = _stages(observations)
     if has_weak_ocr:
         possible_stages, unresolved_stage = _stages(potential)
@@ -592,8 +655,12 @@ def ground_document(
             stage for stage, _ in stage_hits
         }
     periods = {(p.start, p.end) for p, _ in period_hits}
-    if has_weak_ocr and {(p.start, p.end) for p, _ in _periods(potential)} != periods:
-        periods.clear()
+    if has_weak_ocr:
+        possible_periods, possible_ambiguity, possible_conflict = _period_readings(potential)
+        period_ambiguous |= possible_ambiguity
+        period_date_conflict |= possible_conflict
+        if {(p.start, p.end) for p, _ in possible_periods} != periods:
+            periods.clear()
     contracts = {value for value, _ in contract_hits}
     if has_weak_ocr:
         possible_contracts = {
@@ -705,4 +772,6 @@ def ground_document(
         issuer or None,
         issuer_tax_id,
         stage_uncertain,
+        period_ambiguous,
+        period_date_conflict,
     )
