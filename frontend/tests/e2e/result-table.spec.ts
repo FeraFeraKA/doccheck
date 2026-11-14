@@ -22,9 +22,12 @@ test('the result disclosure keeps each component and its source address selectab
   await expect(amounts.nth(1)).toHaveText(/C7/);
   await amounts.nth(1).click();
   await expect(amounts.nth(1)).toHaveAttribute('aria-pressed', 'true');
-  await expect(page.getByRole('combobox', { name: 'Доказательство' })).toHaveValue('amount-2');
-  await expect(page.getByLabel('Доказательство').locator('option:checked')).toContainText('C7');
+  const viewer = page.getByRole('region', { name: 'Источник документа' });
+  await expect(viewer.getByText('Лист «Синтетика», C7', { exact: true })).toBeVisible();
+  await expect(viewer.getByRole('combobox')).toHaveCount(1);
   await page.getByRole('button', { name: 'Закрыть просмотр источника' }).click();
+  await expect(viewer).toHaveCount(0);
+  await expect(amounts.nth(1)).toBeFocused();
   await row.press('Space');
   await expect(details).toHaveCount(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);

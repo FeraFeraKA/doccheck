@@ -4,7 +4,7 @@ import { discardPreparedRun, prepareRunTransfer, RunUploadHttpError } from './cr
 type TransferPacket = Parameters<typeof prepareRunTransfer>[0];
 
 type TransferState =
-  | { phase: 'uploading'; percent?: number }
+  | { phase: 'uploading'; percent: number }
   | { phase: 'ready'; uploadId: string }
   | { phase: 'failed'; error: unknown };
 
@@ -45,7 +45,7 @@ export function usePreparedRun(packet: TransferPacket | null) {
       if (!controller.signal.aborted) setSnapshot({ packet: attempt.packet, state });
     };
 
-    publish({ phase: 'uploading' });
+    publish({ phase: 'uploading', percent: 0 });
     try {
       const { upload_id: uploadId } = await attempt.send(controller.signal, (percent) => {
         publish({ phase: 'uploading', percent });

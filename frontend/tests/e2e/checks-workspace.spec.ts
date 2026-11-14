@@ -37,7 +37,8 @@ test('the accountant opens the synthetic reconciliation and sees discrepancies a
   const detail = page.getByRole('region', { name: 'Подробности: Синтетическая статья A' });
   await detail.getByText('Адреса и основание', { exact: true }).first().click();
   await detail.getByRole('button', { name: /Сумма.*C6$/ }).click();
-  await expect(page.getByLabel('Доказательство')).toHaveValue('amount-1');
+  await expect(page.getByRole('region', { name: 'Источник документа' })
+    .getByText('Лист «Синтетика», C6', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Закрыть просмотр источника' }).click();
   await row.getByRole('button', { name: 'Синтетическая статья B', exact: true }).click();
   await expect(row.getByRole('button', { name: 'Синтетическая статья B' })).toHaveAttribute('aria-expanded', 'true');
@@ -309,7 +310,7 @@ test('the finished check loads stored findings and can retry without repeating s
     return route.fulfill({ json: findings });
   });
   await page.goto('/checks/partial-result');
-  await expect(page.getByText('Загрузка результата сверки…')).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Результат проверки' })).toHaveAttribute('aria-busy', 'true');
   finishFailure?.();
   await expect(page.getByRole('alert')).toHaveText('Не удалось загрузить результат сверки.');
   await expect(page.getByText('Состояние проверки · Готово с замечаниями')).toBeVisible();
@@ -467,10 +468,10 @@ test('the selected stored evidence opens its own original and address', async ({
   const breakdown = page.getByRole('region', { name: 'Подробности: Синтетическая статья A' });
   await breakdown.getByText('Адреса и основание', { exact: true }).first().click();
   await breakdown.getByRole('button', { name: /Сумма.*C6$/ }).click();
-  await expect(page.getByLabel('Доказательство')).toHaveValue('amount-1');
+  await expect(preview.getByText('Лист «Синтетика», C6', { exact: true })).toBeVisible();
   const cell = preview.getByRole('cell', { name: '70,50', exact: true });
   await expect(cell).toBeVisible();
-  await expect(cell).toHaveAttribute('data-source-tone', 'discrepancy');
+  await expect(cell).toHaveAttribute('data-source-field', 'amount');
   expect(requested).toEqual(expect.arrayContaining([
     '/api/v0/runs/run-with-source/documents/ledger',
     '/api/v0/runs/run-with-source/documents/ledger/fragments?evidence_id=amount-1',
@@ -650,6 +651,7 @@ test('the uploaded files wait for a separate start and the queue opens only a fi
   const submit = page.getByRole('button', { name: 'Запустить проверку' });
   const transfer = page.getByRole('progressbar', { name: 'Загрузка пакета' });
   await expect(transfer).toBeVisible();
+  await expect(transfer).toHaveAttribute('aria-valuenow', /^\d{1,3}$/);
   await expect(submit).toBeDisabled();
   expect(requestCount).toBe(0);
   releaseUpload();
