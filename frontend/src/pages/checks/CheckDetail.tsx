@@ -5,6 +5,7 @@ import type { RunDetails } from './checkData';
 import { demoJob } from './demoData';
 import { DocumentSourcePreview } from './DocumentSourcePreview';
 import { SourceDrawer } from './SourceDrawer';
+import { SourceContext } from './SourceContext';
 import { FindingsHttpError, loadFindings } from './loadFindings';
 import { ResultHeader } from './ResultHeader';
 import type { CheckView } from './ResultHeader';
@@ -350,8 +351,23 @@ function Reconciliation({ result, storedRunId, rowJump }: {
 
   function selectSource(id: string) {
     setEvidenceId(id);
-    setOpenSourceId(undefined);
+    if (openSourceId) setOpenSourceId(id);
   }
+
+  const sourcePicker = sources.length > 0 && <div className="document-picker">
+    <button type="button" aria-label="Предыдущий источник" disabled={sourceIndex <= 0}
+      onClick={() => selectSource(sources[sourceIndex - 1].id)}>‹</button>
+    <label><span className="source-picker-caption">Доказательство</span>
+      <select value={source?.id} onChange={(event) => selectSource(event.target.value)}>
+        {sources.map((item) => (
+          <option key={item.id} value={item.id}>{documentsById.get(item.document_id)?.name}
+            {' · '}{formatSourceChoice(item.locator)}</option>
+        ))}
+      </select>
+    </label>
+    <button type="button" aria-label="Следующий источник" disabled={sourceIndex >= sources.length - 1}
+      onClick={() => selectSource(sources[sourceIndex + 1].id)}>›</button>
+  </div>;
 
   return (
     <dialog open ref={workspace} className="result-focus-dialog"
@@ -451,20 +467,7 @@ function Reconciliation({ result, storedRunId, rowJump }: {
             {affectedFiles.flatMap((item) => item.errors.filter((error) => fileErrorIds.has(error.id)).map((error) => (
               <p key={error.id}>{item.name} · {error.message}</p>
             )))}
-            {sources.length > 0 && <div className="document-picker">
-                <button type="button" aria-label="Предыдущий источник" disabled={sourceIndex <= 0}
-                onClick={() => selectSource(sources[sourceIndex - 1].id)}>‹</button>
-              <label>Доказательство
-              <select value={source?.id} onChange={(event) => selectSource(event.target.value)}>
-                {sources.map((item) => (
-                  <option key={item.id} value={item.id}>{documentsById.get(item.document_id)?.name}
-                    {' · '}{formatSourceChoice(item.locator)}</option>
-                ))}
-              </select>
-              </label>
-                <button type="button" aria-label="Следующий источник" disabled={sourceIndex >= sources.length - 1}
-                onClick={() => selectSource(sources[sourceIndex + 1].id)}>›</button>
-            </div>}
+            {!openSourceId && sourcePicker}
             {source && document ? (
               <dl className="source-address-card">
                 <dt>Документ</dt><dd>{document.name}</dd>
@@ -485,11 +488,14 @@ function Reconciliation({ result, storedRunId, rowJump }: {
               </button>
               {openSourceId === source.id && (
                 <SourceDrawer onClose={() => setOpenSourceId(undefined)}>
-                  <DocumentSourcePreview
-                    runId={storedRunId}
-                    document={{ id: document.id, name: document.name, format: document.format ?? null }}
-                    evidenceId={source.id}
-                  />
+                  <SourceContext row={row} picker={sourcePicker}>
+                    {(active) => <DocumentSourcePreview
+                      runId={storedRunId}
+                      document={{ id: document.id, name: document.name, format: document.format ?? null }}
+                      evidenceId={source.id}
+                      active={active}
+                    />}
+                  </SourceContext>
                 </SourceDrawer>
               )}
             </>}
