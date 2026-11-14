@@ -91,7 +91,7 @@ for (const missingPayroll of [false, true]) {
     expect(new URL(fragment.url()).pathname).toBe(`${new URL(original.url()).pathname}/fragments`);
     expect(await original.body()).toEqual(await readFile(join(examples, sourceName)));
     const viewer = page.getByRole('region', { name: 'Просмотр источника' });
-    expect(await page.getByLabel('Документы комплекта').locator('option:checked').textContent()).toBe(sourceName);
+    await expect(page.getByLabel('Документы комплекта').locator('option:checked')).toHaveText(sourceName);
     await expect(viewer.getByRole('link', { name: 'Скачать оригинал' }))
       .toHaveAttribute('download', sourceName);
     await page.getByRole('button', { name: 'Закрыть просмотр источника' }).click();

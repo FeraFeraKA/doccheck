@@ -107,7 +107,7 @@ describe('shared compact source workspace', () => {
 
   it('starts a workbook at row 1 and independently filters overlapping fields from all indicators', async () => {
     const [first, second] = result.rows;
-    const findings = { ...result, rows: [first, { ...second, status: 'verified', reported_evidence_refs: ['third'] }],
+    const findings = { ...result, rows: [first, { ...second, reported_evidence_refs: ['third'] }],
       evidence: [
         ...result.evidence,
         { ...result.evidence[2], id: 'third', kind: undefined, locator: { sheet: 'Синтетика', range: 'C8' } },
@@ -124,10 +124,6 @@ describe('shared compact source workspace', () => {
         return Response.json({ sheets: ['Синтетика'], sheet: 'Синтетика', row, column: 1,
           last_row: 8, last_column: 3, rows: rows.slice(row - 1) });
       }
-      if (url.pathname.endsWith('/fragments')) {
-        return Response.json(example.result.evidence.find(({ id }) => id === url.searchParams.get('evidence_id')));
-      }
-      if (url.pathname.endsWith('/fragment-preview')) return Response.json({ text: '2', highlight: { start_byte: 0, end_byte: 1 } });
       return new Response('original', { headers: { 'Content-Type': 'application/octet-stream' } });
     }));
     vi.stubGlobal('URL', class extends URL {

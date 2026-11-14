@@ -45,8 +45,8 @@ export function CheckResultSkeleton({ view }: { view: CheckView }) {
               <div className="check-skeleton-block h-5 w-44" />
             </div>
             <div className="reconcile-filters">
-              {[14, 24, 20, 28].map((width) => <span key={width} style={{ width: width + '%' }}
-                className="check-skeleton-block h-8 max-w-28" />)}
+              {[50, 100, 90, 105].map((width) => <span key={width} style={{ width }}
+                className="check-skeleton-block h-8 shrink-0" />)}
             </div>
             <div className="reconcile-search"><span className="check-skeleton-block h-4 w-52" /></div>
             <SkeletonTable />

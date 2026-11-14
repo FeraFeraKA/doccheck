@@ -95,8 +95,6 @@ for (const width of [390, 768]) {
       sheets: ['Синтетика'], sheet: 'Синтетика', row: 1, column: 1, last_row: 7, last_column: 3,
       rows: Array.from({ length: 7 }, () => ['', '', '']),
     } }));
-    await page.route(`${path}/documents/ledger/fragment-preview?*`, (route) =>
-      route.fulfill({ json: { text: null, highlight: null } }));
     const fragments: string[] = [];
     await page.route(`${path}/documents/*/fragments?*`, (route) => {
       const selected = new URL(route.request().url()).searchParams.get('evidence_id');
@@ -162,7 +160,6 @@ test('the document eye has no side rail and the workbook opens at the first row'
   await page.setViewportSize({ width: 1280, height: 800 });
   const id = 'document-overview';
   const base = `**/api/v0/runs/${id}`;
-  const amounts = example.result.evidence.filter(({ kind }) => kind === 'amount');
   const ledger = example.result.documents.find(({ id }) => id === 'ledger');
   await page.route(base, (route) => route.fulfill({ json: {
     run_id: id, status: 'completed_with_issues', created_at: '2026-11-14T00:00:00Z', error: null,
@@ -182,12 +179,6 @@ test('the document eye has no side rail and the workbook opens at the first row'
             : ['', '', index === 6 || index === 7 ? '60.25' : ''];
         }),
       } });
-    }
-    if (url.pathname.endsWith('/fragments')) {
-      return route.fulfill({ json: amounts.find(({ id }) => id === url.searchParams.get('evidence_id')) });
-    }
-    if (url.pathname.endsWith('/fragment-preview')) {
-      return route.fulfill({ json: { text: '60.250', highlight: { start_byte: 0, end_byte: 6 } } });
     }
     if (url.pathname.endsWith('/page-preview')) return route.fulfill({ status: 404 });
     return route.fulfill({ contentType: 'application/octet-stream', body: 'synthetic transport fixture' });
