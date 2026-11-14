@@ -157,3 +157,40 @@ def test_multiple_document_totals_are_not_admitted(uploaded_files, tmp_path, mon
     result = process(StoredRun(uuid4(), None, uploaded_files), tmp_path).result
     assert result.rows[0].observed_evidence_sum is None
     assert result.documents[1].decision.state == "needs_review"
+
+
+def test_identity_conflict_removes_candidate_sum(uploaded_files, tmp_path, monkeypatch):
+    path = tmp_path / uploaded_files[1]["id"]
+    copy_id = uuid4().hex
+    copy_path = tmp_path / copy_id
+    act = Document(path)
+    act.paragraphs[4].text = "Итого стоимость услуг: 1 050,70 руб."
+    act.save(copy_path)
+    uploaded_files.append(
+        {
+            **uploaded_files[1],
+            "id": copy_id,
+            "name": "changed-act.docx",
+            "sha256": sha256(copy_path.read_bytes()).hexdigest(),
+        }
+    )
+    calls = _stub_ollama(monkeypatch, "1172.70")
+    from bench.e2e_v32_20261114 import run as v32
+
+    request = v32.runtime.api
+
+    def differing_totals(path, body=None, timeout=600):
+        response = request(path, body, timeout)
+        if path == "/api/chat" and "1 050,70" in body["messages"][0]["content"]:
+            payload = json.loads(response["message"]["content"])
+            payload["amount"] = "1050.70"
+            response["message"]["content"] = json.dumps(payload)
+        return response
+
+    monkeypatch.setattr(v32.runtime, "api", differing_totals)
+    result = process(StoredRun(uuid4(), None, uploaded_files), tmp_path).result
+
+    assert calls.count("/api/chat") == 2
+    assert result.rows[0].observed_evidence_sum is None
+    assert any(reason.code == "source_identity_conflict" for reason in result.rows[0].reasons)
+    assert all(file.decision.state == "needs_review" for file in result.documents[1:])

@@ -50,6 +50,12 @@ _DATE = re.compile(r"(?<!\d)(?:\d{4}-\d{2}-\d{2}|\d{2}\.\d{2}\.\d{4})(?!\d)")
 _PERIOD = re.compile(r"^Период\b", re.IGNORECASE)
 _TOTAL = re.compile(r"\b(?:итого|всего|итоговая сумма)\b", re.IGNORECASE)
 _MAX_EXPANDED_OFFICE_BYTES = 128 * 1024**2
+_IDENTITY_CONFLICTS = {
+    "conflicting_duplicate",
+    "explicit_identity_context_conflict",
+    "unresolved_document_identity_collision",
+    "suspected_bare_tail_identity",
+}
 
 
 @dataclass(frozen=True)
@@ -331,6 +337,12 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
             extracted_report,
             extractions,
         )
+        conflicted_sources = {
+            reason["id"]
+            for row in comparison["rows"]
+            for reason in row["reasons"]
+            if reason["reason"] in _IDENTITY_CONFLICTS
+        }
         by_id = {item["id"]: item for item in extractions}
         report_rows = {item["category"]: item for item in prediction["rows"]}
         evidence, rows = [], []
@@ -341,6 +353,8 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
             evidence.append(reported)
             components = []
             for file_id in item["source_ids"]:
+                if file_id in conflicted_sources:
+                    continue
                 file = files[file_id]
                 bound = _bind_component(
                     file,
@@ -372,6 +386,14 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
             reasons = [
                 Reason(code="completeness_unknown", message=completeness.reason, evidence_refs=[])
             ]
+            if conflicted_sources.intersection(item["source_ids"]):
+                reasons.append(
+                    Reason(
+                        code="source_identity_conflict",
+                        message="Документы с конфликтом идентичности требуют проверки.",
+                        evidence_refs=[],
+                    )
+                )
             if not components or len(components) != len(item["source_ids"]):
                 reasons.append(
                     Reason(
