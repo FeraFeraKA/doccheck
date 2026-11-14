@@ -221,6 +221,24 @@ def test_document_decision_code_is_literal_and_not_truncated():
         export_check_result(CheckResult.model_validate(payload))
 
 
+def test_serialized_source_id_respects_excel_cell_limit():
+    payload = fixture_payload()["result"]
+    source = deepcopy(next(item for item in payload["evidence"] if item["id"] == "contract"))
+    source["id"] = "x" * 32_765
+    payload["evidence"].append(source)
+    workbook = load_workbook(BytesIO(export_check_result(CheckResult.model_validate(payload))))
+    exported = next(
+        row for row in workbook["Источники"].iter_rows(min_row=2) if row[0].value == source["id"]
+    )
+    assert json.loads(exported[5].value) == source["id"]
+    assert len(exported[5].value) == 32_767
+
+    # The old ID cell would fit; JSON's two quotes exceed the XLSX cell limit.
+    source["id"] = "x" * 32_766
+    with pytest.raises(XlsxReportLimitError, match="cell text exceeds Excel limit"):
+        export_check_result(CheckResult.model_validate(payload))
+
+
 def test_workbook_preserves_amounts_and_keeps_all_untrusted_cells_literal():
     payload = fixture_payload()
     result = payload["result"]
