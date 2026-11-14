@@ -9,10 +9,12 @@ description = "Synthetic API, PostgreSQL and worker scaffold; no document proces
 requires-python = ">=3.12,<3.13"
 dependencies = [
   "alembic==1.20.1",
+  "defusedxml==0.7.1",
   "fastapi==0.162.5",
   "openpyxl==3.1.5",
   "psycopg[binary]==3.3.9",
   "pydantic==2.14.3",
+  "python-docx==1.2.0",
   "python-dotenv==1.2.4",
   "python-multipart==0.0.33",
   "sqlalchemy==2.0.57",
