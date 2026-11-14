@@ -10,7 +10,7 @@ const tabs = [
 
 export type CheckView = 'table' | 'documents' | 'exceptions' | 'conclusion' | 'log';
 
-export function ResultHeader({ title, runPath, view, scope, syntheticLabel, documentFilters, documentActions }: {
+export function ResultHeader({ title, runPath, view, scope, syntheticLabel, documentFilters, documentActions, archiveAction }: {
   title: string;
   runPath: string;
   view: CheckView;
@@ -18,6 +18,7 @@ export function ResultHeader({ title, runPath, view, scope, syntheticLabel, docu
   syntheticLabel?: string;
   documentFilters?: ReactNode;
   documentActions?: ReactNode;
+  archiveAction?: ReactNode;
 }) {
   return (
     <header className="check-result-header">
@@ -40,6 +41,7 @@ export function ResultHeader({ title, runPath, view, scope, syntheticLabel, docu
         </div>
         <div className="result-header-actions">
           {documentActions}
+          {archiveAction}
           {!documentActions && <nav aria-label="Путь к проверке">
             <Link className="result-history-link" to="/checks">Все проверки</Link>
           </nav>}

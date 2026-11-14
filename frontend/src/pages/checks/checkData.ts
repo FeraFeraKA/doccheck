@@ -24,6 +24,7 @@ export interface HistoryEntry {
   title: string;
   status: RunStatus;
   createdAt: string;
+  archivedAt?: string;
   counts?: FindingCounts;
   synthetic?: boolean;
   documentCount?: number;
@@ -40,6 +41,7 @@ export interface RunDetails {
   title: string;
   status: RunStatus;
   progress?: { processed: number; total: number };
+  archivedAt?: string;
   error?: string;
   result: ReviewResult | null;
 }
@@ -52,9 +54,9 @@ function demoRunStatus(value: string): RunStatus {
 }
 
 export async function loadRunHistory(
-  signal: AbortSignal, cursor?: string, finding?: FindingFilter,
+  signal: AbortSignal, cursor?: string, finding?: FindingFilter, view?: 'archive',
 ): Promise<CheckHistory> {
-  const page = await listRuns(signal, { cursor, finding });
+  const page = await listRuns(signal, { cursor, finding, view });
   return {
     entries: page.items.map((run) => ({
       id: run.run_id,
@@ -65,6 +67,7 @@ export async function loadRunHistory(
       synthetic: run.synthetic,
       documentCount: run.document_count,
       contractNumber: run.contract_number,
+      archivedAt: run.archived_at,
       error: run.error?.message,
     })),
     nextCursor: page.next_cursor,
@@ -93,6 +96,7 @@ function toRunDetails(run: RunState): RunDetails {
       total: run.progress.total_documents,
     },
     error: run.error?.message,
+    archivedAt: run.archived_at,
     result: null,
   };
 }

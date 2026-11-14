@@ -42,16 +42,19 @@ function findingLabel(counts: FindingCounts) {
   return { label: 'Нет показателей', tone: 'neutral' };
 }
 
-export function ChecksOverview({ loadHistory = loadRunHistory }: OverviewProps = {}) {
+const loadArchivedHistory: typeof loadRunHistory = (signal, cursor, finding) =>
+  loadRunHistory(signal, cursor, finding, 'archive');
+
+export function ChecksOverview({ loadHistory = loadRunHistory, archive = false }: OverviewProps & { archive?: boolean } = {}) {
   return import.meta.env.VITE_DOCCHECK_PUBLIC_DEMO === '1'
-    ? <OverviewLayout demo />
-    : <RunHistory loadHistory={loadHistory} />;
+    ? <OverviewLayout demo archive={archive} />
+    : <RunHistory loadHistory={archive ? loadArchivedHistory : loadHistory} archive={archive} />;
 }
 
-function RunHistory({ loadHistory }: Required<OverviewProps>) {
+function RunHistory({ loadHistory, archive }: Required<OverviewProps> & { archive: boolean }) {
   const [params, setParams] = useSearchParams();
   const cursor = params.get('cursor') ?? undefined;
-  const finding = readFinding(params.get('finding'));
+  const finding = archive ? undefined : readFinding(params.get('finding'));
   const history = useRunHistory({ cursor, finding, loader: loadHistory });
 
   function changeFilter(value: Filter) {
@@ -60,11 +63,12 @@ function RunHistory({ loadHistory }: Required<OverviewProps>) {
     setParams(next);
   }
 
-  return <OverviewLayout cursor={cursor} page={history.page} loading={history.loading}
+  return <OverviewLayout archive={archive} cursor={cursor} page={history.page} loading={history.loading}
     error={history.error} retry={history.refresh} finding={finding} changeFilter={changeFilter} />;
 }
 
 interface LayoutProps {
+  archive?: boolean;
   demo?: boolean;
   cursor?: string;
   page?: CheckHistory;
@@ -75,7 +79,7 @@ interface LayoutProps {
   changeFilter?: (value: Filter) => void;
 }
 
-function OverviewLayout({ demo, cursor, page, loading, error, retry, finding, changeFilter }: LayoutProps) {
+function OverviewLayout({ demo, archive, cursor, page, loading, error, retry, finding, changeFilter }: LayoutProps) {
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState<Sort>('recent');
   const entries = page?.entries ?? [];
@@ -91,30 +95,31 @@ function OverviewLayout({ demo, cursor, page, loading, error, retry, finding, ch
     if (finding) params.set('finding', finding);
     if (key) params.set('cursor', key);
     const searchParams = params.toString();
-    return searchParams ? '/checks?' + searchParams : '/checks';
+    const path = archive ? '/archive' : '/checks';
+    return searchParams ? path + '?' + searchParams : path;
   }
 
   return (
     <div className="checks-overview">
       <div className="overview-heading">
         <div>
-          <h1>Проверки</h1>
-          <p>Сверяйте отчёты с первичными документами. Разбирайте только то, что требует внимания.</p>
+          <h1>{archive ? 'Архив проверок' : 'Проверки'}</h1>
+          <p>{archive ? 'Архивные проверки и их документы.' : 'Сверяйте отчёты с первичными документами. Разбирайте только то, что требует внимания.'}</p>
         </div>
       </div>
-      <section className="overview-section" aria-label="История запусков" aria-busy={loading}>
+      <section className="overview-section" aria-label={archive ? "Архив запусков" : "История запусков"} aria-busy={loading}>
         {!demo && <div className="overview-toolbar">
           <label className="overview-search">
             <OverviewIcon name="search" size={16} />
             <input type="search" aria-label="Поиск на странице" placeholder="Название или договор"
               value={query} onChange={(event) => setQuery(event.target.value)} />
           </label>
-          <div className="overview-filters" role="group" aria-label="Фильтры проверок">
+          {!archive && <div className="overview-filters" role="group" aria-label="Фильтры проверок">
             {filters.map(([value, label]) => (
               <button type="button" key={value} aria-pressed={(finding ?? 'all') === value}
                 onClick={() => changeFilter?.(value)}>{label}</button>
             ))}
-          </div>
+          </div>}
           <label className="overview-sort">
             <span>Сортировка</span>
             <select className="overview-secondary" value={sort}
@@ -132,6 +137,7 @@ function OverviewLayout({ demo, cursor, page, loading, error, retry, finding, ch
         </div>}
         {page && <HistoryTable
           entries={shown}
+          archive={archive}
           sort={sort}
           filtered={!!finding || !!search}
           reset={() => { setQuery(''); changeFilter?.('all'); }}
@@ -141,7 +147,7 @@ function OverviewLayout({ demo, cursor, page, loading, error, retry, finding, ch
           {page?.nextCursor && <Link className="overview-secondary" to={pageLink(page.nextCursor)}>Более ранние проверки</Link>}
         </nav>}
       </section>
-      <section className="overview-section overview-example" aria-labelledby="overview-example-heading">
+      {!archive && <section className="overview-section overview-example" aria-labelledby="overview-example-heading">
         <h2 id="overview-example-heading">Готовый пример</h2>
         <div className="overview-table-wrap">
           <table className="overview-table">
@@ -155,7 +161,7 @@ function OverviewLayout({ demo, cursor, page, loading, error, retry, finding, ch
             </tr></tbody>
           </table>
         </div>
-      </section>
+      </section>}
     </div>
   );
 }
@@ -187,7 +193,8 @@ function CheckResult({ entry }: { entry: HistoryEntry }) {
   </>;
 }
 
-function HistoryTable({ entries, sort, filtered, reset }: {
+function HistoryTable({ entries, archive, sort, filtered, reset }: {
+  archive?: boolean;
   entries: HistoryEntry[];
   sort: Sort;
   filtered: boolean;
@@ -209,7 +216,7 @@ function HistoryTable({ entries, sort, filtered, reset }: {
           <th scope="col">Результат</th>
           <th scope="col">Покрытие по сумме</th>
           <th scope="col">Документы</th>
-          <th scope="col" aria-sort={sort === 'recent' ? 'descending' : 'none'}>Дата</th>
+          <th scope="col" aria-sort={sort === 'recent' ? 'descending' : 'none'}>{archive ? 'Дата архивации' : 'Дата'}</th>
         </tr></thead>
         <tbody>{entries.map((entry) => {
           const { id, title, counts, status, synthetic, createdAt } = entry;
@@ -218,7 +225,10 @@ function HistoryTable({ entries, sort, filtered, reset }: {
           const total = counts ? counts.verified + counts.discrepancy + counts.unverified : 0;
           return <tr key={id} className="overview-check-row" onClick={(event) => openRow(event, to)}>
             <td><CheckTitle to={to} title={title} tone={tone} synthetic={synthetic} contractNumber={entry.contractNumber} /></td>
-            <td className="overview-result"><CheckResult entry={entry} /></td>
+            <td className="overview-result">
+              {archive && <span className="overview-chip neutral">В архиве</span>}
+              <CheckResult entry={entry} />
+            </td>
             <td className="overview-coverage">
               <span aria-label="Покрытие по сумме недоступно">—</span>
               {counts && total > 0 && <small>{counts.verified} из {total} показателей</small>}
@@ -227,13 +237,13 @@ function HistoryTable({ entries, sort, filtered, reset }: {
               {entry.documentCount === undefined ? <span aria-label="Количество документов недоступно">—</span>
                 : <span className="overview-document-count"><OverviewIcon name="files" size={15} />{entry.documentCount}</span>}
             </td>
-            <td className="overview-date"><time dateTime={createdAt}>{dateFormat.format(new Date(createdAt))}</time></td>
+            <td className="overview-date"><time dateTime={entry.archivedAt ?? createdAt}>{dateFormat.format(new Date(entry.archivedAt ?? createdAt))}</time></td>
           </tr>;
         })}</tbody>
       </table>
       {entries.length === 0 && <div className="overview-empty">
         <OverviewIcon name="file" size={32} />
-        <h3>{filtered ? 'Проверки не найдены.' : 'Проверок пока нет.'}</h3>
+        <h3>{filtered ? 'Проверки не найдены.' : archive ? 'Архив пока пуст.' : 'Проверок пока нет.'}</h3>
         {filtered && <button type="button" className="overview-secondary" onClick={reset}>Сбросить фильтры</button>}
       </div>}
     </div>

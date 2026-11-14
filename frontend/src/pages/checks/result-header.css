@@ -87,3 +87,8 @@
   font-weight: 500;
   line-height: 1.5;
 }
+
+.result-header-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.run-archive-action { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; }
+.run-archive-action [role="alert"] { color: #922930; }
+.run-archive-action [role="status"]:empty { display: none; }

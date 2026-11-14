@@ -47,6 +47,7 @@ class Run(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     result: Mapped[dict[str, object] | None] = mapped_column(JSONB(none_as_null=True))
     error: Mapped[dict[str, object] | None] = mapped_column(JSONB(none_as_null=True))
 

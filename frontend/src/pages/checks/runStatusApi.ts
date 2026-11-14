@@ -20,11 +20,12 @@ interface RunProgress {
 
 export interface RunState extends RunSummary {
   progress: RunProgress | null;
+  archived_at?: string;
 }
 
 interface RunHistoryPage {
   items: (RunSummary & { counts?: FindingCounts; report_number?: string; synthetic?: boolean;
-    document_count?: number; contract_number?: string })[];
+    document_count?: number; contract_number?: string; archived_at?: string })[];
   next_cursor: string | null;
 }
 
@@ -32,6 +33,7 @@ interface RunHistoryQuery {
   cursor?: string;
   limit?: number;
   finding?: FindingFilter;
+  view?: 'archive';
 }
 
 export class InvalidRunResponseError extends Error {
@@ -102,7 +104,8 @@ function parseRunState(value: unknown, runId: string): RunState {
     && (progress === null || progress.processed_documents !== progress.total_documents)) {
     throw new InvalidRunResponseError();
   }
-  return { ...summary, progress };
+  const archivedAt = readArchivedAt(value.archived_at);
+  return { ...summary, progress, ...(archivedAt ? { archived_at: archivedAt } : {}) };
 }
 
 async function getRunJson(path: string, signal: AbortSignal): Promise<unknown> {
@@ -122,12 +125,13 @@ export async function getRun(runId: string, signal: AbortSignal): Promise<RunSta
 
 export async function listRuns(
   signal: AbortSignal,
-  { cursor, limit, finding }: RunHistoryQuery = {},
+  { cursor, limit, finding, view }: RunHistoryQuery = {},
 ): Promise<RunHistoryPage> {
   const params = new URLSearchParams();
   if (limit !== undefined) params.set('limit', String(limit));
   if (cursor !== undefined) params.set('cursor', cursor);
   if (finding !== undefined) params.set('finding', finding);
+  if (view) params.set('view', view);
   const query = params.toString();
   const value = await getRunJson(query ? `${runsPath}?${query}` : runsPath, signal);
   signal.throwIfAborted();
@@ -142,6 +146,7 @@ function parseHistoryRun(value: unknown): RunHistoryPage['items'][number] {
   const run = parseRunSummary(value);
   if (!isRecord(value)) throw new InvalidRunResponseError();
   const { counts, report_number: number, synthetic, document_count, contract_number } = value;
+  const archivedAt = readArchivedAt(value.archived_at);
   if (number != null && typeof number !== 'string') throw new InvalidRunResponseError();
   if (synthetic != null && typeof synthetic !== 'boolean') throw new InvalidRunResponseError();
   if (contract_number != null && typeof contract_number !== 'string') throw new InvalidRunResponseError();
@@ -154,7 +159,27 @@ function parseHistoryRun(value: unknown): RunHistoryPage['items'][number] {
     ...(synthetic == null ? {} : { synthetic }),
     ...(document_count == null ? {} : { document_count }),
     ...(contract_number == null ? {} : { contract_number }),
+    ...(archivedAt ? { archived_at: archivedAt } : {}),
   };
+}
+
+function readArchivedAt(value: unknown) {
+  if (value == null) return undefined;
+  if (typeof value !== 'string' || !dateTimePattern.test(value) || !Number.isFinite(Date.parse(value))) {
+    throw new InvalidRunResponseError();
+  }
+  return value;
+}
+
+export async function updateRunArchive(runId: string, archived: boolean, signal: AbortSignal) {
+  if (!isRunId(runId)) throw new TypeError('Invalid run ID');
+  const value = await requestJson<unknown>(`${runsPath}/${runId}/archive`, {
+    method: archived ? 'PUT' : 'DELETE', cache: 'no-store', signal,
+  });
+  if (!isRecord(value) || !('archived_at' in value)) throw new InvalidRunResponseError();
+  const timestamp = readArchivedAt(value.archived_at);
+  if (archived !== Boolean(timestamp)) throw new InvalidRunResponseError();
+  return timestamp;
 }
 
 function parseCounts(value: unknown): FindingCounts {

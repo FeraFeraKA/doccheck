@@ -10,7 +10,7 @@ test('Tab scrolls the fixed sidebar to system status in a short window', async (
   const scroll = () => sidebar.evaluate((element) => element.scrollTop);
   expect(await scroll()).toBe(0);
   await expect(status).not.toBeInViewport();
-  for (const name of ['DocCheck', 'Новая проверка', 'Проверки', 'Проверка системы']) {
+  for (const name of ['DocCheck', 'Новая проверка', 'Проверки', 'Архив проверок', 'Проверка системы']) {
     await page.keyboard.press('Tab');
     await expect(sidebar.getByRole('link', { name, exact: true })).toBeFocused();
   }

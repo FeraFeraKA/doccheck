@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useSta
 import type { ReactNode } from 'react';
 import { DocumentSourcePreview } from './DocumentSourcePreview';
 import type { DocumentImageView } from './DocumentSourcePreview';
+import type { SourceTone } from './OfficeReader';
 import { SourceContext } from './SourceContext';
 import { preserveSourceViewport } from './SourceDrawer';
 import { formatLocation } from './reviewResult';
@@ -51,12 +52,12 @@ export function useSourceWorkspace({
   const [open, setOpen] = useState(Boolean(initialSelection));
   const [selection, setSelection] = useState<Selection | undefined>(initialSelection);
   const [focusRequest, setFocusRequest] = useState(initialSelection ? 1 : 0);
-  const toggle = useRef<HTMLButtonElement>(null);
+  const returnFocusRoot = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLElement | null>(null);
   const defaultDocumentId = report?.id ?? documents[0]?.id;
 
   function show(next: Selection | undefined, from?: HTMLElement) {
-    trigger.current = from ?? toggle.current;
+    trigger.current = from ?? null;
     setSelection(next);
     if (next) onSelectionChange?.(next.documentId, next.evidenceId);
     setFocusRequest((previous) => previous + 1);
@@ -78,7 +79,10 @@ export function useSourceWorkspace({
   function close() {
     setOpen(false);
     onClose?.();
-    const target = trigger.current?.isConnected ? trigger.current : toggle.current;
+    const routeFocus = returnFocusRoot.current?.closest('main')?.querySelector<HTMLElement>(
+      '[aria-label="Разделы проверки"] [aria-current="page"]',
+    );
+    const target = trigger.current?.isConnected ? trigger.current : routeFocus;
     requestAnimationFrame(() => target?.focus({ preventScroll: !window.matchMedia('(max-width: 700px)').matches }));
   }
 
@@ -106,6 +110,16 @@ export function useSourceWorkspace({
   const sources = [...new Map([...rowSources, ...documentSources].map((item) => [item.id, item])).values()];
   const selected = selection?.evidenceId === undefined ? undefined : evidenceById.get(selection.evidenceId);
   const row = selected && rowSources.some(({ id }) => id === selected.id) ? selection?.row : undefined;
+  const linkedStatuses = selected && (selected.kind === 'amount' || selected.kind === 'reported_value')
+    ? result.rows.filter((item) => item.reported_evidence_refs.includes(selected.id)
+      || item.calculation?.components.some(({ amount_refs }) => amount_refs.includes(selected.id)))
+      .map((item) => item.status)
+    : [];
+  const status = row?.status ?? (['discrepancy', 'unverified', 'verified'] as const)
+    .find((item) => linkedStatuses.includes(item));
+  const tone: SourceTone | undefined = status === 'discrepancy' || status === 'unverified' || status === 'verified'
+    ? status : undefined;
+
 
   function selectDocument(id: string) {
     const previous = selection?.documentId === id ? selected : undefined;
@@ -117,37 +131,33 @@ export function useSourceWorkspace({
 
   return {
     open, documentId, evidenceId: selected?.id, rowId: open ? row?.id : undefined,
-    openEvidence, openDocument, close, clear, toggle, focusRequest, row,
+    openEvidence, openDocument, close, clear, returnFocusRoot, focusRequest, row,
     selectDocument, selectEvidence, selected, documents, sources, storedRunId,
+    tone,
     reportLocator: documentId === report?.id ? result.scope.report_row_locator : undefined,
-    togglePanel: () => {
-      if (open) close();
-      else if (!selection && defaultDocumentId) openDocument(defaultDocumentId);
-      else show(selection);
-    },
+
   };
 }
 
-function PanelIcon({ name }: { name: 'eye' | 'eye-off' | 'previous' | 'next' | 'expand' | 'collapse' | 'close' }) {
+function PanelIcon({ name }: { name: 'previous' | 'next' | 'expand' | 'collapse' | 'close' }) {
   const paths = {
-    eye: 'M2.06 12.35a1 1 0 0 1 0-.7 10.75 10.75 0 0 1 19.88 0 1 1 0 0 1 0 .7 10.75 10.75 0 0 1-19.88 0Z M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z',
-    'eye-off': 'M10.73 5.08A10.75 10.75 0 0 1 21.94 11.65a1 1 0 0 1 0 .7 10.77 10.77 0 0 1-1.57 2.62M6.61 6.61a10.75 10.75 0 0 0-4.55 5.04 1 1 0 0 0 0 .7 10.75 10.75 0 0 0 13.3 5.99M14.12 14.12a3 3 0 0 1-4.24-4.24M3 3l18 18',
     previous: 'm15 18-6-6 6-6',
     next: 'm9 18 6-6-6-6',
     expand: 'M8 3H5a2 2 0 0 0-2 2v3m13-5h3a2 2 0 0 1 2 2v3M3 16v3a2 2 0 0 0 2 2h3m13-5v3a2 2 0 0 1-2 2h-3',
     collapse: 'M8 3v5H3m13-5v5h5M8 21v-5H3m13 5v-5h5',
     close: 'm6 6 12 12M18 6 6 18',
   };
-  return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
     strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={paths[name]} /></svg>;
 }
 
 export function SourceWorkspace({ workspace }: { workspace: ReturnType<typeof useSourceWorkspace> }) {
-  const { open, close, toggle, focusRequest, togglePanel } = workspace;
+  const { open, close, focusRequest, returnFocusRoot } = workspace;
   const panelId = useId();
   const panel = useRef<HTMLDialogElement>(null);
   const lastFocus = useRef(0);
   const sizeControl = useRef<HTMLButtonElement>(null);
+  const closeControl = useRef<HTMLButtonElement>(null);
   const [imageViews, setImageViews] = useState(() => new Map<string, DocumentImageView>());
   const [fullscreen, setFullscreen] = useState(false);
   const restoreViewport = useRef<() => void>(undefined);
@@ -184,8 +194,8 @@ export function SourceWorkspace({ workspace }: { workspace: ReturnType<typeof us
     if (window.matchMedia('(max-width: 700px)').matches) {
       panel.current?.scrollIntoView({ block: 'start' });
     }
-    toggle.current?.focus({ preventScroll: true });
-  }, [open, focusRequest, toggle]);
+    closeControl.current?.focus({ preventScroll: true });
+  }, [open, focusRequest]);
 
   useEffect(() => {
     if (!open || expanded) return;
@@ -231,6 +241,7 @@ export function SourceWorkspace({ workspace }: { workspace: ReturnType<typeof us
       {workspace.storedRunId ? <DocumentSourcePreview
         runId={workspace.storedRunId} document={{ ...selectedDocument, format: selectedDocument.format ?? null }}
         evidenceId={workspace.evidenceId ?? null}
+        tone={workspace.tone}
         reportPage={workspace.reportLocator && 'page' in workspace.reportLocator ? workspace.reportLocator : undefined}
         active={active} compact imageView={imageViews.get(selectedDocument.id) ?? { zoom: 100, highlight: true }}
         onImageViewChange={(view) => setImageViews((previous) => new Map(previous).set(selectedDocument.id, view))}
@@ -247,15 +258,7 @@ export function SourceWorkspace({ workspace }: { workspace: ReturnType<typeof us
   }
 
   const sizeLabel = expanded ? 'Свернуть источник в боковую панель' : 'Развернуть источник на весь экран';
-  return <div className="source-workspace" data-source-open={open}>
-    <div role="group" className="source-workspace-rail" aria-label="Управление источником">
-      <button ref={toggle} type="button" className={open ? 'nav-item source-workspace-toggle active' : 'nav-item source-workspace-toggle'}
-        aria-label={open ? 'Скрыть источник документа' : 'Показать источник документа'}
-        title={open ? 'Скрыть источник' : 'Открыть источник'}
-        aria-expanded={open} aria-controls={open ? panelId : undefined} onClick={togglePanel}>
-        <PanelIcon name={open ? 'eye' : 'eye-off'} />
-      </button>
-    </div>
+  return <div ref={returnFocusRoot} className="source-workspace" data-source-open={open}>
     {open && <dialog ref={panel} id={panelId} aria-label="Источник документа"
       role={expanded ? undefined : 'region'} className="source-workspace-panel compact-source" data-fullscreen={expanded}
       onCancel={(event) => { event.preventDefault(); close(); }}>
@@ -273,7 +276,7 @@ export function SourceWorkspace({ workspace }: { workspace: ReturnType<typeof us
         </div>}
         <button ref={sizeControl} type="button" aria-label={sizeLabel} title={sizeLabel} aria-pressed={expanded}
           onClick={toggleFullscreen}><PanelIcon name={expanded ? 'collapse' : 'expand'} /></button>
-        <button type="button" aria-label="Закрыть просмотр источника" title="К таблице" onClick={close}><PanelIcon name="close" /></button>
+        <button ref={closeControl} type="button" aria-label="Закрыть просмотр источника" title="К таблице" onClick={close}><PanelIcon name="close" /></button>
       </header>
       {workspace.row ? <SourceContext row={workspace.row} picker={picker} compact>{preview}</SourceContext> : <>
         {picker}

@@ -6,6 +6,7 @@ import { WorkspaceIcon } from './WorkspaceIcon';
 const items = [
   { title: 'Новая проверка', url: '/checks/new', icon: 'plus' },
   { title: 'Проверки', url: '/checks', icon: 'clipboard' },
+  { title: 'Архив проверок', url: '/archive', icon: 'archive' },
 ] as const;
 
 export function Sidebar() {
@@ -67,8 +68,8 @@ export function Sidebar() {
           setOpen((previous) => !previous);
         }}>{mark}</button>
       <nav id="doccheck-navigation" aria-label="Основная навигация">
-        {items.map(({ title, url, icon }) => {
-          const selected = url === '/checks/new' ? isNew : !isNew && (path === '/checks' || path.startsWith('/checks/'));
+        {items.filter(({ url }) => url !== '/archive' || import.meta.env.VITE_DOCCHECK_PUBLIC_DEMO !== '1').map(({ title, url, icon }) => {
+          const selected = url === '/archive' ? path === url : url === '/checks/new' ? isNew : !isNew && (path === '/checks' || path.startsWith('/checks/'));
           return <Link key={url} to={url} className={classes('nav-item', selected && 'active')}
             aria-label={title} aria-current={selected ? 'page' : undefined}
             onClick={() => {

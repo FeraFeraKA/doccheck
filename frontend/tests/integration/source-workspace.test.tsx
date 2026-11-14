@@ -13,6 +13,9 @@ function Preview({ runId }: { runId?: string }) {
   const row = result.rows[0];
   return <div className="accountant-workspace"><div className="app-content">
     <button type="button" onClick={(event) => {
+      source.openDocument('report', event.currentTarget);
+    }}>Открыть КФЗ</button>
+    <button type="button" onClick={(event) => {
       source.openEvidence('amount-1', event.currentTarget, row, ['report-a', 'amount-1', 'amount-2']);
     }}>Просмотреть источник</button>
     <p>Активная строка: {source.rowId ?? '—'}</p>
@@ -41,9 +44,9 @@ afterEach(() => {
 describe('shared compact source workspace', () => {
   it('opens the КФЗ by default and switches documents independently of the indicator', async () => {
     render(<Preview />);
-    const eye = screen.getByRole('button', { name: 'Показать источник документа' });
+    const report = screen.getByRole('button', { name: 'Открыть КФЗ' });
     expect(screen.queryByRole('region', { name: 'Источник документа' })).toBeNull();
-    fireEvent.click(eye);
+    fireEvent.click(report);
 
     const panel = screen.getByRole('region', { name: 'Источник документа' });
     expect(within(panel).getByRole('combobox', { name: 'Документы комплекта' })).toHaveValue('report');
@@ -83,7 +86,7 @@ describe('shared compact source workspace', () => {
       static revokeObjectURL = () => {};
     });
     render(<Preview runId="run-1" />);
-    fireEvent.click(screen.getByRole('button', { name: 'Показать источник документа' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Открыть КФЗ' }));
     const panel = screen.getByRole('region', { name: 'Источник документа' });
     expect(await within(panel).findByTitle('Просмотр документа: synthetic-report.pdf')).toHaveAttribute(
       'src', 'blob:http://localhost/fixture#page=1&view=FitH&toolbar=0',

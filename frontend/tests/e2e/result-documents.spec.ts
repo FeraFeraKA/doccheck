@@ -129,7 +129,7 @@ test('diagnostics return keyboard focus and the documents route restores selecte
   await page.goto('/checks/synthetic-example/documents?document=report&evidence=report-a');
   const documents = source.getByLabel('Документы комплекта');
   await expect(documents).toHaveValue('report');
-  await expect(page.getByRole('button', { name: 'Скрыть источник документа' })).toBeFocused();
+  await expect(page.getByRole('button', { name: 'Закрыть просмотр источника' })).toBeFocused();
   await documents.selectOption('ledger');
   await source.getByLabel('Адрес доказательства').selectOption('amount-2');
   await expect(page).toHaveURL(/document=ledger&evidence=amount-2/);

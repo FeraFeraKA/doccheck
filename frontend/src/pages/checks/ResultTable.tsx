@@ -68,6 +68,10 @@ export function ResultTable({
             const isExpanded = expanded.has(row.id);
             const detailsId = `details-${row.id}`;
             const components = row.calculation?.components ?? [];
+            const reportSource = row.reported_evidence_refs.find((id) => {
+              const item = evidenceById.get(id);
+              return item && documentsById.has(item.document_id);
+            });
             const sourceDocuments = new Set(components.flatMap((component) =>
               component.amount_refs.flatMap((id) => {
                 const item = evidenceById.get(id);
@@ -94,7 +98,13 @@ export function ResultTable({
                       {sourceDocuments.size ? `${sourceDocuments.size} док.` : 'Нет источника'}
                     </span>
                   </td>
-                  <td><Measure value={row.reported_value} unit={row.unit} /></td>
+                  <td>{reportSource && row.reported_value !== null
+                    ? <button type="button" className="indicator-proof-button"
+                        title="Открыть значение в КФЗ"
+                        onClick={(event) => onSelectSource(row.id, reportSource, event.currentTarget)}>
+                        <Measure value={row.reported_value} unit={row.unit} />
+                      </button>
+                    : <Measure value={row.reported_value} unit={row.unit} />}</td>
                   <td className="expected-cell">
                     <Measure value={row.expected_value} unit={row.unit} />
                     {row.expected_value === null && row.observed_evidence_sum !== null && (

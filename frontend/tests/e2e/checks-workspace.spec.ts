@@ -398,6 +398,12 @@ test('the selected stored evidence opens its own original and address', async ({
   await page.route('**/api/v0/runs/run-with-source/documents/**', (route) => {
     const url = new URL(route.request().url());
     requested.push(url.pathname + url.search);
+    if (url.pathname.endsWith('/ledger/preview')) {
+      return route.fulfill({ json: {
+        sheet: 'Синтетика', sheets: ['Синтетика'], row: 6, column: 3, last_row: 6, last_column: 3,
+        rows: [['70,50']],
+      } });
+    }
     const evidenceId = url.searchParams.get('evidence_id');
     if (evidenceId === null) {
       return route.fulfill({ body: 'Synthetic file', contentType: 'application/octet-stream' });
@@ -426,7 +432,9 @@ test('the selected stored evidence opens its own original and address', async ({
   await expect(preview).toHaveCount(0);
   await open.click();
   await expect(preview.getByText(/Лист «Синтетика», C6/)).toBeVisible();
-  await expect(preview.getByText('Для просмотра по адресу откройте скачанный файл в офисном приложении.')).toBeVisible();
+  const cell = preview.getByRole('cell', { name: '70,50', exact: true });
+  await expect(cell).toBeVisible();
+  await expect(cell).toHaveAttribute('data-source-tone', 'discrepancy');
   expect(requested).toEqual(expect.arrayContaining([
     '/api/v0/runs/run-with-source/documents/ledger',
     '/api/v0/runs/run-with-source/documents/ledger/fragments?evidence_id=amount-1',

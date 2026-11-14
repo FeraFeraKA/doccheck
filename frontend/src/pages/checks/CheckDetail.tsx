@@ -16,6 +16,7 @@ import type { ReviewResult } from './reviewResult';
 import { useCheckData } from './useCheckData';
 import { runTitle } from './runTitle';
 import { isRunId } from './runStatusApi';
+import { RunArchiveAction } from './RunArchiveAction';
 import './result-workspace.css';
 import './result-focus.css';
 
@@ -131,6 +132,7 @@ interface ResultContentProps {
 
 function ResultContent({ id, view, result, run, synthetic, stored }: ResultContentProps) {
   const location = useLocation();
+  const [archivedAt, setArchivedAt] = useState(run.archivedAt);
   const [rowJump, setRowJump] = useState<{ id: string; locationKey: string }>();
   const linkedRowJump = useMemo(() => {
     const id = new URLSearchParams(location.search).get('indicator');
@@ -146,7 +148,10 @@ function ResultContent({ id, view, result, run, synthetic, stored }: ResultConte
     return <>
       <ResultHeader title={result.reportNumber ? runTitle(id, result.reportNumber) : synthetic ? demoTitle : run.title}
         runPath={runPath} view={view} scope={scope} syntheticLabel={syntheticLabel}
-        documentFilters={documentFilters} documentActions={documentActions} />
+        documentFilters={documentFilters} documentActions={documentActions}
+        archiveAction={exportRunId && import.meta.env.VITE_DOCCHECK_PUBLIC_DEMO !== '1'
+          ? <RunArchiveAction runId={exportRunId} initialArchivedAt={archivedAt} onChange={setArchivedAt} />
+          : undefined} />
       {stored && (run.status !== 'completed' || run.error) &&
         <div className="stored-run-status mt-2 text-[13px]"><RunState run={run} /></div>}
     </>;

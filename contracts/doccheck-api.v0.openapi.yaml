@@ -130,8 +130,8 @@ paths:
       operationId: listRuns
       summary: Получить историю запусков от новых к старым
       description: |
-        Порядок по created_at и run_id по убыванию. Курсор указывает на позицию
-        после последней записи. Пустой список возвращается с 200.
+        Активный список сортируется по created_at и run_id по убыванию, архив по archived_at и run_id.
+        Курсор относится к тому же виду списка и фильтру. Пустой список возвращается с 200.
       parameters:
         - name: limit
           in: query
@@ -147,6 +147,9 @@ paths:
             Фильтр по сохранённым показателям применяется до пагинации.
             discrepancy и unverified могут включать одну проверку.
             verified требует хотя бы один проверенный показатель и отсутствие двух других статусов.
+        - name: view
+          in: query
+          schema: {type: string, enum: [active, archive], default: active}
       responses:
         '200':
           description: Страница истории.
@@ -174,6 +177,26 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/RunState'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+  /api/v0/runs/{run_id}/archive:
+    parameters:
+      - $ref: '#/components/parameters/RunId'
+    put:
+      operationId: archiveRun
+      summary: Переместить завершённую локальную проверку в архив
+      description: Идемпотентно. Результат, файлы и статусы показателей сохраняются.
+      responses:
+        '200': {$ref: '#/components/responses/ArchiveState'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/ResultUnavailable'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+    delete:
+      operationId: restoreRun
+      summary: Вернуть локальную проверку из архива
+      description: Идемпотентно. Удаляется только отметка архива.
+      responses:
+        '200': {$ref: '#/components/responses/ArchiveState'}
         '404': {$ref: '#/components/responses/NotFound'}
         '503': {$ref: '#/components/responses/Unavailable'}
   /api/v0/runs/{run_id}/findings:
@@ -295,6 +318,64 @@ paths:
         '409': {$ref: '#/components/responses/ResultUnavailable'}
         '422': {$ref: '#/components/responses/InvalidInput'}
         '503': {$ref: '#/components/responses/Unavailable'}
+  /api/v0/runs/{run_id}/documents/{document_id}/preview:
+    parameters:
+      - $ref: '#/components/parameters/RunId'
+      - $ref: '#/components/parameters/DocumentId'
+      - name: sheet
+        in: query
+        schema: {type: string, minLength: 1, maxLength: 255}
+      - name: row
+        in: query
+        schema: {type: integer, minimum: 1, maximum: 1048576, default: 1}
+      - name: column
+        in: query
+        schema: {type: integer, minimum: 1, maximum: 16384, default: 1}
+    get:
+      operationId: getDocumentPreview
+      summary: Прочитать XLSX или DOCX из проверенного локального оригинала
+      description: |
+        XLSX возвращает окно листа до 60 строк и 20 столбцов. Нумерация с единицы.
+        DOCX возвращает абзацы и таблицы в порядке документа. Поле truncated
+        обозначает ограниченный результат. Формулы и ссылки не выполняются.
+      responses:
+        '200':
+          description: Данные встроенного просмотрщика.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/SheetPreview'
+                  - $ref: '#/components/schemas/WordPreview'
+        '404': {$ref: '#/components/responses/NotFound'}
+        '413': {$ref: '#/components/responses/PreviewUnavailable'}
+        '415': {$ref: '#/components/responses/PreviewUnavailable'}
+        '422': {$ref: '#/components/responses/PreviewUnavailable'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+  /api/v0/runs/{run_id}/documents/{document_id}/page-preview:
+    parameters:
+      - $ref: '#/components/parameters/RunId'
+      - $ref: '#/components/parameters/DocumentId'
+      - name: page
+        in: query
+        schema: {type: integer, minimum: 1, default: 1}
+    get:
+      operationId: getPagePreview
+      summary: Открыть страницу PDF из проверенного локального оригинала
+      responses:
+        '200':
+          description: Изображение страницы PDF.
+          headers:
+            X-Document-Pages:
+              required: true
+              schema: {type: integer, minimum: 1}
+          content:
+            image/png: {}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '413': {$ref: '#/components/responses/PreviewUnavailable'}
+        '415': {$ref: '#/components/responses/PreviewUnavailable'}
+        '422': {$ref: '#/components/responses/PreviewUnavailable'}
+        '503': {$ref: '#/components/responses/Unavailable'}
   /api/v0/runs/{run_id}/exports/xlsx:
     parameters:
       - $ref: '#/components/parameters/RunId'
@@ -332,6 +413,20 @@ components:
       required: true
       schema: {$ref: '#/components/schemas/Id'}
   responses:
+    ArchiveState:
+      description: Серверная отметка архива.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [archived_at]
+            properties:
+              archived_at: {type: [string, 'null'], format: date-time}
+    PreviewUnavailable:
+      description: Превью недоступно, формат не поддержан или параметры недопустимы.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ApiError'}
     Fragment:
       description: Сохранённое адресное доказательство.
       content:
@@ -396,6 +491,7 @@ components:
         - type: object
           required: [progress]
           properties:
+            archived_at: {type: [string, 'null'], format: date-time}
             progress:
               description: |
                 Число документов, для которых завершилась обработка. КФЗ входит
@@ -427,6 +523,47 @@ components:
               then:
                 properties:
                   progress: {type: object}
+    SheetPreview:
+      type: object
+      required: [sheets, sheet, row, column, last_row, last_column, rows]
+      properties:
+        sheets: {type: array, items: {type: string}}
+        sheet: {type: string}
+        row: {type: integer, minimum: 1}
+        column: {type: integer, minimum: 1}
+        last_row: {type: integer, minimum: 1}
+        last_column: {type: integer, minimum: 1}
+        rows: {type: array, items: {type: array, items: {type: string}}}
+    WordPreview:
+      type: object
+      required: [blocks, truncated]
+      properties:
+        truncated: {type: boolean}
+        blocks:
+          type: array
+          items:
+            oneOf:
+              - type: object
+                required: [paragraph, text, heading]
+                properties:
+                  paragraph: {type: integer, minimum: 1}
+                  text: {type: string}
+                  heading: {type: boolean}
+              - type: object
+                required: [table, rows]
+                properties:
+                  table: {type: integer, minimum: 1}
+                  rows:
+                    type: array
+                    items:
+                      type: array
+                      items:
+                        type: object
+                        required: [column, span, text]
+                        properties:
+                          column: {type: integer, minimum: 1}
+                          span: {type: integer, minimum: 1}
+                          text: {type: string}
     FragmentPreview:
       type: object
       additionalProperties: false
@@ -464,6 +601,8 @@ components:
             - run_not_found
             - document_not_found
             - fragment_not_found
+            - page_not_found
+            - preview_unavailable
             - result_pending
             - run_failed
             - service_unavailable

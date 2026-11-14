@@ -226,6 +226,13 @@ test('source pane opens the stored original at a mobile width', async ({ page })
   await page.route(`**/api/v0/runs/${id}/documents/ledger**`, (route) => {
     const url = new URL(route.request().url());
     ledgerRequests.push(url.pathname + url.search);
+    if (url.pathname.endsWith('/preview')) {
+      const row = Number(url.searchParams.get('row') ?? '1');
+      return route.fulfill({ json: {
+        sheet: 'Синтетика', sheets: ['Синтетика'], row, column: 1, last_row: 7, last_column: 3,
+        rows: Array.from({ length: 8 - row }, (_, index) => ['', '', row + index === 7 ? 'Итого 60,25' : '']),
+      } });
+    }
     return url.pathname.endsWith('/fragments')
       ? route.fulfill({ json: example.result.evidence.find(({ id }) => id === 'amount-2') })
       : route.fulfill({ body: 'synthetic XLSX transport fixture', contentType: 'application/octet-stream' });
@@ -254,12 +261,14 @@ test('source pane opens the stored original at a mobile width', async ({ page })
   expect(ledgerRequests).toEqual([]);
   await page.getByRole('button', { name: 'Просмотреть источник' }).click();
   await expect(preview.getByText(/Лист «Синтетика», C7/)).toBeVisible();
-  await expect(preview.locator('mark')).toHaveText('60,25');
+  const selectedCell = preview.getByRole('cell', { name: 'Итого 60,25', exact: true });
+  await expect(selectedCell.locator('mark')).toHaveText('60,25');
+  await expect(selectedCell).toHaveAttribute('data-source-tone', 'discrepancy');
   await expect(preview.getByRole('link', { name: 'Скачать оригинал' })).toBeVisible();
-  expect([...new Set(ledgerRequests)].sort()).toEqual([
+  expect(ledgerRequests).toEqual(expect.arrayContaining([
     `/api/v0/runs/${id}/documents/ledger`,
     `/api/v0/runs/${id}/documents/ledger/fragments?evidence_id=amount-2`,
-  ]);
+  ]));
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   await drawer.getByRole('button', { name: 'Закрыть просмотр источника' }).click();
   await expect(drawer).toHaveCount(0);

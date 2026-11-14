@@ -63,7 +63,7 @@ export class InvalidSourceResponseError extends Error {
   }
 }
 
-function documentUrl(runId: string, documentId: string): string {
+export function documentUrl(runId: string, documentId: string): string {
   const segment = /^[A-Za-z0-9_-]+(?![\s\S])/;
   if (!segment.test(runId) || !segment.test(documentId)) {
     throw new TypeError('Invalid run or document ID');

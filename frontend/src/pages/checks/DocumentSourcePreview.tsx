@@ -2,6 +2,9 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import './source-drawer.css';
 import { formatLocation } from './reviewResult';
 import type { PageAddress } from './reviewResult';
+import { OfficeReader } from './OfficeReader';
+import type { SourceTone } from './OfficeReader';
+import { PdfReader } from './PdfReader';
 import {
   getSourceEvidence, getSourceFragmentPreview, getSourceOriginal, InvalidSourceResponseError, SourceHttpError,
 } from './sourceApi';
@@ -18,6 +21,7 @@ interface DocumentSourcePreviewProps {
   document: SourceDocument | null;
   evidenceId: string | null;
   reportPage?: PageAddress;
+  tone?: SourceTone;
   active?: boolean;
   compact?: boolean;
   imageView?: DocumentImageView;
@@ -71,7 +75,7 @@ function locatorMatchesDocument(evidence: SourceEvidence, format: string | null)
   }
 }
 
-export function DocumentSourcePreview({ runId, document, evidenceId, reportPage, active = true, compact = false, imageView, onImageViewChange }: DocumentSourcePreviewProps) {
+export function DocumentSourcePreview({ runId, document, evidenceId, reportPage, tone, active = true, compact = false, imageView, onImageViewChange }: DocumentSourcePreviewProps) {
   const [attempt, setAttempt] = useState(0);
 
   if (document === null) return <p>Документ источника недоступен.</p>;
@@ -83,6 +87,7 @@ export function DocumentSourcePreview({ runId, document, evidenceId, reportPage,
     document={document}
     evidenceId={evidenceId}
     reportPage={reportPage}
+    tone={tone}
     active={active}
     compact={compact}
     imageView={imageView}
@@ -91,11 +96,12 @@ export function DocumentSourcePreview({ runId, document, evidenceId, reportPage,
   />;
 }
 
-function SelectedDocumentSource({ runId, document, evidenceId, reportPage, active, compact, imageView, onImageViewChange, onRetry }: {
+function SelectedDocumentSource({ runId, document, evidenceId, reportPage, tone, active, compact, imageView, onImageViewChange, onRetry }: {
   runId: string;
   document: SourceDocument;
   evidenceId: string | null;
   reportPage?: PageAddress;
+  tone?: SourceTone;
   active: boolean;
   compact: boolean;
   imageView?: DocumentImageView;
@@ -151,6 +157,9 @@ function SelectedDocumentSource({ runId, document, evidenceId, reportPage, activ
   const pdfUrl = original.status === 'ready'
     ? page ? `${original.value}#page=${page.page}` : original.value
     : null;
+  const office = format === 'xlsx' || format === 'docx' ? format : undefined;
+  const usePdfReader = compact && format === 'pdf' && original.status === 'ready'
+    && (evidenceId === null || evidence.status !== 'loading');
   const compactImage = compact && format === 'png';
   const embeddedPdf = compact && format === 'pdf' && navigator.pdfViewerEnabled
     && original.status === 'ready' && (evidenceId === null || evidence.status !== 'loading')
@@ -170,6 +179,12 @@ function SelectedDocumentSource({ runId, document, evidenceId, reportPage, activ
     : null;
   const retry = canRetry
     ? <button type="button" onClick={onRetry}>Повторить загрузку источника</button> : null;
+
+  const nativePdf = embeddedPdf && <iframe className="source-viewer-pdf"
+    title={`Просмотр документа: ${document.name}`} src={embeddedPdf} />;
+  const pdfFallback = nativePdf || <div className="source-viewer-placeholder">
+    <p>Страница открывается в PDF-просмотрщике браузера.</p>
+  </div>;
 
   return <section aria-label="Просмотр источника" className="source-viewer">
     <div className="source-viewer-heading">
@@ -196,25 +211,29 @@ function SelectedDocumentSource({ runId, document, evidenceId, reportPage, activ
       )}
       {download}
     </div>}
-    {original.status === 'loading' && <div className="source-viewer-placeholder"><p role="status">Загрузка оригинала…</p></div>}
+    {original.status === 'loading' && !office && <div className="source-viewer-placeholder"><p role="status">Загрузка оригинала…</p></div>}
     {original.status === 'error' && <div className="source-viewer-placeholder"><p role="alert">{original.message}</p></div>}
     {original.status === 'ready' && format === 'png' && (
       <SourceImage key={original.value} url={original.value} name={document.name} page={page?.page ?? (compact ? 1 : undefined)}
         imageView={imageView} onImageViewChange={onImageViewChange}
-        box={evidencePage?.bbox} active={active} download={download} fragment={fragment} retry={retry} />
+        box={evidencePage?.bbox} tone={tone} active={active} download={download} fragment={fragment} retry={retry} />
     )}
-    {embeddedPdf && <iframe className="source-viewer-pdf" title={`Просмотр документа: ${document.name}`} src={embeddedPdf} />}
-    {original.status === 'ready' && format !== 'png' && !embeddedPdf && <div className="source-viewer-placeholder">
-      {format === 'pdf' && <p>Страница открывается в PDF-просмотрщике браузера.</p>}
-      {(format === 'xlsx' || format === 'docx') && <p>Для просмотра по адресу откройте скачанный файл в офисном приложении.</p>}
-      {format !== 'pdf' && format !== 'png' && format !== 'xlsx' && format !== 'docx' && (
-        <p>Предпросмотр этого формата недоступен.</p>
-      )}
-    </div>}
-    {compact && format !== 'png' && address && evidenceId !== null &&
+    {usePdfReader && <PdfReader key={page?.page ?? 1} runId={runId} documentId={documentId}
+      startPage={page?.page ?? 1} box={evidencePage?.bbox} tone={tone} fallback={pdfFallback}
+      renderPage={(url, currentPage, box, pageTone) => <SourceImage key={url} url={url}
+        name={document.name} page={currentPage} box={box} tone={pageTone} active={active}
+        imageView={imageView} onImageViewChange={onImageViewChange} />} />}
+    {original.status === 'ready' && format === 'pdf' && !usePdfReader && pdfFallback}
+    {original.status !== 'error' && office && <OfficeReader key={evidenceId ?? 'original'}
+      runId={runId} documentId={documentId} format={office} locator={address ?? undefined}
+      evidenceId={evidenceId} tone={tone} active={active}
+      fallback={address && evidenceId ? <SourceFragmentText runId={runId} documentId={documentId} evidenceId={evidenceId} /> : null} />}
+    {original.status === 'ready' && format !== 'pdf' && format !== 'png' && !office &&
+      <div className="source-viewer-placeholder"><p>Предпросмотр этого формата недоступен.</p></div>}
+    {compact && format === 'pdf' && address && evidenceId !== null &&
       <SourceFragmentText key={evidenceId} runId={runId} documentId={documentId} evidenceId={evidenceId} />}
-    {(original.status !== 'ready' || format !== 'png') && (fragment || retry) && <div className="source-viewer-footer">
-      {fragment}{retry}
+    {(original.status !== 'ready' || format !== 'png') && (!office && fragment || retry) && <div className="source-viewer-footer">
+      {!office && fragment}{retry}
     </div>}
   </section>;
 }
@@ -248,15 +267,16 @@ function SourceFragmentText({ runId, documentId, evidenceId }: {
   </section>;
 }
 
-function SourceImage({ url, name, page, box, active, download, fragment, retry, imageView, onImageViewChange }: {
+function SourceImage({ url, name, page, box, tone, active, download, fragment, retry, imageView, onImageViewChange }: {
   url: string;
   name: string;
   page?: number;
   box?: [number, number, number, number] | null;
+  tone?: SourceTone;
   active: boolean;
-  download: React.ReactNode;
-  fragment: React.ReactNode;
-  retry: React.ReactNode;
+  download?: React.ReactNode;
+  fragment?: React.ReactNode;
+  retry?: React.ReactNode;
   imageView?: DocumentImageView;
   onImageViewChange?: (view: DocumentImageView) => void;
 }) {
@@ -324,7 +344,7 @@ function SourceImage({ url, name, page, box, active, download, fragment, retry, 
         {state === 'ready' && box && highlight && <span
           ref={mark}
           aria-hidden="true"
-          className="source-viewer-highlight"
+          className="source-viewer-highlight" data-source-tone={tone ?? 'source'}
           style={{
             left: `${box[0] * 100}%`,
             top: `${box[1] * 100}%`,
