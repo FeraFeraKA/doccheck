@@ -61,12 +61,24 @@ test('distinguishes a missing original, a retryable failure and an available ori
         { id: 'invalid-address', document_id: 'invalid', locator: {
           kind: 'page', page: 9, bbox: [0.7, 0.2, 0.1, 0.4],
         } },
+        { id: 'sheet-address', document_id: 'sheet', locator: {
+          kind: 'sheet', sheet: 'Сводная', range: 'B5:C7',
+        } },
+        { id: 'paragraph-address', document_id: 'docx', locator: {
+          kind: 'paragraph', paragraph: 9,
+        } },
+        { id: 'table-address', document_id: 'table', locator: {
+          kind: 'table_cell', table: 2, row: 4, cell: 3,
+        } },
       ],
       documents: [
         { id: 'missing-original', name: 'Удалённый DOCX' },
         { id: 'retry-original', name: 'Временный сбой' },
         { id: 'image', name: 'Скан' },
         { id: 'invalid', name: 'Неверный адрес' },
+        { id: 'sheet', name: 'Лист XLSX' },
+        { id: 'docx', name: 'Абзац DOCX' },
+        { id: 'table', name: 'Таблица DOCX' },
       ],
     },
   }));
@@ -97,5 +109,14 @@ test('distinguishes a missing original, a retryable failure and an available ori
   await expect(original).toHaveAttribute('href', prefix + '/' + runId + '/documents/image');
   await sources.getByRole('button', { name: /Неверный адрес/ }).click();
   await expect(original).toHaveAttribute('href', prefix + '/' + runId + '/documents/invalid');
-  await expect(sources.getByText('Адрес источника', { exact: true })).toHaveCount(0);
+  await expect(sources.getByText('Адрес источника недоступен.')).toBeVisible();
+  for (const [buttonText, address] of [
+    [/Лист XLSX/, 'Лист «Сводная», B5:C7'],
+    [/Абзац DOCX/, 'Абзац 9'],
+    [/Таблица DOCX/, 'Таблица 2, строка 4, ячейка 3'],
+  ] as const) {
+    await sources.getByRole('button', { name: buttonText }).click();
+    await expect(sources.getByText(address, { exact: false })).toBeVisible();
+    await expect(original).toBeVisible();
+  }
 });
