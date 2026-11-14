@@ -763,3 +763,36 @@ def test_unrelated_xlsx_heading_cannot_relabel_total():
         [observations[2]],
         [observations[0]],
     )
+
+
+def test_primary_png_contract_conflict_prevents_evidence(uploaded_files, tmp_path, monkeypatch):
+    from PIL import Image
+    from test_local_ocr import _box
+
+    from doccheck_backend.native_observations import NativeDocument
+
+    _stub_ollama(monkeypatch, "1172.70")
+    from bench.e2e_v32_20261114 import run as v32
+
+    Image.new("RGB", (30, 30), "white").save(tmp_path / uploaded_files[1]["id"], "PNG")
+    _replace_primary(uploaded_files, tmp_path, "png")
+    request = v32.runtime.api
+
+    def predict_scan(path, body=None, timeout=600):
+        if path == "/api/chat":
+            body["messages"][0]["content"] += "E2E-31"
+        return request(path, body, timeout)
+
+    monkeypatch.setattr(v32.runtime, "api", predict_scan)
+    observations = (
+        _box("Договор № E2E-31", 0.06, 0.09, 0.36),
+        _box("Договор № E2E-99", 0.06, 0.09, 0.36, confidence=0.74),
+    )
+    monkeypatch.setattr(
+        "doccheck_backend.v32_adapter.read_scan", lambda *_: NativeDocument(observations)
+    )
+    job = process(StoredRun(uuid4(), None, uploaded_files), tmp_path)
+
+    assert job.result.documents[1].decision.state == "needs_review"
+    assert not job.result.documents[1].decision.evidence_refs
+    assert all(item.document_id != uploaded_files[1]["id"] for item in job.result.evidence)

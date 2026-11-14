@@ -37,7 +37,7 @@ from doccheck_backend.contracts.result import (
 from doccheck_backend.local_ocr import read_scan, read_scan_amounts
 from doccheck_backend.native_observations import Observation
 from doccheck_backend.native_reader import read_native_document
-from doccheck_backend.ocr_report import parse_scan_report
+from doccheck_backend.ocr_report import parse_scan_report, select_scan_contract
 from doccheck_backend.run_worker import StoredRun
 
 _MODEL_DIGEST = "d8b0f5e9760cd1682034f292d7ef72ec46f432149be0df7574bf2d6e92e38c04"
@@ -775,15 +775,10 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
         document = documents[file_id]
         if document.decision.state != "needs_review":
             continue
-        matching = [
-            item
-            for item in source_items
-            if (item.repeated_read or (item.confidence is not None and item.confidence >= 0.8))
-            and _contract(item.raw_text) == scope.contract_number
-        ]
-        if len(matching) != 1:
+        contract = select_scan_contract(source_items)
+        if contract is None or contract[0] != scope.contract_number:
             continue
-        item = matching[0]
+        _, item = contract
         source = Evidence(
             id=f"{file.id}-ocr-contract",
             document_id=file.id,
