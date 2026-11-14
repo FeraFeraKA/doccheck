@@ -2,6 +2,7 @@ from hashlib import sha256
 from uuid import uuid4
 
 import pytest
+from PIL import Image
 from scanned_kfz_fixture import (
     DISTRACTOR_AMOUNTS,
     SYNTHETIC_AMOUNTS,
@@ -12,6 +13,7 @@ from scanned_kfz_fixture import (
     write_support,
 )
 
+from doccheck_backend import scanned_report
 from doccheck_backend.contracts.locators import PageLocator
 from doccheck_backend.grounded_amounts import ground_document
 from doccheck_backend.page_ocr import render_pages
@@ -148,6 +150,38 @@ def test_manual_stage_requires_the_printed_row_period(tmp_path, header):
     reading = read_report_row(image, 1, locator, SYNTHETIC_CONTRACT, JANUARY)
     assert reading is not None and reading.complete
     assert str(next(cell.amount for cell in reading.cells if cell.code == "total")) == "2085.00"
+
+
+@pytest.mark.parametrize(
+    ("printed", "expected"),
+    [
+        ("01. 01. 2034 — 31. 01. 2034", JANUARY),
+        ("Январь 2034 г.", JANUARY),
+        ("1 января 2034 — 31 января 2034", JANUARY),
+        ("с 01.01.2034 по 31.01.2034", JANUARY),
+        ("01.01.2034 — 3?.01.2034", None),
+    ],
+)
+def test_printed_row_period_does_not_fall_back_to_the_broader_header(
+    monkeypatch, printed, expected
+):
+    monkeypatch.setattr(scanned_report, "recognize_crop", lambda *_: printed)
+    image = Image.new("L", (300, 300), "white")
+    assert (
+        scanned_report._visible_row_period(image, [10, 40, 175], 100, 160, "2034", {TARGET})
+        == expected
+    )
+
+
+def test_manual_period_disambiguates_rows_of_the_same_stage_and_year(tmp_path):
+    january = ScanRow(3, 2034, SYNTHETIC_AMOUNTS, JANUARY)
+    february = ScanRow(3, 2034, DISTRACTOR_AMOUNTS, FEBRUARY)
+    path = write_scanned_kfz(tmp_path / "report.png", ((january, february),), period=TARGET)
+    image = next(render_pages(path))
+    locator = PageLocator(kind="page", page=1, fragment_id="kfz-stage-3-2034")
+    reading = read_report_row(image, 1, locator, SYNTHETIC_CONTRACT, FEBRUARY)
+    assert reading is not None and reading.complete
+    assert str(next(cell.amount for cell in reading.cells if cell.code == "total")) == "4180.00"
 
 
 def test_two_distinct_row_periods_are_selected_only_with_unique_support(tmp_path):

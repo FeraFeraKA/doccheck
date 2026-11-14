@@ -309,7 +309,8 @@ def test_pdf_with_visible_image_uses_visual_reading_even_with_native_text(monkey
     ]
 
 
-def test_ambiguous_visual_purpose_cannot_revert_to_partial_text(monkeypatch, tmp_path):
+@pytest.mark.parametrize("confidence", [45, 98])
+def test_ambiguous_visual_purpose_cannot_revert_to_partial_text(monkeypatch, tmp_path, confidence):
     address = PageLocator(kind="page", page=1, bbox=(0.1, 0.1, 0.8, 0.2))
     native = NativeDocument(
         (Observation("Работы отнесены к общепроизводственным расходам.", address),),
@@ -324,7 +325,7 @@ def test_ambiguous_visual_purpose_cannot_revert_to_partial_text(monkeypatch, tmp
         "recognize_lines",
         lambda _: [
             OcrLine("Работы отнесены к общепроизводственным расходам.", (20, 30, 300, 46), 98),
-            OcrLine("Оказаны общехозяйственные услуги.", (20, 90, 300, 105), 98),
+            OcrLine("Оказаны общехозяйственные услуги.", (20, 90, 300, 105), confidence),
             OcrLine("Итого: 120,00 руб.", (20, 150, 180, 164), 98),
         ],
     )

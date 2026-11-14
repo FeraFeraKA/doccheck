@@ -69,7 +69,7 @@ function RunContent({ id, view, run }: { id: string; view: CheckView; run: RunDe
   if (status === 'queued' || status === 'processing') return <Navigate to={runQueuePath(id)} replace />;
   if (result) return <ResultContent id={id} view={view} result={result} run={run} synthetic stored={false} />;
   if (hasStoredResult) return <StoredFindings id={id} view={view} run={run} />;
-  return <PendingRun run={run} />;
+  return <PendingRun id={id} run={run} />;
 }
 
 function RunState({ run }: { run: RunDetails }) {
@@ -81,7 +81,7 @@ function RunState({ run }: { run: RunDetails }) {
   </>;
 }
 
-function PendingRun({ run }: { run: RunDetails }) {
+function PendingRun({ id, run }: { id: string; run: RunDetails }) {
   return <>
     <nav className="result-breadcrumb" aria-label="Путь к проверке">
       <Link to="/checks">← Все проверки</Link>
@@ -89,7 +89,8 @@ function PendingRun({ run }: { run: RunDetails }) {
     <div className="result-header"><h1>{run.title}</h1></div>
     <RunState run={run} />
     {run.status === 'failed' && run.errorCode === 'scan_scope_required' &&
-      <Link className="workspace-button workspace-button-outline mt-3" to="/checks/new?scope=manual">
+      <Link className="workspace-button workspace-button-outline mt-3"
+        to={'/checks/new?scope=manual&from=' + encodeURIComponent(id)}>
         Выбрать строку КФЗ вручную
       </Link>}
   </>;
@@ -107,13 +108,13 @@ async function loadStoredFindings(id: string, signal: AbortSignal) {
 function StoredFindings({ id, view, run }: { id: string; view: CheckView; run: RunDetails }) {
   const { state, retry } = useCheckData(id, loadStoredFindings);
 
-  if (state.phase === 'loading') return <><PendingRun run={run} /><p role="status">Загрузка результата сверки…</p></>;
-  if (state.phase === 'failed') return <><PendingRun run={run} /><section className="checks-card">
+  if (state.phase === 'loading') return <><PendingRun id={id} run={run} /><p role="status">Загрузка результата сверки…</p></>;
+  if (state.phase === 'failed') return <><PendingRun id={id} run={run} /><section className="checks-card">
     <p role="alert">Не удалось загрузить результат сверки.</p>
     <button type="button" onClick={retry}>Повторить загрузку результата</button>
   </section></>;
 
-  if (state.data === null) return <><PendingRun run={run} /><section className="checks-card">
+  if (state.data === null) return <><PendingRun id={id} run={run} /><section className="checks-card">
     <p role="status">Результат проверки недоступен.</p>
     <button type="button" onClick={retry}>Повторить загрузку результата</button>
   </section></>;

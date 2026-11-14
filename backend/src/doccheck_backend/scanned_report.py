@@ -112,12 +112,23 @@ _EXPLICIT_PERIOD = re.compile(
 _MONTHS = (
     "январь февраль март апрель май июнь июль август сентябрь октябрь ноябрь декабрь"
 ).split()
+_MONTH_GENITIVES = (
+    "января февраля марта апреля мая июня июля августа сентября октября ноября декабря"
+).split()
+_MONTH_NUMBERS = dict(zip(_MONTHS, range(1, 13))) | dict(zip(_MONTH_GENITIVES, range(1, 13)))
+_MONTH_YEAR = rf"({'|'.join(_MONTHS)})\s+([0-9]{{4}})\s*(?:г\.?|года?)?"
 _MONTH_RANGE = re.compile(
-    rf"^(?:отч[её]тный период:\s*)?({'|'.join(_MONTHS)})\s+(\d{{4}})\s*(?:г\.?|год)?\s*[—–-]\s*"
-    rf"({'|'.join(_MONTHS)})\s+(\d{{4}})\s*(?:г\.?|год)?$",
+    rf"^(?:отч[её]тный период:\s*)?{_MONTH_YEAR}\s*[—–-]\s*{_MONTH_YEAR}$",
     re.I,
 )
-_ROW_PERIOD = re.compile(r"(\d{2}\.\d{2}\.\d{4})\s*[—–-]\s*(\d{2}\.\d{2}\.\d{4})")
+_ROW_DATE = (
+    rf"(?:[0-9]{{1,2}}[./][0-9]{{1,2}}[./][0-9]{{4}}|[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}"
+    rf"|[0-9]{{1,2}}\s+(?:{'|'.join(_MONTH_GENITIVES)})\s+[0-9]{{4}})"
+)
+_ROW_PERIOD = re.compile(
+    rf"(?:с\s+)?({_ROW_DATE})(?:\s+г\.?)?\s*(?:[—–-]|по)\s*({_ROW_DATE})(?:\s+г\.?)?"
+)
+_PERIOD_MARKER = re.compile(rf"[0-9]|\b(?:{'|'.join(_MONTH_NUMBERS)})\b", re.I)
 type ReportPeriod = tuple[str, str]
 
 
@@ -405,6 +416,32 @@ def _header_periods(lines: list[OcrLine]) -> set[ReportPeriod]:
     }
 
 
+def _row_date(text: str) -> date:
+    if " " in text:
+        day, month, year = text.split()
+        return date(int(year), _MONTH_NUMBERS[month], int(day))
+    if "." in text or "/" in text:
+        day, month, year = map(int, re.split(r"[./]", text))
+        return date(year, month, day)
+    return date.fromisoformat(text)
+
+
+def _period_in_row(raw: str) -> ReportPeriod | None:
+    text = " ".join(raw.casefold().split())
+    text = re.sub(r"(?<=[0-9])\s*([./])\s*(?=[0-9])", r"\1", text)
+    try:
+        if bounds := _ROW_PERIOD.fullmatch(text):
+            start, end = map(_row_date, bounds.groups())
+        elif month := re.fullmatch(_MONTH_YEAR, text):
+            year, number = int(month[2]), _MONTH_NUMBERS[month[1]]
+            start, end = date(year, number, 1), date(year, number, monthrange(year, number)[1])
+        else:
+            return _header_month_period(text)
+    except ValueError:
+        return None
+    return (start.isoformat(), end.isoformat()) if start <= end else None
+
+
 def _visible_row_period(
     image: Image.Image,
     xs: list[int],
@@ -416,8 +453,8 @@ def _visible_row_period(
     if len(header_periods) > 1:
         return None
     raw = recognize_crop(image, (xs[1] + 4, top + 3, xs[2] - 4, bottom - 3))
-    row = _dates(_ROW_PERIOD.fullmatch(" ".join(raw.split())))
-    if row is None and re.search(r"\d{1,2}[./]\d{1,2}[./]\d{2,4}", raw):
+    row = _period_in_row(raw)
+    if row is None and _PERIOD_MARKER.search(raw):
         return None
     first, last = f"{year}-01-01", f"{year}-12-31"
     if not header_periods:
@@ -459,8 +496,13 @@ def _dates(match: re.Match[str] | None) -> ReportPeriod | None:
 
 
 def _row_band(
-    image: Image.Image, locator: PageLocator | None, xs: list[int], ys: list[int]
-) -> tuple[int, int, str] | None:
+    image: Image.Image,
+    locator: PageLocator | None,
+    xs: list[int],
+    ys: list[int],
+    header_periods: set[ReportPeriod],
+    period: ReportPeriod,
+) -> tuple[int, int] | None:
     if locator is not None and locator.bbox is not None:
         left, top, right, bottom = locator.bbox
         matches = [
@@ -479,9 +521,10 @@ def _row_band(
     if locator and locator.bbox is None and not selector:
         return None
     candidates = [
-        (top, bottom, year)
+        (top, bottom)
         for top, bottom, stage, year in _stage_bands(image, xs, ys, selected)
-        if selector is None or (stage, year) == selector.groups()
+        if (selector is None or (stage, year) == selector.groups())
+        and _visible_row_period(image, xs, top, bottom, year, header_periods) == period
     ]
     return candidates[0] if len(candidates) == 1 else None
 
@@ -526,12 +569,10 @@ def read_report_row(
     if contracts != {contract_number}:
         return None
     bounds = _header_periods(lines)
-    band = _row_band(image, selected, xs, ys)
+    band = _row_band(image, selected, xs, ys, bounds, period)
     if band is None:
         return None
-    top, bottom, year = band
-    if _visible_row_period(image, xs, top, bottom, year, bounds) != period:
-        return None
+    top, bottom = band
     header_edges = [y for y in ys if y <= top]
     groups = _headers(image, ink, xs, header_edges)
     cells = []

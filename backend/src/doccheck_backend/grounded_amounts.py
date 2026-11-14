@@ -45,8 +45,11 @@ _MONTHS = (
     ("декабрь", "декабря", "декабре"),
 )
 _MONTH = {name: i for i, variants in enumerate(_MONTHS, 1) for name in variants}
-_MONTH_YEAR = rf"({'|'.join(_MONTH)})\s+([0-9]{{4}})(?:\s*(?:года|г\.))?(?!\d)"
-_MONTH_PERIOD = re.compile(rf"(?:\bпериод\s*:\s*|\bза\s+|\bв\s+){_MONTH_YEAR}\b", re.I)
+_MONTH_YEAR = rf"({'|'.join(_MONTH)})\s+([0-9]{{4}})(?!\d)(?:\s+(?:года?|г\.))?"
+_MONTH_PERIOD = re.compile(rf"(?:\bпериод\s*:\s*(?:с\s+)?|\bза\s+|\bв\s+){_MONTH_YEAR}", re.I)
+_MONTH_RANGE_END = re.compile(rf"\s*(?:[—–\-/]|\bпо\b|\bдо\b)\s*{_MONTH_YEAR}", re.I)
+_PERIOD_CONTINUATION = re.compile(r"^\s*(?:[—–\-/]|\bпо\b|\bдо\b)", re.I)
+_PERIOD_FIELD = re.compile(r"^(?:отч[её]тный\s+)?период(?:\s+[\w-]+){0,4}\s*:", re.I)
 _DAY = r"(?:[0-9]{2}\.[0-9]{2}\.[0-9]{4}|[0-9]{4}-[0-9]{2}-[0-9]{2})"
 _DATE_RANGE = re.compile(
     rf"(?:^|\|\s*)период\s*:\s*(?:с\s+)?({_DAY})\s*(?:по|[–—-])\s*({_DAY})\b", re.I
@@ -67,20 +70,20 @@ _LABEL = re.compile(r"^(?:договор|контракт|основание|д�
 _BASIS_ID = re.compile(r"[\w]+(?:[/‑-][\w]+)+")
 _FINAL_LABEL = (
     r"(?:итого(?:\s+(?:к\s+(?:оплате|уч[её]ту)|стоимость\s+(?:услуг|работ)))?"
-    r"|к\s+оплате(?:\s+по\s+документу)?)"
+    r"|всего\s+к\s+(?:оплате|уч[её]ту)|к\s+оплате(?:\s+по\s+документу)?)"
 )
 _TOTAL_LABEL = re.compile(
     r"^(?:сумма(?:\s+по\s+акту)?|стоимость(?:\s+(?:оказанных\s+)?услуг"
     r"(?:\s+за\s+расчетный\s+период)?)?)\s*[:：]",
     re.I,
 )
-_FINAL_VALUE = re.compile(rf"^{_FINAL_LABEL}(?:\s*[:：]\s*|\s+)(?=[+−-]?[0-9])", re.I)
+_FINAL_VALUE = re.compile(rf"^{_FINAL_LABEL}(?:\s*[:：—–]\s*|\s+-\s+|\s+)(?=[+−-]?[0-9])", re.I)
 _FINAL_CELL = re.compile(rf"^{_FINAL_LABEL}\s*[:.：]?$", re.I)
-_FINAL_LINE = re.compile(rf"^{_FINAL_LABEL}(?=[\s:：.]|$)", re.I)
+_FINAL_LINE = re.compile(rf"^{_FINAL_LABEL}(?=[\s:：.—–-]|$)", re.I)
 _BARE_FINAL = re.compile(
-    rf"{_FINAL_LABEL}\s*[:：]?\s+(-?(?:[0-9]+|[0-9]{{1,4}}(?: [0-9]{{3}})+)[,.][0-9]{{2}})",
-    re.I,
+    r"-?(?:[0-9]+|[0-9]{1,4}(?: [0-9]{3})+)[,.][0-9]{2}",
 )
+_OCR_LABEL_MAP = str.maketrans("ABCEHKMOPTXYabcehkmoptxy", "АВСЕНКМОРТХУавсенкмортху")
 _AMOUNT_CELL_HEADER = re.compile(r"^(?:сумма|стоимость)\s*[,()]?\s*(?:руб\.?|₽)\)?$", re.I)
 _PAGE_RUB_HEADER = re.compile(
     r"^(?:наименование\s+)?(?:сумма|стоимость)\s*[,()]?\s*(?:руб\.?|₽)\)?$", re.I
@@ -91,6 +94,7 @@ _OTHER_CURRENCY = re.compile(
 )
 _WHOLE_RUBLES = Decimal("0.01")
 _PDF_OCR_ISSUES = {"clipped_pdf_text", "no_native_text"}
+_ISSUER_REQUISITES = re.compile(r"\s*[,;(]?\s*(?:инн|кпп|огрн(?:ип)?)\s*(?:[:№]\s*)?[0-9].*$")
 
 
 @dataclass(frozen=True)
@@ -116,7 +120,9 @@ def _norm(text: str) -> str:
     )
 
 
-def _read_observations(path: Path, format_: FileFormat) -> tuple[NativeDocument, str]:
+def _read_observations(
+    path: Path, format_: FileFormat
+) -> tuple[NativeDocument, str, tuple[Observation, ...]]:
     native = read_native_document(path, format_)
     # Use full-page OCR when images or clipped text may hide part of the document.
     # Unsupported PDF visibility is left to review instead of mixing layers.
@@ -126,22 +132,30 @@ def _read_observations(path: Path, format_: FileFormat) -> tuple[NativeDocument,
         and all(issue.code in _PDF_OCR_ISSUES for issue in native.issues)
     )
     if not render:
-        return native, "native"
+        return native, "native", ()
     observations = []
+    potential = []
     issues = []
     for page, image in enumerate(render_pages(path), 1):
         before = len(observations)
         for line in recognize_lines(image):
-            if line.confidence < 50:
-                if _FINAL_LINE.match(line.text) or _TOTAL_LABEL.match(line.text):
-                    issues.append(
-                        NativeIssue("unreadable_amount_line", page_locator(page, image, line.box))
-                    )
+            text = line.text.strip()
+            normalized = text.translate(_OCR_LABEL_MAP)
+            if (_FINAL_LINE.match(normalized) or _TOTAL_LABEL.match(normalized)) and (
+                line.confidence < 50 or not (_FINAL_LINE.match(text) or _TOTAL_LABEL.match(text))
+            ):
+                issues.append(
+                    NativeIssue("unreadable_amount_line", page_locator(page, image, line.box))
+                )
                 continue
-            observations.append(Observation(line.text, page_locator(page, image, line.box)))
+            observation = Observation(text, page_locator(page, image, line.box))
+            potential.append(observation)
+            if line.confidence >= 50:
+                observations.append(observation)
         if len(observations) == before:
             issues.append(NativeIssue("no_addressed_source_text", page=page))
-    return NativeDocument(tuple(observations), tuple(issues)), "ocr"
+    # Retain weak readings only for a second pass that can veto a confident category.
+    return NativeDocument(tuple(observations), tuple(issues)), "ocr", tuple(potential)
 
 
 def _following(label: Observation, value: Observation) -> bool:
@@ -179,24 +193,37 @@ def _contracts(
 
 def _periods(observations: tuple[Observation, ...]) -> list[tuple[Period, Observation]]:
     periods, dates = [], []
+    unresolved_period = False
     for i, observation in enumerate(observations):
         raw = observation.raw_text.strip()
         if match := _DATE_RANGE.search(raw):
             low, high = (normalize_document_date(value).value for value in match.groups())
             if low and high and low <= high:
                 periods.append((Period(start=low, end=high), observation))
+            else:
+                unresolved_period = True
         elif match := _MONTH_PERIOD.search(raw):
-            month, year = _MONTH[match[1].casefold()], int(match[2])
-            if year:
-                periods.append(
-                    (
-                        Period(
-                            start=f"{year:04}-{month:02}-01",
-                            end=f"{year:04}-{month:02}-{monthrange(year, month)[1]:02}",
-                        ),
-                        observation,
-                    )
+            first_month, first_year = _MONTH[match[1].casefold()], int(match[2])
+            tail = raw[match.end() :]
+            last_month, last_year = first_month, first_year
+            if end_month := _MONTH_RANGE_END.match(tail):
+                last_month, last_year = _MONTH[end_month[1].casefold()], int(end_month[2])
+                tail = tail[end_month.end() :]
+            if (
+                _PERIOD_CONTINUATION.match(tail)
+                or not first_year
+                or not last_year
+                or (first_year, first_month) > (last_year, last_month)
+            ):
+                unresolved_period = True
+            else:
+                period = Period(
+                    start=f"{first_year:04}-{first_month:02}-01",
+                    end=f"{last_year:04}-{last_month:02}-{monthrange(last_year, last_month)[1]:02}",
                 )
+                periods.append((period, observation))
+        elif _PERIOD_FIELD.match(raw):
+            unresolved_period = True
         if match := _DATE.fullmatch(raw) or _HEADER_DATE.fullmatch(raw):
             if value := normalize_document_date(match[1]).value:
                 dates.append((Period(start=value, end=value), observation))
@@ -205,7 +232,7 @@ def _periods(observations: tuple[Observation, ...]) -> list[tuple[Period, Observ
             if _following(observation, candidate):
                 if value := normalize_document_date(candidate.raw_text.strip()).value:
                     dates.append((Period(start=value, end=value), candidate))
-    return periods or dates
+    return [] if unresolved_period else periods or dates
 
 
 def format_rubles(amount: Decimal | None, *, xlsx: bool = False) -> str | None:
@@ -278,13 +305,14 @@ def _money(
     has_final_label = False
     for obs in native.observations:
         raw = obs.raw_text.strip()
-        if _FINAL_VALUE.match(raw):
+        if value_label := _FINAL_VALUE.match(raw):
             has_final_label = True
-            amount, ambiguous = _text_amount(raw)
+            value_text = raw[value_label.end() :]
+            amount, ambiguous = _text_amount(value_text)
             if ambiguous:
                 return None, []
             if amount is None and isinstance(obs.locator, PageLocator):
-                bare = _BARE_FINAL.fullmatch(raw)
+                bare = _BARE_FINAL.fullmatch(value_text)
                 page_text = [
                     item.raw_text
                     for item in native.observations
@@ -296,9 +324,11 @@ def _money(
                     and any(_RUB_DECLARATION.match(text) for text in page_text)
                     and not any(_OTHER_CURRENCY.search(text) for text in page_text)
                 ):
-                    amount = Decimal(bare[1].replace(" ", "").replace(",", "."))
+                    amount = Decimal(bare[0].replace(" ", "").replace(",", "."))
             if amount is not None:
                 candidates.append(Observation(obs.raw_text, obs.locator, amount, "total"))
+            else:
+                return None, []
         elif _FINAL_CELL.fullmatch(raw):
             has_final_label = True
             for value in native.observations:
@@ -311,6 +341,8 @@ def _money(
                     return None, []
                 if amount is not None:
                     candidates.append(Observation(value.raw_text, value.locator, amount, "total"))
+        elif _FINAL_LINE.match(raw):
+            return None, []
     if has_final_label:
         # The explicit final line takes priority over an intermediate amount.
         unique = {item.locator.model_dump_json(): item for item in candidates}
@@ -402,7 +434,7 @@ def ground_document(
     """Build addressed facts. A model prediction cannot create a monetary assertion."""
     from bench.e2e_v32_20261114.document_identity import resolve_own_number
 
-    native, method = _read_observations(path, format_)
+    native, method, potential = _read_observations(path, format_)
     # Match the line indices used by v3.2 to the original structural/visual location.
     observations = tuple(
         Observation(
@@ -431,6 +463,10 @@ def ground_document(
         if template
         else _category(observations, text, ocr=method == "ocr")
     )
+    if category and potential and len(potential) > len(observations):
+        possible, _ = _category(potential, "\n".join(item.raw_text for item in potential), ocr=True)
+        if possible != category:
+            category, article_evidence = None, []
 
     if template:
         sheet = articles[0][1].locator.sheet
@@ -546,6 +582,9 @@ def ground_document(
     else:
         identity = None
 
+    issuer = parsed["issuer_key"]
+    if issuer:
+        issuer = _ISSUER_REQUISITES.sub("", issuer).strip(" .,:;«»\"'()")
     return GroundedDocument(
         tuple(assertions),
         category,
@@ -558,5 +597,5 @@ def ground_document(
         text,
         identity,
         parsed["document_kind"],
-        parsed["issuer_key"],
+        issuer or None,
     )

@@ -215,7 +215,12 @@ def _load_run(engine: Engine, run_id: str, *, with_result: bool = False) -> Run:
 
 def get_editable_run(engine: Engine, run_id: str) -> Run:
     run = _load_run(engine, run_id)
-    if run.status not in ("completed", "completed_with_issues"):
+    needs_scan_scope = (
+        run.status == "failed"
+        and run.error is not None
+        and run.error.get("code") == "scan_scope_required"
+    )
+    if run.status not in ("completed", "completed_with_issues") and not needs_scan_scope:
         raise RunReadError(409, "result_pending", "Дождитесь завершения исходной проверки")
     return run
 

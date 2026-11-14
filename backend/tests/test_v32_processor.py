@@ -13,7 +13,7 @@ from doccheck_backend.api import create_app
 from doccheck_backend.config import Settings
 from doccheck_backend.contracts.locators import PageLocator
 from doccheck_backend.database import create_database_engine
-from doccheck_backend.grounded_amounts import _contracts, _money, format_rubles
+from doccheck_backend.grounded_amounts import _contracts, _money, _periods, format_rubles
 from doccheck_backend.native_observations import NativeDocument, NativeIssue, Observation
 from doccheck_backend.page_ocr import OcrLine
 from doccheck_backend.run_worker import run_document_worker
@@ -129,8 +129,8 @@ def test_scanned_table_requires_matching_year_and_identifies_missing_columns(mon
     )
     monkeypatch.setattr(
         scanned_report,
-        "_row_band",
-        lambda _, locator, *_args: (290, 360, "2026") if locator else None,
+        "_stage_bands",
+        lambda *_: iter([(290, 360, "3", "2026"), (220, 290, "4", "2026")]),
     )
     monkeypatch.setattr(scanned_report, "recognize_crop", lambda *_args, **_kwargs: "")
     monkeypatch.setattr(
@@ -159,7 +159,7 @@ def test_skipped_page_blocks_totals_from_visible_fragment(monkeypatch, tmp_path)
         (Observation("Сумма: 625.02 руб.", address),),
         (NativeIssue("native_read_error", page=2),),
     )
-    monkeypatch.setattr(grounded_amounts, "_read_observations", lambda *_: (document, "native"))
+    monkeypatch.setattr(grounded_amounts, "_read_observations", lambda *_: (document, "native", ()))
     result = grounded_amounts.ground_document(
         uuid4(), "a" * 32, tmp_path / "act.pdf", "pdf", "b" * 64
     )
@@ -186,15 +186,46 @@ def test_final_ruble_total_has_priority_over_intermediate_amount():
 
 
 @pytest.mark.parametrize(
-    ("last_line", "confidence", "expected"),
+    ("printed", "bounds"),
     [
-        ("Итого к оплате: 120,00 руб.", 42, None),
-        ("Итого к оплате: 120,00 руб.", 90, "120.00"),
-        ("Примечание к акту", 42, "100.00"),
+        ("Период: Январь 2031 — Февраль 2031", ("2031-01-01", "2031-02-28")),
+        ("Период: с декабря 2030 г. по январь 2031 г.", ("2030-12-01", "2031-01-31")),
+        ("Период: Январь 2031", ("2031-01-01", "2031-01-31")),
+        ("Период: Январь 2031 — Февраль", None),
+        ("Период: Январь 2031 — Декабрь 2030", None),
+    ],
+)
+def test_primary_period_does_not_shorten_a_month_range(printed, bounds):
+    first = PageLocator(kind="page", page=1, bbox=(0.1, 0.2, 0.8, 0.3))
+    second = PageLocator(kind="page", page=1, bbox=(0.1, 0.4, 0.8, 0.5))
+    reading = _periods((Observation(printed, first), Observation("Дата: 31.01.2031", second)))
+    if bounds is None:
+        assert reading == []
+    else:
+        ((period, source),) = reading
+        assert (period.start, period.end) == bounds
+        assert source.locator == first
+
+
+@pytest.mark.parametrize(
+    ("last_line", "confidence", "expected", "unreadable"),
+    [
+        ("Итого к оплате: 120,00 руб.", 42, None, True),
+        ("Итого к оплате: 120,00 руб.", 90, "120.00", False),
+        ("Итого к оплате — 120,00 руб.", 90, "120.00", False),
+        ("Итого к оплате - 120,00 руб.", 90, "120.00", False),
+        ("Итого к оплате: -120,00 руб.", 90, "-120.00", False),
+        ("Всего к оплате: 120,00 руб.", 90, "120.00", False),
+        ("Итoго к оплате: 120,00 руб.", 42, None, True),
+        ("Итoго к оплате: 120,00 руб.", 90, None, True),
+        ("Итого к оплате: неразборчиво", 90, None, False),
+        ("Итого к оплате: ?20,00 руб.", 90, None, False),
+        ("Итого к оплате: сто двадцать рублей", 90, None, False),
+        ("Примечание к акту", 42, "100.00", False),
     ],
 )
 def test_faint_total_prevents_using_intermediate_ocr_amount(
-    monkeypatch, tmp_path, last_line, confidence, expected
+    monkeypatch, tmp_path, last_line, confidence, expected, unreadable
 ):
     from doccheck_backend import grounded_amounts
 
@@ -216,7 +247,7 @@ def test_faint_total_prevents_using_intermediate_ocr_amount(
         [] if expected is None else [expected]
     )
     assert [issue.code for issue in result.issues] == (
-        ["unreadable_amount_line"] if expected is None else []
+        ["unreadable_amount_line"] if unreadable else []
     )
 
 
@@ -233,7 +264,7 @@ def test_own_document_number_points_to_own_header(monkeypatch, tmp_path):
             ),
         )
     )
-    monkeypatch.setattr(grounded_amounts, "_read_observations", lambda *_: (document, "native"))
+    monkeypatch.setattr(grounded_amounts, "_read_observations", lambda *_: (document, "native", ()))
     result = grounded_amounts.ground_document(
         uuid4(), "a" * 32, tmp_path / "act.pdf", "pdf", "b" * 64
     )
