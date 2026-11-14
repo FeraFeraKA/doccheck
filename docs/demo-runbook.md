@@ -21,6 +21,10 @@
   `queued → processing → completed`, ID `464319d7-0b8d-4083-b863-de52c9dedaca`.
   Версия frontend по записи публикации — #63, `635ea657`, Vercel production
   `dpl_DtSPqJ2uXCXQm42ARMsRGk5GCMfD`. [Протокол NRT-108](https://linear.app/andreiakimov/issue/NRT-108/razvernut-demo-doccheck-na-vercel-i-render)
+- После публикации #71 (`d0922d3`, Vercel `dpl_FYNPbD6FD5XAM8dZCR8fRpE7dLCG`)
+  в Brave проверены перезагрузка результата, документов и исключений.
+  Синтетическое задание `5c14a9b3-7e2e-419a-8f85-001467907eb5` завершилось
+  в `completed`. [Протокол NRT-108](https://linear.app/andreiakimov/issue/NRT-108/razvernut-demo-doccheck-na-vercel-i-render)
 - Подготовьте отдельную вкладку с локальным резервом. Если облачная
   вкладка результата не готова к началу, покажите локальную копию.
 - Андрей проводит репетицию с таймером и готовит локальную запись с

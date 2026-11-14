@@ -27,3 +27,9 @@
 [Запись публикации NRT-108](https://linear.app/andreiakimov/issue/NRT-108/razvernut-demo-doccheck-na-vercel-i-render)
 привязывает публичный адрес к Vercel production `dpl_DtSPqJ2uXCXQm42ARMsRGk5GCMfD`
 (#63, `635ea657`).
+
+Запись NRT-108 также подтверждает облачный прогон #71 на `d0922d3`
+(Vercel `dpl_FYNPbD6FD5XAM8dZCR8fRpE7dLCG`). Прямые маршруты результата,
+документов и исключений пережили перезагрузку. Задание
+`5c14a9b3-7e2e-419a-8f85-001467907eb5` дошло до `completed`.
+Это ранее зафиксированный прогон в Brave.
