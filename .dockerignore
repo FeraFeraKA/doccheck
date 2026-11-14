@@ -29,3 +29,5 @@
 !frontend/src/assets/fonts/inter-cyrillic.woff2
 !frontend/src/assets/fonts/inter-latin.woff2
 !frontend/public/fonts/inter-OFL.txt
+!frontend/public/demo/report.xlsx
+!frontend/public/demo/act.docx
