@@ -131,6 +131,7 @@
   font-size: 12px;
 }
 .overview-result-detail { overflow-wrap: anywhere; }
+.overview-secondary-finding { margin-inline-start: .25rem; }
 .overview-coverage, .overview-documents { color: var(--ui-secondary); }
 .overview-document-count { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; }
 .overview-chip {

@@ -175,6 +175,8 @@ function CheckResult({ entry }: { entry: HistoryEntry }) {
     <span className={classes('overview-chip', finding?.tone ?? tones[status])}>
       {finding?.label ?? runStatusLabels[status]}
     </span>
+    {finding && counts && counts.discrepancy > 0 && counts.unverified > 0 &&
+      <span className="overview-chip neutral overview-secondary-finding">Неполные данные</span>}
     {finding && <small className="overview-result-detail">{runStatusLabels[status]}</small>}
     {error && <p className="overview-result-detail">{error}</p>}
   </>;

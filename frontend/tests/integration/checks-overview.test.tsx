@@ -26,6 +26,7 @@ it('applies server filters before pagination while sorting the current page loca
     .toEqual(['Проверка', 'Результат', 'Покрытие по сумме', 'Документы', 'Дата']);
   const firstResult = within(table).getAllByRole('row')[1];
   expect(within(firstResult).getByText('Есть расхождения')).toBeVisible();
+  expect(within(firstResult).getByText('Неполные данные')).toBeVisible();
   expect(within(firstResult).getByText('Готово')).toBeVisible();
   expect(within(firstResult).getByText('1 из 6 показателей')).toBeVisible();
   expect(within(firstResult).getByLabelText('Покрытие по сумме недоступно')).toHaveTextContent('—');

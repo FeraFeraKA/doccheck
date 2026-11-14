@@ -473,6 +473,7 @@ test('API mock: two uploads stay on the form and history is restored on reload',
     await submit.click();
     await expect(recent.getByRole('link', { name: `Проверка КФЗ №queued-${number}` })).toBeVisible();
     await expect(submit).toBeDisabled();
+    await expect(page.getByRole('button', { name: 'Выбрать файл', exact: true })).toBeFocused();
     await expect(page).toHaveURL(/\/checks\/new$/);
   }
   expect(keys.size).toBe(2);
