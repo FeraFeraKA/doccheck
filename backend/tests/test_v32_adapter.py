@@ -725,8 +725,17 @@ def test_scan_reports_inferred_period_and_marks_missing_amounts(
     assert job.result.scope.period_end == "2027-03-17"
     assert job.result.scope.report_row_locator.bbox[:2] == (0.04, 0.53)
     rows = {row.id: row for row in job.result.rows}
-    assert rows["general_admin"].reported_value == "1250.50"
+    assert rows["general_admin"].reported_value is None
     assert rows["general_admin"].observed_evidence_sum == "1172.70"
-    for name in ("payroll", "insurance", "production_overhead"):
+    for name in ("payroll", "insurance", "production_overhead", "general_admin"):
         assert rows[name].reported_value is None
         assert "ocr_report_amount_unconfirmed" in {reason.code for reason in rows[name].reasons}
+
+    report_sources = [item for item in job.result.evidence if item.document_id == report["id"]]
+    cutoff, contract = report_sources
+    assert cutoff.kind == "period"
+    assert cutoff.normalized_value.start is None and cutoff.normalized_value.end == "2027-03-17"
+    assert cutoff.locator.bbox[:2] == (0.06, 0.15)
+    assert contract.kind == "contract" and contract.normalized_value == "E2E-31"
+    assert contract.locator.bbox[:2] == (0.06, 0.09)
+    assert job.result.documents[0].decision.evidence_refs == [cutoff.id, contract.id]

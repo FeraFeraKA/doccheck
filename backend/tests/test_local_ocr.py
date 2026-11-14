@@ -1,5 +1,3 @@
-from decimal import Decimal
-
 import pytest
 
 from doccheck_backend.contracts.locators import PageLocator
@@ -46,8 +44,8 @@ def test_select_stage_period_and_original_boxes(scanned_stage):
     assert result.start.isoformat() == "2028-01-01"
     assert result.end.isoformat() == "2028-04-17"
     assert result.row.bbox[:2] == (0.04, 0.53)
-    assert result.amounts["payroll"].amount == Decimal("701.50")
-    assert result.amounts["general_admin"].locator.bbox[:2] == (0.75, 0.53)
+    assert result.contract_source.locator.bbox[:2] == (0.06, 0.09)
+    assert result.cutoff_source.locator.bbox[:2] == (0.06, 0.15)
 
 
 def test_ambiguous_report_rows_are_rejected(scanned_stage):
@@ -111,3 +109,12 @@ def test_ocr_normalizes_pixel_boxes_in_original_png_frame(monkeypatch, tmp_path)
     assert item.locator.page == 1
     assert item.locator.bbox == (0.1, 0.3, 0.4, 0.45)
     assert item.confidence == 0.93
+
+
+def test_cannot_join_report_scope_across_pages(scanned_stage):
+    from dataclasses import replace
+
+    contract, *others = scanned_stage
+    wrong_page = replace(contract, locator=contract.locator.model_copy(update={"page": 2}))
+
+    assert parse_scan_report((wrong_page, *others)) is None

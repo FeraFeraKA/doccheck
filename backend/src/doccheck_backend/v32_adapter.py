@@ -424,6 +424,7 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
 
     with TemporaryDirectory(prefix="doccheck-v32-") as temp:
         missing_scan_amounts = set()
+        scan_scope_evidence = []
         folder = Path(temp)
         report_entry = report.v32_entry(folder, "report")
         source_path = upload_folder / report.id
@@ -468,19 +469,31 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
                     period_end=parsed_scan.end.isoformat(),
                     report_row_locator=parsed_scan.row,
                 )
-                report_evidence = {
-                    category: Evidence(
-                        id=f"{report.id}-{category}-reported",
+                # The scan only establishes scope. A nearby OCR number cannot
+                # identify a monetary column in a multi-level table.
+                report_evidence = {}
+                scan_scope_evidence = [
+                    Evidence(
+                        id=f"{report.id}-ocr-cutoff",
                         document_id=report.id,
-                        kind="reported_value",
-                        raw_value=item.raw_text,
-                        normalized_value=_money(item.amount),
-                        unit="RUB",
+                        kind="period",
+                        raw_value=parsed_scan.cutoff_source.raw_text,
+                        normalized_value=Period(start=None, end=parsed_scan.end.isoformat()),
+                        unit=None,
                         method="ocr",
-                        locator=item.locator,
-                    )
-                    for category, item in parsed_scan.amounts.items()
-                }
+                        locator=parsed_scan.cutoff_source.locator,
+                    ),
+                    Evidence(
+                        id=f"{report.id}-ocr-contract",
+                        document_id=report.id,
+                        kind="contract",
+                        raw_value=parsed_scan.contract_source.raw_text,
+                        normalized_value=parsed_scan.contract,
+                        unit=None,
+                        method="ocr",
+                        locator=parsed_scan.contract_source.locator,
+                    ),
+                ]
                 missing_scan_amounts = set(v32.CATEGORY_CODES.values()) - report_evidence.keys()
                 v32.verify_source(report_entry)
             elif native_report.issues:
@@ -612,7 +625,7 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
             if reason["reason"] in _IDENTITY_CONFLICTS
         }
         by_id = {item["id"]: item for item in extractions}
-        evidence, rows = [], []
+        evidence, rows = list(scan_scope_evidence), []
         for item in comparison["rows"]:
             category = item["category"]
             code, label = _ARTICLES[category]
@@ -764,6 +777,7 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
         evidence.append(source)
         document.decision.evidence_refs.append(source.id)
     documents[report.id] = _document(report, report=True)
+    documents[report.id].decision.evidence_refs.extend(item.id for item in scan_scope_evidence)
     result = CheckResult(
         schema_version=RESULT_SCHEMA_VERSION,
         run_id=str(run.id),

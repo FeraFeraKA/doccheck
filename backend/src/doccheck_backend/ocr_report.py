@@ -3,7 +3,6 @@
 import re
 from dataclasses import dataclass
 from datetime import date
-from decimal import Decimal
 
 from doccheck_backend.contracts.locators import PageLocator
 from doccheck_backend.native_observations import Observation
@@ -18,18 +17,7 @@ _ROW = re.compile(r"^\s*([\dз]+)\s+этап\s*[,.:]?\s*(\d{4})\s*(?:г\.?\s*)?[
 _MONTHS = tuple(
     "января февраля марта апреля мая июня июля августа сентября октября ноября декабря".split()
 )
-_AMOUNT = re.compile(r"^(?:\d+|\d{1,3}(?:[ \u00a0\u2009\u202f]\d{3})+)[.,]\d{2}$")
-_HEADERS = {
-    "production_overhead": re.compile(r"общепроизводственн\w*\s+(?:затрат|расход)\w*"),
-    "general_admin": re.compile(r"общехозяйственн\w*\s+(?:затрат|расход)\w*"),
-}
-_MONEY_HEADER = {
-    "payroll": re.compile(r"(?:затрат\w*\s+на\s+оплату\s+труда|оплата\s+труда)[, :]+всего"),
-    "insurance": re.compile(r"страховые\s+взносы(?:\s+на\s+обязательное[^:]*?)?[, :]+всего"),
-}
 _MIN_SCORE = 0.8
-# OCR returns text boxes, not cell boundaries. Reject column snaps with implausible offset.
-_MAX_X_DRIFT = 0.016
 
 
 @dataclass(frozen=True)
@@ -38,7 +26,8 @@ class ScanScope:
     start: date
     end: date
     row: PageLocator
-    amounts: dict[str, Observation]
+    contract_source: Observation
+    cutoff_source: Observation
 
 
 def _box(item: Observation) -> tuple[float, float, float, float]:
@@ -71,46 +60,73 @@ def _row_neighbors(item: Observation, observations: tuple[Observation, ...]) -> 
     )
 
 
-def _above(item: Observation, row: Observation) -> bool:
-    return _page(item) == _page(row) and _box(item)[3] < _box(row)[1]
+def _reading_source(parts: list[Observation], family: str) -> Observation:
+    """Preserve raw recognized words and cover the union of their source boxes."""
+    if len(parts) == 1:
+        return parts[0]
+    boxes = [_box(part) for part in parts]
+    return Observation(
+        " ".join(part.raw_text for part in parts),
+        PageLocator(
+            kind="page",
+            page=_page(parts[0]),
+            bbox=(
+                min(box[0] for box in boxes),
+                min(box[1] for box in boxes),
+                max(box[2] for box in boxes),
+                max(box[3] for box in boxes),
+            ),
+            fragment_id=f"ocr-{family}",
+        ),
+    )
 
 
-def _anchors(ordered: tuple[Observation, ...], row: Observation) -> dict[str, Observation]:
-    anchors = {}
-    above = [item for item in ordered if _above(item, row)]
-    for category, pattern in {**_HEADERS, **_MONEY_HEADER}.items():
-        # A broad section title does not identify one monetary column.
-        # Without a verified numbered/grid boundary keep this table cell unknown.
-        matches = []
-        for item in above:
-            normalized = " ".join(item.raw_text.casefold().split())
-            if not pattern.fullmatch(normalized):
-                continue
-            if category in _MONEY_HEADER and "всего" not in normalized:
-                continue
-            matches.append(item)
-        if len(matches) == 1:
-            anchors[category] = matches[0]
-    return anchors
+def _row_readings(positioned: tuple[Observation, ...], pattern: re.Pattern[str], family: str):
+    """Yield a match and truthful location, preferring the uncombined fragment."""
+    for item in positioned:
+        if match := pattern.search(
+            item.raw_text.casefold() if family == "stage" else item.raw_text
+        ):
+            yield match, item
+    for item in positioned:
+        pieces = _row_neighbors(item, positioned)
+        if len(pieces) < 2:
+            continue
+        previous = 0
+        for index, part in enumerate(pieces):
+            if index and _box(part)[0] < previous - 0.002:
+                # Context rereads can overlap their component boxes. Do not
+                # combine overlapping raw readings as if they were extra words.
+                break
+            previous = _box(part)[2]
+        else:
+            raw = " ".join(part.raw_text for part in pieces)
+            text = raw.casefold() if family == "stage" else raw
+            if match := pattern.search(text):
+                offset = 0
+                relevant = []
+                for part in pieces:
+                    end = offset + len(part.raw_text)
+                    if offset < match.end() and match.start() < end:
+                        relevant.append(part)
+                    offset = end + 1
+                yield match, _reading_source(relevant, family)
 
 
 def _dated_stages(
     items: tuple[Observation, ...],
-) -> dict[int, dict[str, set[date]]]:
-    stages: dict[int, dict[str, set[date]]] = {}
-    for item in items:
-        # Label and date can be separate adjacent recognition boxes.
-        neighbor_text = " ".join(other.raw_text for other in _row_neighbors(item, items))
-        readings = _STAGE_DATE.findall(item.raw_text.casefold())
-        readings.extend(_STAGE_DATE.findall(neighbor_text.casefold()))
-        for label, stage, day, month, year in readings:
-            if month not in _MONTHS:
-                continue
-            try:
-                value = date(int(year), _MONTHS.index(month) + 1, int(day))
-            except ValueError:
-                continue
-            stages.setdefault(int(stage.replace("з", "3")), {}).setdefault(label, set()).add(value)
+) -> dict[int, dict[str, dict[date, Observation]]]:
+    stages: dict[int, dict[str, dict[date, Observation]]] = {}
+    for reading, source in _row_readings(items, _STAGE_DATE, "stage"):
+        label, stage, day, month, year = reading.groups()
+        if month not in _MONTHS:
+            continue
+        try:
+            value = date(int(year), _MONTHS.index(month) + 1, int(day))
+        except ValueError:
+            continue
+        labels = stages.setdefault(int(stage.replace("з", "3")), {})
+        labels.setdefault(label, {}).setdefault(value, source)
     return stages
 
 
@@ -125,23 +141,21 @@ def parse_scan_report(observations: tuple[Observation, ...]) -> ScanScope | None
         for item in positioned
         if item.repeated_read or (item.confidence is not None and item.confidence >= _MIN_SCORE)
     )
-    contracts = {
-        value
-        for item in visible
-        for value in _CONTRACT.findall(
-            " ".join(other.raw_text for other in _row_neighbors(item, visible))
-        )
-    }
+    contracts = {}
+    for reading, source in _row_readings(visible, _CONTRACT, "contract"):
+        contracts.setdefault(reading[1], source)
     if len(contracts) != 1:
         return None
+    contract, contract_source = next(iter(contracts.items()))
     stages = _dated_stages(visible)
     if len(stages) != 1:
         return None
     stage, dates = next(iter(stages.items()))
-    starts, ends = dates.get("начало", set()), dates.get("окончание", set())
+    starts, ends = dates.get("начало", {}), dates.get("окончание", {})
     if len(starts) != 1 or len(ends) != 1:
         return None
-    first, last = next(iter(starts)), next(iter(ends))
+    first = next(iter(starts))
+    last, cutoff_source = next(iter(ends.items()))
     start = max(first, date(last.year, 1, 1))
     if start > last:
         return None
@@ -159,28 +173,10 @@ def parse_scan_report(observations: tuple[Observation, ...]) -> ScanScope | None
         for other in matches
     ):
         return None
-    row_items = _row_neighbors(row, positioned)
-    candidates = [
-        item
-        for item in row_items
-        if _box(item)[0] > _box(row)[2] and _AMOUNT.fullmatch(item.raw_text.strip())
-    ]
-    amounts = {}
-    claimed = set()
-    for category, anchor in _anchors(visible, row).items():
-        x = _center(anchor, 0)
-        eligible = [
-            item
-            for item in candidates
-            if _box(item)[0] - _MAX_X_DRIFT <= x <= _box(item)[2] + _MAX_X_DRIFT
-        ]
-        if len(eligible) != 1 or eligible[0] not in visible:
-            continue
-        if eligible[0].locator.bbox in claimed:
-            return None
-        item = eligible[0]
-        value = Decimal(re.sub(r"\s", "", item.raw_text.strip()).replace(",", "."))
-        amounts[category] = Observation(item.raw_text, item.locator, amount=value)
-        claimed.add(item.locator.bbox)
+    if _page(contract_source) != _page(row) or _page(cutoff_source) != _page(row):
+        return None
+    start_source = starts[first]
+    if _page(start_source) != _page(row):
+        return None
     assert isinstance(row.locator, PageLocator)
-    return ScanScope(next(iter(contracts)), start, last, row.locator, amounts)
+    return ScanScope(contract, start, last, row.locator, contract_source, cutoff_source)
