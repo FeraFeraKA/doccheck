@@ -93,10 +93,22 @@ def test_rubles_tolerate_only_xlsx_representation_noise():
     assert format_rubles(Decimal("66936.929"), xlsx=True) is None
 
 
-def test_ocr_contract_number_marker_is_not_the_contract_number():
+@pytest.mark.parametrize(
+    ("printed", "number"),
+    [
+        ("Договор Ne 74/891234/26-47", "74/891234/26-47"),
+        ("Договор 12345", "12345"),
+        ("Договор подряда № A-12", "A-12"),
+        ("Основание: договор оказания услуг № A-12", "A-12"),
+        ("Договор № АБВ", "АБВ"),
+        ("Договор подряда от 31.01.2031", None),
+        ("Договор аренды оборудования от 31.01.2031", None),
+    ],
+)
+def test_contract_field_preserves_identifier_and_rejects_contract_type(printed, number):
     address = PageLocator(kind="page", page=1, bbox=(0.1, 0.1, 0.7, 0.2))
-    observation = Observation("Договор Ne 74/891234/26-47", address)
-    assert _contracts((observation,), template=False) == [("74/891234/26-47", observation)]
+    observation = Observation(printed, address)
+    assert _contracts((observation,), template=False) == ([(number, observation)] if number else [])
 
 
 @pytest.mark.parametrize(("unit", "amount"), [("USD", None), ("руб.", Decimal("625.02"))])

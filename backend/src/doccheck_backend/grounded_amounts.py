@@ -70,9 +70,12 @@ _STAGE_FIELD = re.compile(
 )
 _STAGE_VALUE = re.compile(r"(?:№\s*)?0*([1-9][0-9]*)[.]?")
 _STAGE_CONTINUATION = re.compile(r"^(?:[,;/—–-]|и\s+|по\s+|до\s+)\s*(?:№\s*)?[0-9]", re.I)
+_CONTRACT_TYPE = r"(?:подряда|поставки|аренды|купли-продажи|оказания\s+услуг|выполнения\s+работ)"
+_CONTRACT_MARKER = r"(?:№\s*|N[eoо°º]\.?\s+)"
 _CONTRACT = re.compile(
-    rf"^(?:(?:по\s+|основание\s*:?\s*)?договор(?:у)?|контракт)(?=\s|[:№])"
-    rf"\s*:?\s*(?:№\s*|N[eoо°º]\s+(?=[\w/-]*[0-9]))?({_CONTRACT_ID})(?=$|[\s,.;|])",
+    rf"^(?:(?:по\s+|основание\s*:?\s*)?договор(?:у)?|контракт)(?=\s|[:№])\s*:?\s*"
+    rf"(?:(?:{_CONTRACT_TYPE}\s+)?{_CONTRACT_MARKER}|(?=[\w/-]*[0-9]))"
+    rf"({_CONTRACT_ID})(?=$|[\s,.;|])",
     re.I,
 )
 _BASIS = re.compile(r"^основание\s*:?\s*([0-9]+(?:/[0-9]+){2}-[0-9]+)$", re.I)
@@ -426,11 +429,24 @@ def _money(
             and o.locator.row == 1
             and _AMOUNT_CELL_HEADER.fullmatch(o.raw_text.strip())
         }
+        money_tables = {table for table, _ in headings}
+        populated_rows = {
+            (o.locator.table, o.locator.row)
+            for o in native.observations
+            if isinstance(o.locator, TableCellLocator)
+            and o.locator.table in money_tables
+            and o.locator.row > 1
+            and o.raw_text.strip()
+        }
+        # Without a printed total the only supported table layout is one
+        # populated charge row with one unambiguous ruble cell.
+        if len(populated_rows) != 1 or len(headings) != 1:
+            return None, []
         candidates = [
             o
             for o in native.observations
             if isinstance(o.locator, TableCellLocator)
-            and o.locator.row > 1
+            and (o.locator.table, o.locator.row) in populated_rows
             and (o.locator.table, o.locator.cell) in headings
             and o.amount is not None
         ]
