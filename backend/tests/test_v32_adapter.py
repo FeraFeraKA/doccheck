@@ -691,6 +691,7 @@ def test_xlsx_primary_formula_cache_conflict_requires_review(uploaded_files, tmp
 
 def test_unrelated_xlsx_heading_cannot_relabel_total():
     from decimal import Decimal
+
     from doccheck_backend.contracts.locators import SheetLocator
     from doccheck_backend.native_observations import Observation
     from doccheck_backend.v32_adapter import _source_groups
