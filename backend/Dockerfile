@@ -48,7 +48,8 @@ FROM runtime AS document-runtime
 USER root
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-       ca-certificates libgl1 libglib2.0-0t64 libportaudio2 tesseract-ocr-eng tesseract-ocr-rus \
+       ca-certificates libgl1 libglib2.0-0t64 libportaudio2 \
+       tesseract-ocr tesseract-ocr-eng tesseract-ocr-rus \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=document-build /opt/doccheck-v32 /opt/doccheck-v32
 ENV PATH="/opt/doccheck-v32/bin:$PATH" PYTHONPATH=/app \
