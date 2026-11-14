@@ -711,3 +711,53 @@ def test_unrelated_xlsx_heading_cannot_relabel_total():
         [observations[2]],
         [observations[0]],
     )
+
+def test_model_pixel_pages_cannot_reuse_pdf_text_overlay_as_evidence(
+    uploaded_files, tmp_path, monkeypatch
+):
+    from bench.e2e_v32_20261114 import run as v32
+
+    from doccheck_backend.contracts.locators import PageLocator
+    from doccheck_backend.native_observations import NativeDocument, Observation
+
+    calls = _stub_ollama(monkeypatch, "1172.70")
+
+    path = tmp_path / uploaded_files[1]["id"]
+    path.write_bytes(b"%PDF-1.4 input addressed by stubbed native reader")
+    _replace_primary(uploaded_files, tmp_path, "pdf")
+    overlay = NativeDocument(
+        observations=tuple(
+            Observation(text, PageLocator(kind="page", page=1, line=index))
+            for index, text in enumerate(
+                [
+                    "Акт оказанных услуг № ACT-31 от 28.02.2027",
+                    "Расходы отнесены к общехозяйственным расходам.",
+                    "Период оказания услуг: с 01.02.2027 по 28.02.2027.",
+                    "Договор № E2E-31.",
+                    "Итого стоимость услуг: 1 172,70 руб.",
+                ],
+                1,
+            )
+        )
+    )
+
+    def extract(entry, previous):
+        response = v32.runtime.api("/api/chat", {"messages": [{"content": "E2E-31"}]})
+        return {
+            "id": entry["id"],
+            "path": entry["path"],
+            "error": None,
+            "input_kind": "scan",
+            "raster_pages": (1,),
+            "prediction": json.loads(response["message"]["content"]),
+        }
+
+    monkeypatch.setattr(v32, "extract_primary", extract)
+    monkeypatch.setattr("doccheck_backend.v32_adapter.read_native_document", lambda *_: overlay)
+
+    result = process(StoredRun(uuid4(), None, uploaded_files), tmp_path).result
+
+    assert calls == ["/api/tags", "/api/chat"]
+    assert result.documents[1].decision.state == "needs_review"
+    assert result.rows[0].observed_evidence_sum is None
+    assert all(item.document_id != uploaded_files[1]["id"] for item in result.evidence)
