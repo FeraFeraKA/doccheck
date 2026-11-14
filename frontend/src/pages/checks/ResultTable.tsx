@@ -67,6 +67,7 @@ export function ResultTable({
           </tr></thead>
           <tbody>{rows.map((row) => {
             const selected = row.id === selectedId;
+            const sourceActive = row.id === activeSourceRowId;
             const isExpanded = expanded.has(row.id);
             const detailsId = `details-${row.id}`;
             const components = row.calculation?.components ?? [];
@@ -80,11 +81,10 @@ export function ResultTable({
               ...components.flatMap((component) => evidenceFields.flatMap(([field]) => component[field] ?? [])),
             ]);
             const issueSources = [...new Set(issue?.evidence_refs)].filter((id) => !rowEvidence.has(id));
-            const listedSources = new Set([...rowEvidence, ...issueSources]);
-            const reasonSources = [...new Set([
-              ...row.reasons.flatMap((reason) => reason.evidence_refs),
-              ...row.completeness.evidence_refs,
-            ])].filter((id) => !listedSources.has(id));
+            const completenessSources = [...new Set(row.completeness.evidence_refs)];
+            const showCompleteness = completenessSources.length > 0 ||
+              (!row.reasons.some(({ message }) => message === row.completeness.reason) &&
+                (row.reasons.length > 0 || rowExplanation(row) !== row.completeness.reason));
             const reportSource = row.reported_evidence_refs.find((id) => {
               const item = evidenceById.get(id);
               return item && documentsById.has(item.document_id);
@@ -142,16 +142,33 @@ export function ResultTable({
                   <div id={detailsId} role="region" aria-label={`Подробности: ${row.label}`} className="indicator-details">
                     {row.calculation?.formula && <p>{row.calculation.formula}</p>}
                     <p><strong>{statusLabels[row.status]}.</strong>{' '}
-                      {[...messages].join(' ')}
+                      {row.reasons.length === 0 && rowExplanation(row)}
                     </p>
+                    {row.reasons.map((reason, index) => {
+                      const sources = [...new Set(reason.evidence_refs)];
+                      return <div className="indicator-issue" key={`${reason.code}:${index}`}>
+                        <p>{reason.message}</p>
+                        {sources.length > 0 && <SourceReferences
+                          ids={sources} label={`Источники причины: ${reason.message}`} prefix="Источник"
+                          rowId={row.id} selected={sourceActive} selectedEvidenceId={selectedEvidenceId}
+                          evidenceById={evidenceById} documentsById={documentsById}
+                          formatAddress={formatAddress} onSelectSource={onSelectSource} />}
+                      </div>;
+                    })}
+                    {showCompleteness && <div className="indicator-issue">
+                      <p>Полнота: {row.completeness.reason}</p>
+                      {completenessSources.length > 0 && <SourceReferences
+                        ids={completenessSources} label="Источники основания полноты" prefix="Источник"
+                        rowId={row.id} selected={sourceActive} selectedEvidenceId={selectedEvidenceId}
+                        evidenceById={evidenceById} documentsById={documentsById}
+                        formatAddress={formatAddress} onSelectSource={onSelectSource} />}
+                    </div>}
+                    {row.reported_value === null && reportSources.length === 0 &&
+                      <p>Источник значения КФЗ не указан.</p>}
                     {reportSources.length > 0 && <SourceReferences
                       ids={reportSources} label="Источники значения КФЗ" prefix="КФЗ"
-                      rowId={row.id} selected={selected} selectedEvidenceId={selectedEvidenceId}
-                      evidenceById={evidenceById} documentsById={documentsById}
-                      formatAddress={formatAddress} onSelectSource={onSelectSource} />}
-                    {reasonSources.length > 0 && <SourceReferences
-                      ids={reasonSources} label="Источники оснований показателя" prefix="Основание"
-                      rowId={row.id} selected={selected} selectedEvidenceId={selectedEvidenceId}
+                      unverified={row.status === 'unverified' && row.reported_value === null}
+                      rowId={row.id} selected={sourceActive} selectedEvidenceId={selectedEvidenceId}
                       evidenceById={evidenceById} documentsById={documentsById}
                       formatAddress={formatAddress} onSelectSource={onSelectSource} />}
                     {issue && (!messages.has(issue.message) || issueSources.length > 0) && (
@@ -159,7 +176,7 @@ export function ResultTable({
                         {!messages.has(issue.message) && <p>{issue.message}</p>}
                         {issueSources.length > 0 && <SourceReferences
                           ids={issueSources} label="Источники замечания"
-                          rowId={row.id} selected={selected} selectedEvidenceId={selectedEvidenceId}
+                          rowId={row.id} selected={sourceActive} selectedEvidenceId={selectedEvidenceId}
                           evidenceById={evidenceById} documentsById={documentsById}
                           formatAddress={formatAddress} onSelectSource={onSelectSource} />}
                       </div>
@@ -184,7 +201,7 @@ export function ResultTable({
                                 const document = item && documentsById.get(item.document_id);
                                 return <li key={`${field}:${id}`}>
                                   {item && document ? <button
-                                    type="button" aria-pressed={selected && selectedEvidenceId === id}
+                                    type="button" aria-pressed={sourceActive && selectedEvidenceId === id}
                                     onClick={(event) => onSelectSource(row.id, id, event.currentTarget)}
                                   >
                                     <span>{role} · {document.name} · {formatAddress(item.locator)}</span>
@@ -216,6 +233,7 @@ interface SourceReferencesProps {
   ids: readonly string[];
   label: string;
   prefix?: string;
+  unverified?: boolean;
   rowId: string;
   selected: boolean;
   selectedEvidenceId?: string;
@@ -226,18 +244,19 @@ interface SourceReferencesProps {
 }
 
 function SourceReferences({
-  ids, label, prefix, rowId, selected, selectedEvidenceId, evidenceById, documentsById,
+  ids, label, prefix, unverified, rowId, selected, selectedEvidenceId, evidenceById, documentsById,
   formatAddress, onSelectSource,
 }: SourceReferencesProps) {
   return <ul className="indicator-addresses" aria-label={label}>
     {ids.map((id, index) => {
       const item = evidenceById.get(id);
       const document = item && documentsById.get(item.document_id);
-      const kind = prefix ? `${prefix}${ids.length > 1 ? ` ${index + 1}` : ''} · ` : '';
+      const name = unverified ? 'Непроверенное чтение' : prefix;
+      const kind = name ? `${name}${ids.length > 1 ? ` ${index + 1}` : ''} · ` : '';
       return <li key={id}>{item && document ? <button type="button"
         aria-pressed={selected && selectedEvidenceId === id}
         onClick={(event) => onSelectSource(rowId, id, event.currentTarget)}>
-        <span>{kind}{document.name} · {formatAddress(item.locator)}</span>
+        <span>{kind}{document.name} · {formatAddress(item.locator)}{unverified && ` · ${item.raw_value}`}</span>
         <span aria-hidden="true">›</span>
       </button> : <span>{kind}Адрес источника недоступен.</span>}</li>;
     })}

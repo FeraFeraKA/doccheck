@@ -147,6 +147,7 @@ export function useSourceWorkspace({
   const sources = [...new Map([...rowSources, ...documentSources].map((item) => [item.id, item])).values()];
   const selected = selection?.evidenceId === undefined ? undefined : evidenceById.get(selection.evidenceId);
   const row = selection?.row;
+  const unverifiedRows = result.rows.filter((item) => item.status === 'unverified' && item.reported_value === null);
   const selectedRow = selected && rowSources.some(({ id }) => id === selected.id) ? row : undefined;
   const status = selectedRow?.status ?? (selected && tonesByEvidenceId.get(selected.id));
   const tone: SourceTone | undefined = status === 'discrepancy' || status === 'unverified' || status === 'verified'
@@ -167,7 +168,7 @@ export function useSourceWorkspace({
   return {
     open, documentId, defaultDocumentId, evidenceId: selected?.id, rowId: open ? selectedRow?.id : undefined,
     openEvidence, openDocument, close, clear, returnFocusRoot, focusRequest, row,
-    selectDocument, selectEvidence, selected, documents, sources, storedRunId,
+    selectDocument, selectEvidence, selected, documents, sources, storedRunId, unverifiedRows,
     tone, highlights,
     scopeAddressId, reportPage, scopeOnly: selection?.scopeOnly ?? false,
   };
@@ -261,6 +262,16 @@ export function SourceWorkspace({ workspace }: { workspace: ReturnType<typeof us
   const showScopeAddress = scopeLabel && (workspace.scopeOnly || !workspace.sources.some(({ locator }) =>
     formatLocation(locator) === scopeLabel));
   const hasAddresses = workspace.sources.length > 0 || Boolean(showScopeAddress);
+  function unverifiedReading(source: Evidence): string | undefined {
+    const candidates = workspace.row ? [workspace.row] : workspace.unverifiedRows;
+    const row = candidates.find((item) => item.status === 'unverified' && item.reported_value === null
+      && item.reported_evidence_refs.includes(source.id));
+    if (!row) return;
+    const ids = [...new Set(row.reported_evidence_refs)];
+    const number = ids.length > 1 ? ` ${ids.indexOf(source.id) + 1}` : '';
+    return `Непроверенное чтение${number}`;
+  }
+  const selectedReading = workspace.selected && unverifiedReading(workspace.selected);
   const picker = hasAddresses && <div className="source-document-select source-evidence-select">
     {workspace.row && <button type="button" aria-label="Предыдущий источник" disabled={evidenceIndex <= 0}
       onClick={() => workspace.selectEvidence(workspace.sources[evidenceIndex - 1].id)}><PanelIcon name="previous" /></button>}
@@ -271,9 +282,13 @@ export function SourceWorkspace({ workspace }: { workspace: ReturnType<typeof us
       {showScopeAddress && <option value={workspace.scopeAddressId}>
         Строка КФЗ · {scopeLabel}
       </option>}
-      {workspace.sources.map(({ id, document_id: documentId, locator }) => <option key={id} value={id}>
-        {workspace.row && `${filenameById.get(documentId) ?? 'Документ'} · `}{formatLocation(locator)}
-      </option>)}
+      {workspace.sources.map((source) => {
+        const reading = unverifiedReading(source);
+        return <option key={source.id} value={source.id}>
+          {reading && `${reading} · `}
+          {workspace.row && `${filenameById.get(source.document_id) ?? 'Документ'} · `}{formatLocation(source.locator)}
+        </option>;
+      })}
     </select>
     {workspace.row && <button type="button" aria-label="Следующий источник" disabled={evidenceIndex >= workspace.sources.length - 1}
       onClick={() => workspace.selectEvidence(workspace.sources[evidenceIndex + 1].id)}><PanelIcon name="next" /></button>}
@@ -282,6 +297,9 @@ export function SourceWorkspace({ workspace }: { workspace: ReturnType<typeof us
   function preview(active: boolean): ReactNode {
     if (!selectedDocument) return <p className="source-workspace-notice">Документы комплекта отсутствуют.</p>;
     return <>
+      {selectedReading && workspace.selected && <p className="source-workspace-notice" aria-live="polite">
+        <strong>{selectedReading}:</strong> {workspace.selected.raw_value}
+      </p>}
       {selectedDocument.decision.state !== 'include' && <p className="source-workspace-notice" role="status">
         {selectedDocument.decision.message}
       </p>}
