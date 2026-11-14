@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import './source-drawer.css';
 import { formatLocation } from './reviewResult';
 import {
@@ -185,6 +185,27 @@ function SourceImage({ url, name, page, box, download, fragment, retry }: {
   const [zoom, setZoom] = useState(100);
   const [highlight, setHighlight] = useState(true);
   const mark = useRef<HTMLSpanElement>(null);
+  const viewport = useRef<HTMLDivElement>(null);
+  const centered = useRef<string>(undefined);
+  const boxKey = box?.join(',');
+
+  function centerFragment() {
+    const container = viewport.current;
+    const target = mark.current;
+    if (!container || !target || typeof container.scrollBy !== 'function') return;
+    const bounds = container.getBoundingClientRect();
+    const fragmentBounds = target.getBoundingClientRect();
+    container.scrollBy({
+      top: fragmentBounds.top + fragmentBounds.height / 2 - bounds.top - container.clientHeight / 2,
+      left: fragmentBounds.left + fragmentBounds.width / 2 - bounds.left - container.clientWidth / 2,
+    });
+  }
+
+  useLayoutEffect(() => {
+    if (state !== 'ready' || !boxKey || !highlight || centered.current === boxKey) return;
+    centered.current = boxKey;
+    centerFragment();
+  }, [state, boxKey, highlight]);
 
   return <>
     <div className="source-viewer-toolbar">
@@ -200,7 +221,7 @@ function SourceImage({ url, name, page, box, download, fragment, retry }: {
       {download}
     </div>
     {state === 'error' ? <div className="source-viewer-placeholder"><p role="alert">Предпросмотр изображения недоступен.</p></div>
-      : <div className="source-viewer-viewport" role="region" tabIndex={0} aria-label={`Просмотр документа: ${name}`}>
+      : <div ref={viewport} className="source-viewer-viewport" role="region" tabIndex={0} aria-label={`Просмотр документа: ${name}`}>
       {state === 'loading' && <p role="status">Загрузка изображения…</p>}
       <div className="source-viewer-sheet" style={{ width: `${zoom}%` }}>
         <img
@@ -225,7 +246,7 @@ function SourceImage({ url, name, page, box, download, fragment, retry }: {
     </div>}
     {(fragment || retry || (box && state === 'ready')) && <div className="source-viewer-footer">
       {fragment}
-      {box && state === 'ready' && <button type="button" disabled={!highlight} onClick={() => mark.current?.scrollIntoView({ block: 'center', inline: 'center' })}>К фрагменту</button>}
+      {box && state === 'ready' && <button type="button" disabled={!highlight} onClick={centerFragment}>К фрагменту</button>}
       {retry}
     </div>}
   </>;
