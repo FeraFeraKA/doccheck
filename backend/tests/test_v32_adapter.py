@@ -815,6 +815,7 @@ def test_model_pixel_pages_cannot_reuse_pdf_text_overlay_as_evidence(
     uploaded_files, tmp_path, monkeypatch
 ):
     from bench.e2e_v32_20261114 import run as v32
+
     from doccheck_backend.contracts.locators import PageLocator
     from doccheck_backend.native_observations import NativeDocument, Observation
 

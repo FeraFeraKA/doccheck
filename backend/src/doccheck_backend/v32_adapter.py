@@ -588,7 +588,9 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
                             file.format != "pdf"
                             or (not native.issues and not extracted.get("raster_pages"))
                         )
-                        observations_by_id[file.id] = native.observations if addressed_native else ()
+                        observations_by_id[file.id] = (
+                            native.observations if addressed_native else ()
+                        )
                         if not extracted.get("error"):
                             # The configured model schema supplies no counterparty proof.
                             extracted["prediction"].pop("counterparty", None)
