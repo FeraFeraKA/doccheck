@@ -15,6 +15,7 @@ from tempfile import TemporaryDirectory
 
 from doccheck_backend.contracts.locators import PageLocator
 from doccheck_backend.native_observations import NativeDocument, NativeIssue, Observation
+from doccheck_backend.ocr_table import PixelBox, read_table_amounts
 
 _MAX_PAGES = 25
 _MAX_RENDER_PIXELS = 12_000_000
@@ -422,6 +423,53 @@ def _read_windows_page(
             image, readings, first.with_name("context.png"), page, helper, executable
         )
     return (*readings, *contexts)
+
+
+def read_scan_amounts(
+    path: Path, row: PageLocator, observations: tuple[Observation, ...]
+) -> dict[str, Observation]:
+    """Use the configured Windows reader to corroborate original table-cell values."""
+    if (
+        os.name != "nt"
+        or os.environ.get("DOCCHECK_OCR_PROVIDER") != "doccheck_backend.local_ocr:read_windows"
+    ):
+        return {}
+    import pypdfium2
+    from PIL import Image, ImageOps
+
+    executable = Path(os.environ["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/powershell.exe"
+    helper = Path(__file__).with_name("windows_ocr.ps1")
+    if not executable.is_file() or not helper.is_file():
+        return {}
+    try:
+        with pypdfium2.PdfDocument(path) as pdf:
+            if not 1 <= row.page <= len(pdf):
+                return {}
+            with closing(pdf[row.page - 1]) as page:
+                width, height = page.get_size()
+                scale = min(7.0, 3600 / max(width, height))
+                with closing(page.render(scale=scale)) as bitmap:
+                    image = bitmap.to_pil().convert("L")
+        with TemporaryDirectory(prefix="doccheck-grid-") as directory:
+            target = Path(directory) / "cell.png"
+
+            def read(box: PixelBox, factor: int) -> tuple[Observation, ...]:
+                isolated = image.crop(box)
+                isolate = isolated.resize(
+                    (isolated.width * factor, isolated.height * factor), Image.Resampling.LANCZOS
+                )
+                isolate.thumbnail((3456, 3456))
+                ImageOps.expand(isolate, border=22, fill=255).save(target)
+                return _windows_frame(target, row.page, helper, executable)
+
+            located = tuple(
+                item
+                for item in observations
+                if isinstance(item.locator, PageLocator) and item.locator.page == row.page
+            )
+            return read_table_amounts(image, row, located, read)
+    except (OSError, ValueError, subprocess.SubprocessError, pypdfium2.PdfiumError):
+        return {}
 
 
 def read_windows(path: Path, file_format: str) -> NativeDocument:

@@ -34,7 +34,7 @@ from doccheck_backend.contracts.result import (
     Summary,
     Versions,
 )
-from doccheck_backend.local_ocr import read_scan
+from doccheck_backend.local_ocr import read_scan, read_scan_amounts
 from doccheck_backend.native_observations import Observation
 from doccheck_backend.native_reader import read_native_document
 from doccheck_backend.ocr_report import parse_scan_report
@@ -478,9 +478,21 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
                     period_end=parsed_scan.end.isoformat(),
                     report_row_locator=parsed_scan.row,
                 )
-                # The scan only establishes scope. A nearby OCR number cannot
-                # identify a monetary column in a multi-level table.
-                report_evidence = {}
+                report_evidence = {
+                    category: Evidence(
+                        id=f"{report.id}-{category}-reported",
+                        document_id=report.id,
+                        kind="reported_value",
+                        raw_value=item.raw_text,
+                        normalized_value=_money(item.amount),
+                        unit="RUB",
+                        method="ocr_table_grid",
+                        locator=item.locator,
+                    )
+                    for category, item in read_scan_amounts(
+                        report_path, parsed_scan.row, scan.observations
+                    ).items()
+                }
                 scan_scope_evidence = [
                     Evidence(
                         id=f"{report.id}-ocr-cutoff",
