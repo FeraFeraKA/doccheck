@@ -17,10 +17,10 @@ from zipfile import ZipFile
 from openpyxl.styles.numbers import BUILTIN_FORMATS, is_date_format, is_timedelta_format
 
 try:
-    from .articles import report_category
+    from .articles import EXPENSE_ARTICLES, report_category
     from .decision_rules import parse_amount, parse_date
 except ImportError:
-    from articles import report_category
+    from articles import EXPENSE_ARTICLES, report_category
     from decision_rules import parse_amount, parse_date
 
 NS = {"x": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
@@ -144,7 +144,10 @@ def read_native_report(path):
                                       "reported_amount": f"КФЗ!C{row}"}})
     if not rows or total is None:
         raise ValueError("Missing report rows or total")
-    row_sum = sum((parse_amount(row["reported_amount"]) for row in rows), Decimal("0"))
+    row_sum = sum(
+        (parse_amount(row["reported_amount"]) for row in rows if row["category"] in EXPENSE_ARTICLES),
+        Decimal("0"),
+    )
     return {"contract_number": contract.group(1), "period_start": period.group(1), "period_end": period.group(2),
             "rows": rows, "total": total, "total_agrees_with_rows": row_sum == parse_amount(total["amount"]),
             "source": {"path": str(path), "sha256": hashlib.sha256(raw).hexdigest(), "sheet": "КФЗ",

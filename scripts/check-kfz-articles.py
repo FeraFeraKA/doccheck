@@ -1,4 +1,4 @@
-"""Exercise articles 0400–0700 through the upload API and the local v3.2 worker."""
+"""Exercise the added expense articles through the upload API and the v3.2 worker."""
 
 import argparse
 import csv
@@ -22,6 +22,10 @@ from render import raster, scan_pdf, setup_font
 
 # Fixture labels and expected assignments are independent of the production catalogue.
 PURPOSES = {
+    "0100": (
+        "Материальные затраты",
+        "К учету приняты материальные затраты на сырье для работ.",
+    ),
     "0400": (
         "Подготовка и освоение производства",
         "Назначение: пусконаладка новой производственной линии.",
@@ -37,6 +41,30 @@ PURPOSES = {
     "0700": (
         "Специальные затраты",
         "Учтены специальные затраты на программу разовых испытаний.",
+    ),
+    "1000": (
+        "Затраты на командировки",
+        "Командировочные расходы по выполненным работам.",
+    ),
+    "1100": (
+        "Прочие прямые затраты",
+        "К учету приняты прочие прямые затраты на выполнение работ.",
+    ),
+    "1200": (
+        "Работы и услуги сторонних организаций",
+        "Подтверждены затраты по работам сторонних организаций.",
+    ),
+    "1400": (
+        "Коммерческие (внепроизводственные) затраты",
+        "Учтены коммерческие (внепроизводственные) затраты.",
+    ),
+    "1500": (
+        "Проценты по кредитам",
+        "Начислены проценты по кредитам по договору.",
+    ),
+    "1600": (
+        "Административно-управленческие расходы",
+        "Подтверждены административно-управленческие расходы.",
     ),
 }
 OLD_LABELS = {
@@ -119,7 +147,7 @@ def report_xlsx(path: Path, contract: str, reported: dict[str, int], seed: int) 
 
 def report_scan(path: Path, contract: str, reported: dict[str, int]) -> None:
     data = BytesIO()
-    pdf = canvas.Canvas(data, invariant=1, pagesize=(595.28, 841.89))
+    pdf = canvas.Canvas(data, invariant=1, pagesize=(680, 841.89))
     pdf.setFont("Synthetic", 15)
     pdf.drawString(45, 795, "Карточка учета фактических затрат")
     pdf.drawString(45, 755, f"Договор № {contract}")
@@ -127,12 +155,12 @@ def report_scan(path: Path, contract: str, reported: dict[str, int]) -> None:
     pdf.setFont("Synthetic", 12)
     for index, (code, cents) in enumerate(reported.items()):
         label = OLD_LABELS[code] if code in OLD_LABELS else f"{code} {PURPOSES[code][0]}"
-        y = 654 - index * 38
+        y = 654 - index * 35
         pdf.drawString(45, y, label)
-        pdf.drawRightString(550, y, money(cents).replace(".", ","))
-    y = 654 - len(reported) * 38
+        pdf.drawRightString(630, y, money(cents).replace(".", ","))
+    y = 654 - len(reported) * 35
     pdf.drawString(45, y, "Итого")
-    pdf.drawRightString(550, y, money(sum(reported.values())).replace(".", ","))
+    pdf.drawRightString(630, y, money(sum(reported.values())).replace(".", ","))
     pdf.save()
     scan_pdf(raster(data.getvalue()), path)
 
@@ -146,35 +174,47 @@ def report_ruled_scan(path: Path, contract: str, reported: dict[str, int]) -> No
     if isinstance(font_file, bytes):
         font_file = font_file.decode()
     regular = ImageFont.truetype(font_file, 25)
+    heading = ImageFont.truetype(font_file, 22)
     title = ImageFont.truetype(font_file, 37)
-    image = Image.new("RGB", (3600, 1250), "white")
-    draw = ImageDraw.Draw(image)
-    draw.text((120, 95), f"Договор № {contract}", fill="black", font=title)
-    draw.text((120, 180), "Отчетный период: 01.02.2026 - 28.02.2026", fill="black", font=title)
-    xs = [80, 350, 685, 1020, 1350, 1660, 1960, 2240, 2585, 2905, 3225, 3510]
-    ys = [290, 480, 620, 755, 890]
-    for y in ys:
-        draw.line((xs[0], y, xs[-1], y), fill="black", width=5)
-    for index, x in enumerate(xs):
-        draw.line((x, ys[1] if index == 4 else ys[0], x, ys[-1]), fill="black", width=5)
-    columns = ["0200", "0300", "0400", "0401", "0500", "0600", "0700", "0800", "0900", None]
+    columns = [*sorted(reported), None]
+    columns.insert(columns.index("0400") + 1, "0401")
     labels = [
+        ("Материальные", "затраты"),
         ("Оплата труда", "0200"),
         ("Страховые взносы", "0300"),
-        ("Подготовка и освоение производства", "0400"),
+        ("Подготовка и", "освоение", "производства", "0400"),
         (),
         ("Специальная", "технологическая", "оснастка 0500"),
         ("Специальное", "оборудование для", "научных работ 0600"),
         ("Специальные затраты", "0700"),
         ("Общепроизводственные", "затраты 0800"),
         ("Общехозяйственные", "затраты 0900"),
+        ("Затраты на", "командировки", "1000"),
+        ("Прочие прямые", "затраты", "1100"),
+        ("Работы и услуги", "сторонних", "организаций", "1200"),
+        ("Коммерческие", "затраты", "1400"),
+        ("Проценты", "по кредитам", "1500"),
+        ("Административно-", "управленческие", "расходы 1600"),
         ("Итого",),
     ]
+    xs = [80, 330]
+    for label in labels:
+        width = max((heading.getlength(line) for line in label), default=0)
+        xs.append(xs[-1] + max(165, round(width + 32)))
+    image = Image.new("RGB", (xs[-1] + 90, 1250), "white")
+    draw = ImageDraw.Draw(image)
+    draw.text((120, 95), f"Договор № {contract}", fill="black", font=title)
+    draw.text((120, 180), "Отчетный период: 01.02.2026 - 28.02.2026", fill="black", font=title)
+    ys = [290, 480, 620, 755, 890]
+    for y in ys:
+        draw.line((xs[0], y, xs[-1], y), fill="black", width=5)
+    for index, x in enumerate(xs):
+        draw.line((x, ys[1] if index == 5 else ys[0], x, ys[-1]), fill="black", width=5)
     for index, label in enumerate(labels, 1):
         for line, value in enumerate(label):
-            draw.text((xs[index] + 13, ys[0] + 20 + line * 39), value, fill="black", font=regular)
-    draw.text((xs[3] + 13, ys[1] + 38), "Всего", fill="black", font=regular)
-    draw.text((xs[4] + 13, ys[1] + 38), "Пусковые затраты", fill="black", font=regular)
+            draw.text((xs[index] + 13, ys[0] + 20 + line * 39), value, fill="black", font=heading)
+    draw.text((xs[4] + 13, ys[1] + 38), "Всего", fill="black", font=regular)
+    draw.text((xs[5] + 13, ys[1] + 38), "Пусковые", fill="black", font=regular)
     for row, stage in ((2, 2), (3, 3)):
         draw.text((xs[0] + 15, ys[row] + 40), f"{stage} этап, 2026", fill="black", font=regular)
         for index, code in enumerate(columns, 1):
@@ -210,13 +250,13 @@ def package(folder: Path, seed: int):
         for variant in range(2):
             # Each article has coded and text-only evidence, with formats rotating per package.
             ext = ("docx", "xlsx", "pdf", "xlsx")[(seed + index + 2 * variant) % 4]
-            if variant == 0 and index == seed % 4:
+            if variant == 0 and index == seed % len(codes):
                 ext = "png"  # One scan per package exercises the real LoRA reader.
             name = f"source-{rng.randrange(100000, 999999)}.{ext}"
             path = folder / name
             purpose = f"Код статьи: {code}" if variant == 0 else PURPOSES[code][1]
             amount = rng.randrange(10001, 95000)
-            source_file(path, f"{seed}-{index + 1}{variant + 1}", contract, purpose, amount)
+            source_file(path, f"{seed}-{index + 1:02d}-{variant + 1}", contract, purpose, amount)
             support.append(path)
             items[name] = amount
         subtotal = sum(items.values())
@@ -242,23 +282,29 @@ def package(folder: Path, seed: int):
             "Код статьи: 0500. Назначение: специальное оборудование для научных работ.",
             "12.02.2026",
         ),
-        "two-codes.docx": (contract, "Код статьи: 0400 и 0700", "12.02.2026"),
+        "two-codes.docx": (contract, "Код статьи: 0400 (основная); 0700 (дополнительная)", "12.02.2026"),
+        "foreign-code.docx": (
+            contract,
+            "Код статьи: 0600 — по другому договору.\nНазначение: расходы по проекту.",
+            "12.02.2026",
+        ),
         "unclear-purpose.docx": (contract, "Назначение: расходы по проекту.", "12.02.2026"),
     }
     for index, (name, (contract_id, purpose, date)) in enumerate(excluded.items()):
         path = folder / name
-        source_file(path, f"{seed}-9{index}", contract_id, purpose, 999900 + index, date=date)
+        source_file(path, f"{seed}-98-{index + 1}", contract_id, purpose, 999900 + index, date=date)
         support.append(path)
     path = folder / "mixed-items.xlsx"
     workbook = Workbook()
     sheet = workbook.active
+    sheet.append([f"Акт № {seed}-99"])
     sheet.append([f"Договор № {contract}"])
     sheet.append(["Дата: 12.02.2026"])
     sheet.append(["Код статьи", "Операция", "Сумма, руб."])
     sheet.append([400, "Первый вид работ", Decimal("999.90")])
     sheet.append([])
     sheet.append([700 if seed % 2 else None, "Второй вид работ", Decimal("999.11")])
-    sheet.append(["Итого", None, "=SUM(C4:C6)"])
+    sheet.append(["Итого", None, "=SUM(C5:C7)"])
     workbook.save(path)
     support.append(path)
     rng.shuffle(support)
@@ -293,7 +339,8 @@ def verify(output: Path, expected: dict, seed: int) -> list[dict]:
     for name in ("different-contract.docx", "outside-period.docx"):
         assert by_name[name]["decision"]["state"] == "exclude", by_name[name]
     for name in (
-        "conflicting-purpose.docx", "two-codes.docx", "unclear-purpose.docx", "mixed-items.xlsx",
+        "conflicting-purpose.docx", "two-codes.docx", "foreign-code.docx",
+        "unclear-purpose.docx", "mixed-items.xlsx",
     ):
         assert by_name[name]["decision"]["state"] == "needs_review", by_name[name]
     evidence = {item["id"]: item for item in result["evidence"]}

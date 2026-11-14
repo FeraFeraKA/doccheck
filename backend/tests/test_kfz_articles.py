@@ -38,6 +38,51 @@ from doccheck_backend.reconciliation_comparison import compare_observed_rubles
         ("Код статьи: 0400 (или 0700)", None),
         ("Код статьи: 0400; 0700", None),
         ("Код статьи: 0400/0700", None),
+        ("Код статьи: 0400 (основная), 0700 (дополнительная)", None),
+        ("Код статьи: 0400 (основная); 0700 (дополнительная)", None),
+        ("Код статьи: 0400 (основная),\n0700 (дополнительная)", None),
+        ("Коды статей: № 0400 (осн.);\n0700 (дополнительная)", None),
+        ("Код статьи: 0400,\n0400,\n0400,\n0700", None),
+        ("Код статьи: 0400 (основная), 700 (дополнительная)", None),
+        ("Код статьи: 0400 (основная)\nДополнительная: 0700", None),
+        ("Код статьи: 0400 (основная)\nКод дополнительной статьи: 0700", None),
+        ("Код статьи: 0400 (основная), 0400 (повтор)", "production_setup"),
+        ("Код статьи: 0600 — по другому договору.\nНазначение: расходы по проекту.", None),
+        ("Код статьи: 0600; по другому контракту.", None),
+        ("Код статьи: 0600\n— по другому контракту.", None),
+        ("Код статьи: 0600.\nПо другому договору.", None),
+        ("Код статьи: 0600. По другому договору.", None),
+        ("Код статьи: 0600 (справочно)", None),
+        ("Код статьи: 0600 (шаблон)", None),
+        ("Код статьи: 0600 — для планового периода", None),
+        ("Договор № OUR-123\nКод статьи: 0600 (по договору № ДРУГОЙ-777)", None),
+        ("Договор: OUR-123\nКод статьи: 0600 (для контракта ДРУГОЙ-777)", None),
+        ("Договор № OUR-123\nКод статьи: 0600 (по договору № OUR-123)", "research_equipment"),
+        (
+            "Код статьи: 0600\nНазначение: специальное оборудование для научных работ по договору.",
+            "research_equipment",
+        ),
+        (
+            "Код статьи: 0600 — для другого договора.\nСпециальные затраты на испытания.",
+            "special_costs",
+        ),
+        ("Код статьи: 0400\nНазначение: затраты на оплату труда.", None),
+        ("Материальные затраты на выполнение работ.", "materials"),
+        ("Договор № OUR-123\nНазначение: материальные затраты по контракту № OTHER-123.", None),
+        (
+            "Договор № OUR-123\nНазначение: материальные затраты по контракту № OUR-123.",
+            "materials",
+        ),
+        ("Назначение: специальные и материальные затраты.", None),
+        ("Назначение: прочие прямые и специальные затраты.", None),
+        ("Командировочные расходы по выполненным работам.", "travel"),
+        ("Код статьи: 1100 — прочие прямые затраты.", "other_direct_costs"),
+        ("Затраты по работам сторонних организаций.", "external_services"),
+        ("Коммерческие (внепроизводственные) затраты.", "commercial_costs"),
+        ("Начислены проценты по кредитам.", "loan_interest"),
+        ("Административно-управленческие расходы.", "management_costs"),
+        ("Код статьи: 0900 — административно-управленческие расходы.", None),
+        ("Код статьи: 1300", None),
         ("Код статьи: 0600\nТехническое обслуживание административной сети.", None),
         ("Код статьи: 0600\nНазначение: техническое обслуживание сети бухгалтерии.", None),
         ("Код статьи: 0600 Назначение: поверка измерительных приборов.", None),
@@ -74,9 +119,26 @@ def test_classifies_purpose_and_detects_conflicts(text, category):
         ("", "500", "special_tooling"),
         ("Специальные затраты", "0700", "special_costs"),
         ("Специальные затраты", "0600", None),
+        ("Специальная технологическая оснастка <1>", "0600", None),
         ("Подготовка и освоение производства", "0400 / 0700", None),
         ("0400 или 0700", "", None),
         ("0400 — Подготовка и освоение производства, всего", "", "production_setup"),
+        ("Материальные затраты", "", "materials"),
+        ("Командировочные расходы", "1000", "travel"),
+        ("Прочие прямые затраты", "1100", "other_direct_costs"),
+        ("Прочие расходы", "", "other"),
+        ("Прочие расходы", "1100", None),
+        ("", "1200", "external_services"),
+        ("Коммерческие затраты", "1400", "commercial_costs"),
+        ("Проценты по кредитам", "1500", "loan_interest"),
+        ("Административно-управленческие расходы", "1600", "management_costs"),
+        ("Производственная себестоимость", "1300", "production_cost"),
+        ("Пусковые затраты", "0401", "0401"),
+        (
+            "Себестоимость продукции (сумма строк 1300, 1400, 1500 <7>, 1600)",
+            "1700",
+            "product_cost",
+        ),
     ],
 )
 def test_resolves_report_labels_and_numeric_codes(label, code, category):
@@ -109,6 +171,39 @@ def test_scanned_column_requires_a_code_consistent_with_the_label(monkeypatch):
         "total": 2,
     }
     assert checked == [(26, "0600")]
+
+
+def test_scanned_details_keep_separate_columns(monkeypatch):
+    image = Image.new("L", (1000, 150), 255)
+    ink = np.zeros((150, 1000), dtype=bool)
+    xs, ys = [20, 210, 400, 585, 774, 970], [10, 100]
+    for col in xs:
+        ink[:, col] = True
+    texts = {
+        26: "Материальные затраты",
+        216: "Прочие прямые затраты 1100",
+        406: "0402 Затраты на подготовку и освоение новых видов продукции",
+        591: "Себестоимость продукции (1700)",
+        780: "Итого",
+    }
+    monkeypatch.setattr(scanned_report, "recognize_crop", lambda _, box, **kwargs: texts[box[0]])
+    assert scanned_report._headers(image, ink, xs, ys) == {
+        "0100": 0,
+        "1100": 1,
+        "0402": 2,
+        "1700": 3,
+        "total": 4,
+    }
+
+
+@pytest.mark.parametrize(("second_read", "expected"), [("1 336,18", "1336.18"), ("1336,19", None)])
+def test_ruled_amount_accepts_decimal_spacing_only_when_readings_agree(
+    monkeypatch, second_read, expected
+):
+    readings = iter(("1 336, 18", second_read))
+    monkeypatch.setattr(scanned_report, "recognize_crop", lambda *args, **kwargs: next(readings))
+    _, amount = scanned_report._read_amount(Image.new("L", (100, 100)), (0, 0, 100, 100))
+    assert amount == (Decimal(expected) if expected is not None else None)
 
 
 def test_xlsx_code_and_total_require_the_same_sheet(tmp_path):
@@ -145,6 +240,9 @@ def test_xlsx_code_and_total_require_the_same_sheet(tmp_path):
         ("0700\n0400", None),
         ("0400 / 0700\n0600", None),
         ("0400 и 0700", None),
+        ("0400 (основная), 0700 (дополнительная)", None),
+        ("0400 (основная)\n0700 (дополнительная)", None),
+        ("0400 — для другого договора", None),
         ("0400", "production_setup"),
         ("0400\n0400", "production_setup"),
     ],
@@ -215,6 +313,34 @@ def test_common_total_cannot_be_attributed_to_first_code_in_a_table(tmp_path, se
     workbook.save(path)
     grounded = ground_document(uuid4(), "doc", path, "xlsx", "a" * 64)
     assert grounded.category is None
+
+
+@pytest.mark.parametrize("second_code", [None, "0400", "0700"])
+def test_code_for_first_table_cannot_cover_an_unallocated_second_table(tmp_path, second_code):
+    document = Document()
+    for paragraph in ("Договор № DEMO-47", "Дата: 12.02.2026", "Итого: 300,00 руб."):
+        document.add_paragraph(paragraph)
+
+    def add_table(code, amount):
+        heading = ["Наименование", "Сумма, руб."]
+        values = ["Работы", amount]
+        if code is not None:
+            heading.insert(0, "Код статьи")
+            values.insert(0, code)
+        table = document.add_table(rows=2, cols=len(heading))
+        for row, texts in zip(table.rows, (heading, values), strict=True):
+            for cell, value in zip(row.cells, texts, strict=True):
+                cell.text = value
+
+    add_table("0400", "100,00")
+    add_table(second_code, "200,00")
+    path = tmp_path / "act.docx"
+    document.save(path)
+    grounded = ground_document(uuid4(), "doc", path, "docx", "a" * 64)
+    assert grounded.amount == "300.00"
+    assert grounded.category == ("production_setup" if second_code == "0400" else None)
+    article_tables = {item.locator.table for item in grounded.assertions if item.kind == "article"}
+    assert article_tables == ({1, 2} if second_code == "0400" else set())
 
 
 @pytest.mark.parametrize(

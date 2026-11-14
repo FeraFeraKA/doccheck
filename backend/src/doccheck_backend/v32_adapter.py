@@ -14,7 +14,7 @@ from tempfile import TemporaryDirectory
 from urllib.error import URLError
 from zipfile import BadZipFile, ZipFile
 
-from bench.e2e_v32_20261114.articles import ADDITIONAL_ARTICLES, report_category
+from bench.e2e_v32_20261114.articles import ADDITIONAL_ARTICLES, REPORT_ROWS, report_category
 
 from doccheck_backend.contracts.locators import PageLocator, SheetLocator
 from doccheck_backend.contracts.result import (
@@ -45,12 +45,11 @@ from doccheck_backend.run_worker import StoredRun
 _MODEL_DIGEST = "d8b0f5e9760cd1682034f292d7ef72ec46f432149be0df7574bf2d6e92e38c04"
 _VERSION = "e2e-v32-20261114"
 _ARTICLES = {
+    **REPORT_ROWS,
     "payroll": ("0200", "Оплата труда"),
     "insurance": ("0300", "Страховые взносы"),
-    **ADDITIONAL_ARTICLES,
     "production_overhead": ("0800", "Общепроизводственные расходы"),
     "general_admin": ("0900", "Общехозяйственные расходы"),
-    "other": (None, "Прочие расходы"),
 }
 _CONTRACT = re.compile(r"^Договор\s*(?:№|:)\s*(\S+?)\.?$", re.IGNORECASE)
 _XLSX_SCOPE = re.compile(r"^Проект:\s*(\S+)\s*\|\s*(Период:\s*.+)$", re.IGNORECASE)
@@ -243,11 +242,11 @@ def _read_pdf_report(
     evidence = {}
     for item in observations:
         text = item.raw_text.strip()
-        label, _, _ = text.partition(":")
+        label, colon, raw_amount = text.rpartition(":")
         category = report_category(label)
         if category not in _ARTICLES or not isinstance(item.locator, PageLocator):
             continue
-        amount = _PDF_MONEY.fullmatch(text[len(label) :])
+        amount = _PDF_MONEY.fullmatch(colon + raw_amount)
         if amount is None or category in evidence:
             return None
         value = decision_rules.parse_amount(amount[1])
@@ -373,7 +372,9 @@ def _extended_source_group(
             for item in observations
             if isinstance(item.locator, SheetLocator) and item.locator.sheet == total.locator.sheet
         )
-    category, articles = read_source_article(observations)
+    contracts = {value for item in observations if (value := _contract(item.raw_text))}
+    contract = next(iter(contracts)) if len(contracts) == 1 else None
+    category, articles = read_source_article(observations, contract_number=contract)
     return category, articles, total, observations
 
 

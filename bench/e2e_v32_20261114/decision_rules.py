@@ -14,7 +14,7 @@ import hashlib
 import re
 import unicodedata
 
-from .articles import ARTICLE_CODES
+from .articles import ARTICLE_CODES, REPORT_ROWS
 from .document_identity import literal_id, validate_number_evidence
 
 
@@ -284,7 +284,8 @@ def reconcile(documents, report_rows, contract_number, period_start, period_end,
 
     rows = []
     for report_row in report_rows:
-        category = normalize_category(report_row.get("category", report_row.get("article")))
+        label = report_row.get("category", report_row.get("article"))
+        category = label if isinstance(label, str) and label in REPORT_ROWS else normalize_category(label)
         reported = parse_amount(report_row.get("reported_amount", report_row.get("amount")))
         supporting = known.get(category, [])
         partial = sum((item["amount"] for item in supporting), Decimal("0"))

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Literal
 from uuid import UUID
 
-from bench.e2e_v32_20261114.articles import ADDITIONAL_ARTICLES, ARTICLE_CODES
+from bench.e2e_v32_20261114.articles import ARTICLE_CODES, EXPENSE_ARTICLES
 from openpyxl.utils.cell import coordinate_to_tuple
 
 from doccheck_backend.contracts.locators import Locator, PageLocator, SheetLocator, TableCellLocator
@@ -20,14 +20,6 @@ from doccheck_backend.native_reader import _text_amount, read_native_document
 from doccheck_backend.normalization import normalize_contract_number, normalize_document_date
 from doccheck_backend.page_ocr import page_locator, recognize_lines, render_pages
 
-ARTICLES = {
-    "payroll": ("0200", "Затраты на оплату труда"),
-    "insurance": ("0300", "Страховые взносы"),
-    **ADDITIONAL_ARTICLES,
-    "production_overhead": ("0800", "Общепроизводственные затраты"),
-    "general_admin": ("0900", "Общехозяйственные затраты"),
-    "other": (None, "Прочие расходы"),
-}
 _TITLES = {
     "расчетная ведомость по оплате труда": "payroll",
     "расчет страховых взносов": "insurance",
@@ -86,8 +78,11 @@ _BARE_FINAL = re.compile(
 )
 _AMOUNT_CELL_HEADER = re.compile(r"^(?:сумма|стоимость)\s*[,()]?\s*(?:руб\.?|₽)\)?$", re.I)
 _ARTICLE_CELL_HEADER = re.compile(
-    r"(?:код\s+статьи|статья)(?:\s+(?:затрат|расходов|калькуляции))?:?"
+    r"(?:код\s+(?:(?:основной|дополнительной)\s+)?статьи|коды\s+статей|статья|статьи)"
+    r"(?:\s+(?:затрат|расходов|калькуляции))?:?"
 )
+_ARTICLE_CELL_VALUE = re.compile(r"^[0-9]{3,4}\b")
+_UNSUPPORTED_ARTICLE = "Код статьи: 0000"
 _PAGE_RUB_HEADER = re.compile(
     r"^(?:наименование\s+)?(?:сумма|стоимость)\s*[,()]?\s*(?:руб\.?|₽)\)?$", re.I
 )
@@ -383,56 +378,64 @@ def _article_field_lines(observations: tuple[Observation, ...]) -> dict[int, str
         for key, indices in positions.items()
     }
     lines = {}
+    covered_rows = set()
+    row_code_indices = set()
 
-    def add_codes(indices: list[int]) -> bool:
-        # Keep codes at their original line indices so conflicting codes reach
-        # the classifier and accepted codes retain their source addresses.
-        found = False
-        for index in indices:
-            raw = observations[index].raw_text
-            if re.fullmatch(r"[0-9]{3,4}", raw):
-                lines[index] = f"Код статьи: {raw.zfill(4)}"
-                found = True
-            elif re.fullmatch(r"[0-9]{3,4}(?:\s*(?:[,;/–—-]|и|или|либо)\s*[0-9]{3,4})+", raw, re.I):
-                codes = dict.fromkeys(code.zfill(4) for code in re.findall(r"[0-9]{3,4}", raw))
-                lines[index] = "Код статьи: " + " и ".join(codes)
-                found = True
-        return found
+    def add_codes(indices: list[int]) -> None:
+        raw = " ".join(observations[index].raw_text for index in indices)
+        lines[indices[0]] = (
+            f"Код статьи: {raw}" if _ARTICLE_CELL_VALUE.match(raw) else _UNSUPPORTED_ARTICLE
+        )
+        # All lines of the value belong to one field and share its address.
+        for index in indices[1:]:
+            lines[index] = " "
+
+    rows: dict[str | int, dict[int, dict[int, list[int]]]] = {}
+    for (group, row, column), indices in positions.items():
+        rows.setdefault(group, {}).setdefault(row, {})[column] = indices
+
+    # Find the monetary rows in every table before using a row's article as
+    # evidence for the document total.
+    table_rows: dict[tuple[str | int, int], set[int]] = {}
+    for group, group_rows in rows.items():
+        header = None
+        amount_columns = set()
+        for row, values in sorted(group_rows.items()):
+            texts = {column: cell_text[group, row, column] for column in values}
+            columns = {c for c, text in texts.items() if _AMOUNT_CELL_HEADER.fullmatch(text)}
+            if columns:
+                header, amount_columns = (group, row), columns
+                table_rows[header] = set()
+            elif header is not None and any(_FINAL_CELL.fullmatch(text) for text in texts.values()):
+                header = None
+            elif header is not None and any(
+                observations[index].amount is not None
+                or _text_amount(observations[index].raw_text, rub_column=True)[0] is not None
+                for column in amount_columns & values.keys()
+                for index in values[column]
+            ):
+                table_rows[header].add(row)
 
     for (group, row, column), text in cell_text.items():
         if not _ARTICLE_CELL_HEADER.fullmatch(_norm(text)):
             continue
-        amount_columns = {
-            c
-            for (block, r, c), raw in cell_text.items()
-            if block == group and r == row and _AMOUNT_CELL_HEADER.fullmatch(raw)
-        }
-        if not amount_columns:
-            add_codes(positions.get((group, row, column + 1), []))
+        if (group, row) not in table_rows:
+            if indices := positions.get((group, row, column + 1)):
+                add_codes(indices)
             continue
-        rows = {}
-        for (block, r, c), indices in positions.items():
-            if block == group and r > row:
-                rows.setdefault(r, {})[c] = indices
-        for row_number, values in sorted(rows.items()):
-            if any(_FINAL_CELL.fullmatch(cell_text[group, row_number, c]) for c in values):
-                break
-            amounts = [
-                index
-                for c, indices in values.items()
-                if c in amount_columns
-                for index in indices
-                if (
-                    observations[index].amount is not None
-                    or _text_amount(observations[index].raw_text, rub_column=True)[0] is not None
-                )
-            ]
-            if not amounts:
-                continue
-            indices = values.get(column, [])
-            if not add_codes(indices):
-                # An unlabelled monetary row prevents assigning the document total.
-                lines[(indices or amounts)[0]] = "Код статьи: 0000"
+        for row_number in table_rows[group, row]:
+            if indices := positions.get((group, row_number, column)):
+                add_codes(indices)
+                row_code_indices.add(indices[0])
+                covered_rows.add((group, row_number))
+    if row_code_indices and any(
+        (group, row) not in covered_rows
+        for (group, _), monetary_rows in table_rows.items()
+        for row in monetary_rows
+    ):
+        # Row-level codes cannot justify the whole document's amount while
+        # another monetary row has no allocation.
+        lines[min(row_code_indices)] = _UNSUPPORTED_ARTICLE
     return lines
 
 
@@ -447,9 +450,11 @@ def _line_observations(observations: tuple[Observation, ...]) -> tuple[Observati
 
 
 def read_source_article(
-    observations: tuple[Observation, ...],
+    observations: tuple[Observation, ...], *, contract_number: str | None = None
 ) -> tuple[str | None, list[Observation]]:
-    category, evidence, _ = _classify_observations(_line_observations(observations))
+    category, evidence, _ = _classify_observations(
+        _line_observations(observations), contract_number=contract_number
+    )
     return category, evidence
 
 
@@ -457,8 +462,9 @@ def _classify_observations(
     observations: tuple[Observation, ...],
     *,
     template_article: tuple[str, Observation] | None = None,
+    contract_number: str | None = None,
 ) -> tuple[str | None, list[Observation], bool]:
-    from bench.e2e_v32_20261114.classification import classify_source
+    from bench.e2e_v32_20261114.classification import ARTICLE_FIELD, classify_source
 
     # The fixture disclaimer labels the source, not the work described below it.
     # Preserve its line position so classifier spans still address the source.
@@ -467,7 +473,8 @@ def _classify_observations(
         # Payroll and contribution forms have their own internal subaccount codes.
         # Their addressed form title supplies the aggregate article.
         for index, line in tuple(lines.items()):
-            if re.fullmatch(r"Код статьи: [0-9]{4}", line) and line[-4:] not in ARTICLE_CODES:
+            match = ARTICLE_FIELD.fullmatch(line)
+            if match and match["code"].zfill(4) not in ARTICLE_CODES:
                 lines[index] = " "
     for index, item in enumerate(observations):
         if re.fullmatch(
@@ -478,7 +485,7 @@ def _classify_observations(
     classified_text = "\n".join(
         lines.get(index, item.raw_text) for index, item in enumerate(observations)
     )
-    source = classify_source(classified_text)
+    source = classify_source(classified_text, contract_number=contract_number)
     guarded = bool(
         source["explicit_articles"]
         or source["hard_reasons"]
@@ -491,7 +498,7 @@ def _classify_observations(
         if source["category"] != template_article[0]:
             return None, [], guarded
     category = source["category"]
-    if source["decision"] != "resolved" or category not in ARTICLES:
+    if source["decision"] != "resolved" or category not in EXPENSE_ARTICLES:
         return None, [], guarded
     indices = {
         index - 1
@@ -540,12 +547,26 @@ def ground_document(
             for item in observations
             if isinstance(item.locator, SheetLocator) and item.locator.sheet == total.locator.sheet
         )
+    contract_hits = [
+        (value, o)
+        for raw, o in _contracts(observations, template=template)
+        if (value := normalize_contract_number(raw).value)
+    ]
+    contracts = {value for value, _ in contract_hits}
+    contract = next(iter(contracts)) if len(contracts) == 1 else None
+    period_hits = _periods(observations)
+    periods = {(p.start, p.end) for p, _ in period_hits}
+    period = period_hits[0][0] if len(periods) == 1 else None
     category, article_evidence, guarded = _classify_observations(
-        observations, template_article=articles[0] if template else None
+        observations,
+        template_article=articles[0] if template else None,
+        contract_number=contract,
     )
     if not category and not guarded and format_ == "pdf" and method == "ocr":
         native_pdf = read_native_document(path, format_)
-        native_category, native_articles = read_source_article(native_pdf.observations)
+        native_category, native_articles = read_source_article(
+            native_pdf.observations, contract_number=contract
+        )
         if native_category in {"production_overhead", "general_admin"}:
             category, article_evidence = native_category, native_articles
 
@@ -571,16 +592,6 @@ def ground_document(
             )
         )
 
-    contract_hits = [
-        (value, o)
-        for raw, o in _contracts(observations, template=template)
-        if (value := normalize_contract_number(raw).value)
-    ]
-    period_hits = _periods(observations)
-    contracts = {value for value, _ in contract_hits}
-    periods = {(p.start, p.end) for p, _ in period_hits}
-    contract = next(iter(contracts)) if len(contracts) == 1 else None
-    period = period_hits[0][0] if len(periods) == 1 else None
     if contract:
         for value, o in contract_hits:
             add("contract", value, o)
@@ -588,7 +599,7 @@ def ground_document(
         for value, o in period_hits:
             add("period", value, o)
     if category:
-        code, _ = ARTICLES[category]
+        code, _ = EXPENSE_ARTICLES[category]
         for o in article_evidence:
             add("article", code or category, o)
 

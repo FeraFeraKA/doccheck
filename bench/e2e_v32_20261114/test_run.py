@@ -52,6 +52,18 @@ class BoundaryTests(unittest.TestCase):
         self.assertEqual(result['total']['status'],'unverified')
         self.assertIsNone(result['total']['expected_amount'])
 
+    def test_detail_and_subtotal_do_not_count_again_or_block_expense_total(self):
+        self.report["prediction"]["rows"].extend([
+            {"category": "0201", "reported_amount": "80.00"},
+            {"category": "production_cost", "reported_amount": "100.00"},
+        ])
+        result = run.compare(self.package, self.report, [self.doc])
+        self.assertEqual(result["total"]["expected_amount"], "90.00")
+        self.assertEqual(result["total"]["delta"], "10.00")
+        for row in result["rows"][1:]:
+            self.assertEqual(row["status"], "unverified")
+            self.assertEqual(row["source_ids"], [])
+
     def test_byte_duplicate_skips_model_and_gets_fresh_wall_time(self):
         with tempfile.TemporaryDirectory() as directory:
             p = Path(directory) / "input.png"

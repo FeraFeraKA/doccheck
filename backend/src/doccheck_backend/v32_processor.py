@@ -10,7 +10,7 @@ from shutil import copyfileobj
 from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Literal
 
-from bench.e2e_v32_20261114.articles import ADDITIONAL_ARTICLES
+from bench.e2e_v32_20261114.articles import ADDITIONAL_ARTICLES, REPORT_CODES, REPORT_ROWS
 
 from doccheck_backend.byte_duplicates import plan_byte_duplicates
 from doccheck_backend.contracts import RESULT_SCHEMA_VERSION, CheckJob, CheckResult
@@ -35,7 +35,7 @@ from doccheck_backend.evidence_binding import (
     ObservationAssertion,
     bind_observations,
 )
-from doccheck_backend.grounded_amounts import ARTICLES, format_rubles, ground_document
+from doccheck_backend.grounded_amounts import format_rubles, ground_document
 from doccheck_backend.normalization import normalize_contract_number, normalize_document_period
 from doccheck_backend.page_ocr import OcrError, render_pages
 from doccheck_backend.reconciliation_comparison import compare_observed_rubles
@@ -48,7 +48,6 @@ if TYPE_CHECKING:
     from doccheck_ml.qwen import QwenReader
 
 
-_ARTICLES = {**ARTICLES, "total": (None, "Итого")}
 _HEX = re.compile(r"[0-9a-f]{32}")
 _MAX_PAGES = 12
 _MAX_NATIVE_CHARS = 24_000
@@ -287,7 +286,6 @@ def _file_error(document: SourceDocument, code: str) -> None:
     document.decision = _decision("parse_error", code)
 
 
-_CODE_ARTICLES = {code: key for key, (code, _) in _ARTICLES.items() if code is not None}
 _FIELD_MESSAGES = {
     "contract_missing": "В оригинале нет однозначного номера договора.",
     "period_missing": "Границы периода или дата документа не подтверждены.",
@@ -311,8 +309,17 @@ def _reported_cells(native, scanned):
                 SheetLocator(kind="sheet", sheet=sheet, range=cell),
                 "native",
             )
+        if total := native.get("total"):
+            sheet, cell = total["cell"].rsplit("!", 1)
+            yield (
+                "total",
+                total["amount"],
+                format_rubles(Decimal(total["amount"]), xlsx=True),
+                SheetLocator(kind="sheet", sheet=sheet, range=cell),
+                "native",
+            )
     for item in scanned:
-        category = _CODE_ARTICLES.get(item.code, item.code)
+        category = REPORT_CODES.get(item.code, item.code)
         yield category, item.raw, format_rubles(item.amount), item.locator, "ocr"
 
 
@@ -447,7 +454,7 @@ def _rows(run_id, scope, report, native, scanned, documents, grounds):
     )
     rows = []
     for category, _, amount, locator, _ in report_rows:
-        code, label = _ARTICLES[category]
+        code, label = REPORT_ROWS[category]
         complete = Completeness(
             state="unknown",
             basis="none",

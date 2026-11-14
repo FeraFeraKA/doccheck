@@ -7,7 +7,14 @@ from decimal import Decimal
 from statistics import median
 
 import numpy as np
-from bench.e2e_v32_20261114.articles import ARTICLE_CODES, LEGACY_CODES, report_category
+from bench.e2e_v32_20261114.articles import (
+    ARTICLE_CODE_TOKEN,
+    ARTICLE_CODES,
+    LEGACY_CODES,
+    REPORT_CODES,
+    REPORT_ROWS,
+    report_category,
+)
 from PIL import Image
 
 from doccheck_backend.contracts.locators import PageLocator
@@ -20,6 +27,7 @@ from doccheck_backend.page_ocr import (
 )
 
 _GROUP_HEADER = {
+    "0100": re.compile(r"материальн\w*\s+(?:затрат|расход)\w*"),
     "0200": re.compile(r"оплат\w*\s+труд\w*"),
     "0300": re.compile(r"страхов\w*\s+взнос\w*"),
     "0400": re.compile(r"подготов\w*\s+и\s+освоен\w*\s+производств\w*"),
@@ -28,8 +36,9 @@ _GROUP_HEADER = {
     "0700": re.compile(r"специальн\w*\s+(?:затрат|расход)\w*"),
     "0800": re.compile(r"общепроизводствен\w*"),
     "0900": re.compile(r"общехозяйствен\w*"),
+    "1200": re.compile(r"(?:работ\w*|услуг\w*)\b.*\bсторонн\w*\s+организац\w*"),
 }
-_AGGREGATES = {"0200", "0300", "0400"}
+_AGGREGATES = {"0100", "0200", "0300", "0400"}
 _CONTRACT = re.compile(
     r"\b(?:договор|контракт)\s*(?:№|No)?\s*([\w]+(?:[-/][\w]+)+)(?=$|[\s.,;:])", re.I
 )
@@ -58,8 +67,6 @@ def _peaks(values: np.ndarray, threshold: float) -> list[int]:
     return [int(group[np.argmax(values[group])]) for group in groups if group.size]
 
 
-_CODES_BY_CATEGORY = {category: code for code, category in ARTICLE_CODES.items()}
-_SUPPORTED_CODE = re.compile(r"(?<!\d)(?:" + "|".join(ARTICLE_CODES) + r")(?!\d)")
 _EXPLICIT_PERIOD = re.compile(
     r"^отч[её]тный период:\s*(\d{2}\.\d{2}\.\d{4})\s*[—–-]\s*"
     r"(\d{2}\.\d{2}\.\d{4})$",
@@ -72,6 +79,11 @@ def _parse_money(text: str) -> Decimal | None:
     if _MONEY.fullmatch(text):
         return Decimal(text.replace(" ", "").replace(",", "."))
     return None
+
+
+def _money_spacing(text: str) -> str:
+    # Tesseract can separate the decimal separator from the last two digits.
+    return re.sub(r"(?<=\d)\s*([,.])\s*(?=\d{2}$)", r"\1", " ".join(text.split()))
 
 
 def read_explicit_scope(image: Image.Image) -> tuple[str, str, str] | None:
@@ -114,14 +126,14 @@ def _simple_table(
     amounts = {}
     conflicts = False
     for line in lines:
-        parsed = _SIMPLE_LINE.fullmatch(line.text)
+        parsed = _SIMPLE_LINE.fullmatch(_money_spacing(line.text))
         if parsed is None:
             continue
         category = report_category(parsed[1])
         if category is not None:
-            code = _CODES_BY_CATEGORY.get(category, category)
-            amounts.setdefault(code, []).append(line)
-        elif _SUPPORTED_CODE.search(parsed[1]):
+            code = REPORT_ROWS[category][0] or category
+            amounts.setdefault(code, []).append((line, parsed[1], parsed[2]))
+        elif ARTICLE_CODE_TOKEN.search(parsed[1]):
             conflicts = True
     if not amounts:
         return None
@@ -129,14 +141,13 @@ def _simple_table(
     for code, candidates in amounts.items():
         if len(candidates) != 1:
             continue
-        line = candidates[0]
-        raw = _SIMPLE_LINE.fullmatch(line.text)[2]
+        line, label, raw = candidates[0]
         checked = recognize_crop(image, line.box, mode=7)
-        confirmed = _SIMPLE_LINE.fullmatch(" ".join(checked.split()))
+        confirmed = _SIMPLE_LINE.fullmatch(_money_spacing(checked))
         amount = _parse_money(raw)
         if (
             confirmed is None
-            or report_category(confirmed[1]) != report_category(line.text[: -len(raw)])
+            or report_category(confirmed[1]) != report_category(label)
             or _parse_money(confirmed[2]) != amount
         ):
             raw, amount = None, None
@@ -227,25 +238,37 @@ def _headers(image: Image.Image, ink: np.ndarray, xs: list[int], ys: list[int]) 
         found = {}
         for start, end in zip(main, main[1:]):
             box = (xs[start] + 6, content_top + 5, xs[end] - 6, edge - 4)
-            text = " ".join(recognize_crop(image, box, mode=6).casefold().split())
-            if text.strip(" .:") == "итого":
-                found.setdefault("total", set()).add(start)
+            raw = recognize_crop(image, box, mode=6).casefold()
+            text = " ".join(re.sub(r"([-–—])\s*\n\s*(?=[а-яё])", r"\1", raw).split())
+            category = report_category(text)
+            code = (REPORT_ROWS[category][0] or category) if category else None
             matching_labels = {
                 code for code, pattern in _GROUP_HEADER.items() if pattern.search(text)
             }
-            visible_codes = set(_SUPPORTED_CODE.findall(text))
-            if visible_codes - matching_labels and matching_labels:
+            visible_codes = set(ARTICLE_CODE_TOKEN.findall(text))
+            # An exact detail label takes precedence over a phrase shared
+            # with its parent article (for example, 0402 and 0400).
+            if code in REPORT_CODES and code not in ARTICLE_CODES:
+                if end == start + 1:
+                    found.setdefault(code, set()).add(start)
+                continue
+            if (
+                matching_labels
+                and visible_codes - matching_labels
+                and (code is None or not visible_codes <= {code})
+            ):
                 uncertain.update(matching_labels | visible_codes)
                 continue
-            for code, pattern in _GROUP_HEADER.items():
-                if code not in matching_labels:
-                    continue
+            if code and end == start + 1 and (code not in LEGACY_CODES or code in visible_codes):
+                found.setdefault(code, set()).add(start)
+            for code in matching_labels:
+                pattern = _GROUP_HEADER[code]
                 if code not in visible_codes:
                     if visible_codes or len(matching_labels) != 1:
                         continue
                     if code in LEGACY_CODES:
                         continue
-                    if not _numeric_header_code(image, box, code):
+                    if code != "0100" and not _numeric_header_code(image, box, code):
                         uncertain.add(code)
                         continue
                 if end == start + 1:
@@ -259,7 +282,7 @@ def _headers(image: Image.Image, ink: np.ndarray, xs: list[int], ys: list[int]) 
                             recognize_crop(image, label_box, mode=6).casefold().split()
                         )
                         if re.search(r"\b(?:всего|итого)\b", label) and (
-                            pattern.search(label) or code == "0400"
+                            pattern.search(label) or code in {"0100", "0400"}
                         ):
                             found.setdefault(code, set()).add(start)
                             break
@@ -315,13 +338,11 @@ def _read_amount(image: Image.Image, box: PixelBox) -> tuple[str | None, Decimal
     # The center of a thick rule can be several pixels inside the table cell.
     pads = (6, 10) if min(right - left, bottom - top) >= 85 else (3, 5)
     for pad in pads:
-        raw = " ".join(
-            recognize_crop(
-                image, (left + pad, top + pad, right - pad, bottom - pad), numeric=True
-            ).split()
+        raw = _money_spacing(
+            recognize_crop(image, (left + pad, top + pad, right - pad, bottom - pad), numeric=True)
         )
-        if _MONEY.fullmatch(raw):
-            readings.append((raw, Decimal(raw.replace(" ", "").replace(",", "."))))
+        if (amount := _parse_money(raw)) is not None:
+            readings.append((raw, amount))
     if len(readings) == 2 and readings[0][1] == readings[1][1]:
         return readings[0]
     return None, None
@@ -341,7 +362,7 @@ def read_report_row(
     width, height = image.size
     ys = _peaks(ink[:, width // 8 : width * 7 // 8].sum(axis=1), width * 0.43)
     xs = _column_tracks(ink, ys) if 4 <= len(ys) <= 60 else []
-    if len(xs) < 6 or xs[-1] - xs[0] < width * 0.55:
+    if len(xs) < 4 or xs[-1] - xs[0] < width * 0.55:
         return _simple_table(image, page, selected, contract_number, period) if period else None
     header = image.crop((0, 0, width, ys[0]))
     if period is None:

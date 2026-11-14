@@ -99,9 +99,18 @@ def _stub_ollama(monkeypatch, amount):
     return calls
 
 
+@pytest.mark.parametrize(
+    ("code", "label"),
+    [
+        ("0500", "Специальная технологическая оснастка"),
+        ("0100", "Материальные затраты"),
+        ("1200", "Работы и услуги сторонних организаций"),
+        ("1600", "Административно-управленческие расходы"),
+    ],
+)
 @pytest.mark.parametrize("ambiguous_amount", [False, True])
 def test_adapter_binds_new_article_to_addressed_code(
-    uploaded_files, tmp_path, monkeypatch, ambiguous_amount
+    uploaded_files, tmp_path, monkeypatch, ambiguous_amount, code, label
 ):
     report, source = uploaded_files
     report_path = tmp_path / report["id"]
@@ -109,7 +118,7 @@ def test_adapter_binds_new_article_to_addressed_code(
     with report_path.open("rb") as stream:
         book = load_workbook(stream)
     sheet = book.active
-    sheet["A7"], sheet["B7"] = 500, "Специальная технологическая оснастка"
+    sheet["A7"], sheet["B7"] = int(code), label
     book.save(report_path)
     report["sha256"] = sha256(report_path.read_bytes()).hexdigest()
 
@@ -119,7 +128,7 @@ def test_adapter_binds_new_article_to_addressed_code(
         "Период оказания услуг: с 01.02.2027 по 28.02.2027.",
         "Договор № E2E-31.",
         "Подразделение А\nОтдел 2.",
-        "Код статьи: 0500",
+        f"Код статьи: {code}",
         "Итого стоимость услуг: 1 172,70 руб.",
     ]:
         act.add_paragraph(line)
@@ -134,7 +143,7 @@ def test_adapter_binds_new_article_to_addressed_code(
     _stub_ollama(monkeypatch, "1172.70")
     result = process(StoredRun(uuid4(), None, uploaded_files), tmp_path).result
     (row,) = result.rows
-    assert row.indicator_code == "0500"
+    assert row.indicator_code == code
     if ambiguous_amount:
         assert row.observed_evidence_sum is None
         assert not row.calculation.components
@@ -143,7 +152,9 @@ def test_adapter_binds_new_article_to_addressed_code(
         assert any(reason.code == "observed_difference" for reason in row.reasons)
         sources = {item.id: item for item in result.evidence}
         (component,) = row.calculation.components
-        assert any(sources[ref].raw_value == "Код статьи: 0500" for ref in component.article_refs)
+        assert any(
+            sources[ref].raw_value == f"Код статьи: {code}" for ref in component.article_refs
+        )
 
 
 def test_worker_adapter_infers_scope_and_anchors_partial_sum(uploaded_files, tmp_path, monkeypatch):
@@ -643,6 +654,8 @@ def test_pdf_report_requires_exact_unambiguous_row_labels(
             "Общехозяйственные расходы: 1 250,50 руб.",
             "Оплата труда: 300,12 руб.",
             f"{extra}: 400,12 руб.",
+            "0100: Материальные затраты: 0,00 руб.",
+            "1300 Производственная себестоимость: 1 550,62 руб.",
         ],
     )
     report.update(format="pdf", name="report.pdf", sha256=sha256(path.read_bytes()).hexdigest())
@@ -656,6 +669,11 @@ def test_pdf_report_requires_exact_unambiguous_row_labels(
         assert job.status == "completed"
         by_label = {row.label: row for row in job.result.rows}
         assert by_label["Оплата труда"].reported_value == "300.12"
+        assert by_label["Материальные затраты"].reported_value == "0.00"
+        cost = by_label["Производственная себестоимость"]
+        assert cost.reported_value == "1550.62"
+        assert cost.status == "unverified"
+        assert not cost.calculation.components
 
 
 def _stub_xlsx_prediction(monkeypatch, amount, category):

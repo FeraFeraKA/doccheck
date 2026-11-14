@@ -14,17 +14,48 @@ from .document_identity import header_cells, OWN_HEADER, OWN_LABEL, MARKER, TOKE
 
 VERSION = "native-purpose-v3.2"
 OVERHEAD = {"production_overhead", "general_admin"}
-ARTICLE_FIELD = re.compile(
-    r"^(?:код\s+статьи|статья)(?:\s+(?:затрат|расходов|калькуляции))?"
-    r"\s*[:№]?\s*(?P<code>[0-9]{4})(?=$|[\s:.,;/()–—])",
+_ARTICLE_DECLARATION = (
+    r"(?:код[ \t]+(?:(?:основной|дополнительной)[ \t]+)?статьи|коды[ \t]+статей|стать[яи])"
+    r"(?:[ \t]+(?:затрат|расходов|калькуляции))?"
+    r"[ \t]*(?::[ \t]*)?(?:№[ \t]*)?(?P<code>[0-9]{3,4})\b"
+)
+ARTICLE_FIELD = re.compile(r"^" + _ARTICLE_DECLARATION, re.I)
+_ARTICLE_CODE_IN_FIELD = re.compile(r"\b[0-9]{3,4}\b")
+_ARTICLE_FIELD_CONTINUATION = re.compile(
+    r"^\s*(?:[,;(\/—–-]\s*)?(?:(?:и|или|либо|дополнительн\w*|основн\w*)"
+    r"\s*[:№]?\s*)?(?:№\s*)?[0-9]{3,4}\b",
     re.I,
 )
-_NEXT_ARTICLE_CODE = re.compile(
-    r"^\s*(?:[,;/–—-]|\(\s*|\b(?:и|или|либо|по)\b|(?=[0-9]))"
-    r"\s*(?:(?:и|или|либо)\s+)?[0-9]{4}\b",
+_CONTRACT_TOKEN = r"[\w]+(?:[/-][\w]+)*"
+_OWN_CONTRACT = re.compile(
+    rf"^\s*(?:договор|контракт|проект)\s*(?::|№)\s*({_CONTRACT_TOKEN})"
+    r"(?=$|[\s.,;|])",
+    re.I,
+)
+_CONTRACT_REFERENCE = re.compile(
+    r"\b(?:договор|контракт)(?:у|а|ом|е)?"
+    rf"(?:\s*(?:№|N[oо]\s+|номер\s+|:)\s*({_CONTRACT_TOKEN})"
+    rf"|\s+((?=[\w/-]*[0-9]){_CONTRACT_TOKEN}))(?=$|[\s.,;|)])",
+    re.I,
+)
+_ARTICLE_NOTE_TEXT = (
+    r"[(—–; -]*(?:справочно\b|(?:на|для|по|к)\s+"
+    r"(?:(?:друг\w*|ин(?:ой|ого|ому)|чуж\w*)\s+)?(?:договор|контракт)\w*)"
+)
+_ARTICLE_NOTE = re.compile(r"^\s*" + _ARTICLE_NOTE_TEXT, re.I)
+_STATEMENT = re.compile(
+    rf"\s*(?:[A-Z]+\d+:[ \t]*)?{_ARTICLE_DECLARATION}"
+    rf"(?:\([^()]*\)|[^.!?])*(?:[.!?]\s*{_ARTICLE_NOTE_TEXT}[^.!?\n]*)?"
+    r"[.!?]?|[^.;!?]+[.;!?]?",
+    re.I,
+)
+_ARTICLE_QUALIFIER = re.compile(
+    r"\((?:основн\w*|дополнительн\w*|повтор|осн\.|доп\.)\)|"
+    r"\b(?:и|или|либо|по|для|к|на)\b",
     re.I,
 )
 _NEW_PURPOSE = {
+    "materials": re.compile(r"\bматериальн\w*\s+(?:затрат|расход)\w*", re.I),
     "production_setup": re.compile(
         r"\b(?:подготов\w*\s+и\s+освоен\w*\s+(?:нов\w*\s+)?"
         r"(?:вид\w*\s+)?(?:производств|продукц)\w*|"
@@ -41,6 +72,30 @@ _NEW_PURPOSE = {
         r"научно[- ]исследовательск\w*|экспериментальн\w*)\s+(?:работ|исследован)\w*", re.I
     ),
     "special_costs": re.compile(r"\bспециальн\w*\s+(?:затрат|расход)\w*", re.I),
+    "travel": re.compile(
+        r"\b(?:командировочн\w*\s+(?:затрат|расход)\w*|"
+        r"(?:затрат|расход)\w*\s+на\s+командировк\w*)", re.I
+    ),
+    "other_direct_costs": re.compile(
+        r"\bпроч\w*\s+прям\w*\s+(?:затрат|расход)\w*", re.I
+    ),
+    "external_services": re.compile(
+        r"\b(?:затрат|расход)\w*\s+(?:по|на)\s+(?:работ|услуг)\w*"
+        r"(?:\s*\(услуг\w*\),?\s+выполняем\w*\s*\(оказываем\w*\))?"
+        r"\s+сторонн\w*\s+организац\w*", re.I
+    ),
+    "commercial_costs": re.compile(
+        r"\b(?:коммерческ\w*(?:\s+\(внепроизводственн\w*\))?|"
+        r"внепроизводственн\w*)\s+(?:затрат|расход)\w*", re.I
+    ),
+    "loan_interest": re.compile(r"\bпроцент\w*\s+по\s+кредит\w*", re.I),
+    "management_costs": re.compile(
+        r"\bадминистративно[-–—]управленческ\w*\s+(?:затрат|расход)\w*", re.I
+    ),
+}
+_PAYROLL_PURPOSE = {
+    "payroll": re.compile(r"\b(?:затрат|расход)\w*\s+на\s+оплат\w*\s+труд\w*", re.I),
+    "insurance": re.compile(r"\bстрахов\w*\s+взнос\w*", re.I),
 }
 _ARTICLE_PURPOSE_START = re.compile(
     r"\b(?:подготов\w*\s+и\s+освоен\w*|специальн\w*\s+(?:оборудован|технологическ)\w*)",
@@ -50,7 +105,8 @@ _EXPLICIT_OVERHEAD = {
     "general_admin": re.compile(
         r"\b(?:общехозяйственн\w*\s+(?:затрат|расход)\w*|"
         r"административн\w*\s+(?:сет|подразделен|контур|сопровожд|функци)\w*|"
-        r"аппарат\w*\s+управлен\w*|бухгалтер\w*\s+(?:программ|систем|служб)\w*)", re.I
+        r"аппарат\w*\s+управлен\w*|бухгалтер\w*\s+(?:программ|систем|служб)\w*|"
+        r"(?:сет|систем|сопровожд)\w*\s+бухгалтери\w*)", re.I
     ),
     "production_overhead": re.compile(
         r"\b(?:общепроизводственн\w*\s+(?:затрат|расход)\w*|"
@@ -60,8 +116,20 @@ _EXPLICIT_OVERHEAD = {
     ),
 }
 _FOREIGN_ARTICLE = re.compile(
-    r"^\s*(?:шаблон|справочно)\s*:|\b(?:на|для|по)\s+друг(?:ой|ому)\s+договор\w*|"
+    r"\b(?:шаблон\w*|справочно)\b|"
+    r"\b(?:на|для|по|к)\s+(?:друг\w*|ин(?:ой|ого|ому)|чуж\w*)\s+(?:договор|контракт)\w*|"
     r"\b(?:невыполненн|неоказанн|неосуществленн|неосуществлённ)\w*",
+    re.I,
+)
+_PLANNED_COST = re.compile(r"\bпланов\w*\s+(?:период|затрат|расход)\w*", re.I)
+_COST_MODIFIER = (
+    r"(?:материальн|специальн|проч\w*\s+прям|командировочн|коммерческ|"
+    r"внепроизводственн|общехозяйственн|общепроизводственн|"
+    r"административно[-–—]управленческ)\w*"
+)
+_COORDINATED_COSTS = re.compile(
+    rf"\b({_COST_MODIFIER})\s*(?:[,/]|\bи\b|\bили\b|\bлибо\b|\bа также\b)"
+    rf"\s*({_COST_MODIFIER})\s+(?:затрат|расход)\w*",
     re.I,
 )
 ACTION = re.compile(r"\b(?:сопровождени|обслуживани|поддержк|настройк|поверк|калибровк|метролог|ремонт|аренд|обеспечени|подготовк|содержани)\w*", re.I)
@@ -171,7 +239,7 @@ def is_purpose_line(line):
         return False
     content = content_text(line)
     if (ARTICLE_FIELD.match(content) or _ARTICLE_PURPOSE_START.search(content)
-            or any(rule.search(content) for rule in _NEW_PURPOSE.values())):
+            or any(rule.search(content) for rule in (*_NEW_PURPOSE.values(), *_PAYROLL_PURPOSE.values()))):
         return True
     if OLD_REQUEST.match(content) or REQUEST_CANCELLATION.match(content):
         return True
@@ -305,9 +373,9 @@ def allocation_polarity(text, *, new_purpose=False):
     the opposite article. Unsupported syntax remains guarded.
     """
     if new_purpose:
-        patterns = {**_EXPLICIT_OVERHEAD, **_NEW_PURPOSE}
+        patterns = {**_EXPLICIT_OVERHEAD, **_NEW_PURPOSE, **_PAYROLL_PURPOSE}
     else:
-        patterns = {"general_admin": ADMIN, "production_overhead": PRODUCTION}
+        patterns = {"general_admin": ADMIN, "production_overhead": PRODUCTION, **_PAYROLL_PURPOSE}
     roles = sorted([{"category": category, "start": m.start(), "end": m.end(),
                      "text": m.group(), "polarity": "positive"}
                     for category, pattern in patterns.items()
@@ -378,10 +446,10 @@ def purpose_excerpts(text, analysis_text=None):
         # the physical line metadata. Assertion parsing still checks each span.
         if not any(is_purpose_line(part) for part in re.split(r'(?<=[.!?])\s+', line)):
             continue
-        block = [lines[index]]
-        analysis_block = [line]
-        article_declaration = ARTICLE_FIELD.match(content_text(line))
-        for next_index in range(index + 1, min(index + 3, len(lines))):
+        last = index
+        article_declaration = ARTICLE_FIELD.match(content_text(line)) is not None
+        limit = len(lines) if article_declaration else min(index + 3, len(lines))
+        for next_index in range(index + 1, limit):
             following = analyzed[next_index]
             if (not following.strip() or is_metadata(following)
                     or ARTICLE_FIELD.match(content_text(following))
@@ -390,13 +458,20 @@ def purpose_excerpts(text, analysis_text=None):
                 break
             # Another sentence starts its own observation; retain only natural
             # wraps or an explicit one-line label's value.
-            if analysis_block[-1].rstrip().endswith((".", ";")):
+            note = article_declaration and _ARTICLE_NOTE.match(content_text(following))
+            if analyzed[last].rstrip().endswith((".", "!", "?")) and not note:
                 break
-            block.append(lines[next_index])
-            analysis_block.append(following)
-        joined = ''.join(literal_lines[index:index + len(block)]).rstrip('\r\n')
-        if not any(joined == old["text"] for old in excerpts):
-            excerpts.append({"line_start": index + 1, "line_end": index + len(block), "text": joined})
+            if article_declaration and not (
+                _ARTICLE_FIELD_CONTINUATION.match(content_text(following))
+                or note
+                or analyzed[last].rstrip().endswith((",", ";", "/", "(", "—", "–"))
+            ):
+                break
+            if not article_declaration and analyzed[last].rstrip().endswith(";"):
+                break
+            last = next_index
+        joined = ''.join(literal_lines[index:last + 1]).rstrip('\r\n')
+        excerpts.append({"line_start": index + 1, "line_end": last + 1, "text": joined})
     return excerpts
 
 
@@ -423,9 +498,8 @@ def source_statements(excerpts, source_text=None, excluded_spans=()):
             cursor=max(cursor,right)
         if cursor < len(excerpt['text']):
             pieces.append((cursor,len(excerpt['text'])))
-        matches = [(left+m.start(),left+m.end(),m.group()) for left,right in pieces
-                   for m in re.finditer(r"[^.;!?]+(?:;(?=\s*[0-9]{4}\b)[^.;!?]+)*[.;!?]?",
-                                        excerpt['text'][left:right])]
+        matches = [(m.start(), m.end(), m.group()) for left, right in pieces
+                   for m in _STATEMENT.finditer(excerpt['text'], left, right)]
         for match_start, match_end, raw in matches:
             if not raw.strip():
                 continue
@@ -534,12 +608,12 @@ def cancelled_request_scopes(statements, text):
     return scopes
 
 
-def assertion(statement):
+def assertion(statement, *, contract_number=None):
     """Parse evidence without granting authority to an unparsed role mention."""
     value = statement["text"]
     content = content_text(value)
     direct = ARTICLE_FIELD.match(content)
-    code = direct["code"] if direct else None
+    code = direct["code"].zfill(4) if direct else None
     category = ARTICLE_CODES.get(code)
     new_purpose = any(rule.search(value) for rule in _NEW_PURPOSE.values())
     roles, unsupported = allocation_polarity(value, new_purpose=new_purpose)
@@ -575,19 +649,40 @@ def assertion(statement):
                or any(pattern.match(content_text(value)) for pattern in
                       (COST_ALLOCATION, COST_OF_COMPLETED_WORK, REPORTED_COMPLETION)))
     quoted = in_external_quote(statement)
-    if (quoted or NARRATIVE_CONTEXT.search(value) or equipment_external
+    field_tail = content[direct.end():] if direct else content
+    references = {
+        marked or unmarked for marked, unmarked in _CONTRACT_REFERENCE.findall(field_tail)
+    }
+    without_reference = _CONTRACT_REFERENCE.sub("", field_tail)
+    if context and references and references != {contract_number}:
+        result.update(state="reference", reason="foreign_article_declaration")
+    elif direct and any(
+        token.zfill(4) != code
+        for token in _ARTICLE_CODE_IN_FIELD.findall(without_reference)
+    ):
+        result.update(state="nonexclusive", reason="multiple_article_codes")
+    elif direct and _FOREIGN_ARTICLE.search(content):
+        result.update(state="reference", reason="foreign_article_declaration")
+    elif (quoted or NARRATIVE_CONTEXT.search(value) or equipment_external
             or (new_purpose and _FOREIGN_ARTICLE.search(content))):
         result.update(state="unknown", reason="quoted_or_external_context")
-    elif value.endswith("?") or NONASSERTIVE.search(value):
+    elif value.endswith("?") or NONASSERTIVE.search(value) or _PLANNED_COST.search(value):
         result.update(state="unknown", reason="nonassertive_statement")
     elif DENIED_SERVICE.search(value):
         result.update(state="denied_service", reason="explicit_service_denial")
-    elif direct and _NEXT_ARTICLE_CODE.match(content[direct.end():]):
-        result.update(state="nonexclusive", reason="multiple_article_codes")
     elif direct and category is None:
         result.update(state="nonexclusive", reason="unsupported_article_code")
+    elif (coordinated := _COORDINATED_COSTS.search(value)) and (
+        coordinated[1].casefold() != coordinated[2].casefold()
+    ):
+        result.update(state="nonexclusive", reason="explicit_nonexclusive_purpose")
+    elif direct and len(roles) == 1 and re.search(
+        r"\w", _ARTICLE_QUALIFIER.sub("", _ARTICLE_CODE_IN_FIELD.sub("", without_reference))
+    ):
+        # The code is positive only if the remaining text can be interpreted.
+        result.update(state="nonexclusive", reason="unsupported_article_qualifier")
     elif PURCHASE.search(value) and category is None and not (
-            new_purpose and {"special_tooling", "research_equipment"} & set(mentions)):
+            new_purpose and {"materials", "special_tooling", "research_equipment"} & set(mentions)):
         result.update(state="purchase", reason="purchase_requires_separate_allocation")
     elif UNALLOCATED_AMOUNT.fullmatch(value.rstrip(".;! ")):
         result.update(state="amount_context", reason="no_numeric_breakdown")
@@ -615,7 +710,14 @@ def assertion(statement):
     return result
 
 
-def classify_source(text):
+def classify_source(text, *, contract_number=None):
+    if contract_number is None:
+        contracts = {
+            match[1]
+            for line in text.splitlines()
+            if (match := _OWN_CONTRACT.match(content_text(line)))
+        }
+        contract_number = next(iter(contracts)) if len(contracts) == 1 else None
     metadata = own_requisite_spans(text)
     excerpts = purpose_excerpts(text, mask_requisites(text,metadata))
     # Overlapping PDF windows can emit a complete sentence and its wrapped
@@ -626,7 +728,7 @@ def classify_source(text):
     end = -1
     for item in spans:
         if item['source_char_end'] > end:
-            statements.append(assertion(item))
+            statements.append(assertion(item, contract_number=contract_number))
             end = item['source_char_end']
     cancellation_scopes = cancelled_request_scopes(statements, text)
     direct = {item["article_code"] for item in statements if item["article_code"]}
@@ -639,7 +741,8 @@ def classify_source(text):
     if len(explicit) == len(direct) == 1 and explicit & ADDITIONAL_ARTICLES.keys():
         for item in statements:
             # An explicitly coded purchase is usable if it has no conflicting purpose.
-            if (item["state"] == "purchase" and explicit & {"special_tooling", "research_equipment"}
+            if (item["state"] == "purchase"
+                    and explicit & {"materials", "special_tooling", "research_equipment"}
                     and not item["mentioned_categories"]
                     and not NEGATION.search(item["text"])):
                 item.update(state="irrelevant", reason="purchase_with_explicit_article")

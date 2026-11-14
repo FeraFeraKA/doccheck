@@ -14,7 +14,7 @@ import threading
 import time
 import urllib.request
 
-from bench.e2e_v32_20261114.articles import ARTICLE_CODES
+from bench.e2e_v32_20261114.articles import ADDITIONAL_ARTICLES, ARTICLE_CODES
 
 try:
     import resource
@@ -39,10 +39,10 @@ description: краткое фактическое назначение расх
 
 
 PROMPT += "\nОпределяй назначение и category независимо от читаемости amount: отсутствующая сумма сама по себе не делает читаемое назначение неизвестным. Для связи, IT и обслуживания учитывай, кому предназначена услуга: административная/управленческая функция относится к general_admin, производственная/лабораторная — к production_overhead. Если функции смешаны и распределение не указано, category=null; не выбирай статью по сумме.\n"
-PROMPT += ("Коды дополнительных статей: 0400 — production_setup (подготовка и освоение "
-           "производства), 0500 — special_tooling (специальная технологическая оснастка), "
-           "0600 — research_equipment (специальное оборудование для научных работ), "
-           "0700 — special_costs (специальные затраты).\n")
+PROMPT += "Коды дополнительных статей:\n" + "\n".join(
+    f"{code} — {category} ({label})"
+    for category, (code, label) in ADDITIONAL_ARTICLES.items()
+) + "\n"
 
 def api(path, body=None, timeout=600):
     # Fixed loopback endpoint; proxies and external model endpoints are excluded.

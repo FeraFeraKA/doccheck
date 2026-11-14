@@ -18,6 +18,7 @@ import time
 
 ROOT = Path(__file__).resolve().parents[2]
 from . import runtime, report_benchmark
+from .articles import EXPENSE_ARTICLES
 from .decision_rules import reconcile, parse_amount, normalize_identifier, money_string
 from .native_report import read_native_report
 from .classification import apply_source_checks
@@ -41,7 +42,7 @@ def configure_variant(name):
 MODEL = runtime.MODELS["4b"]
 CATEGORY_CODES = {"0200": "payroll", "0300": "insurance", "0800": "production_overhead", "0900": "general_admin"}
 CODE = Path(__file__).resolve().parent
-SOURCE_FILES = [CODE / f for f in ("run.py", "runtime.py", "report_benchmark.py", "decision_rules.py", "native_report.py", "classification.py", "document_identity.py", "explanations.py")] + [CODE / "baseline" / f for f in ("runtime.py", "report_benchmark.py", "decision_rules.py", "native_report.py")]
+SOURCE_FILES = [CODE / f for f in ("run.py", "runtime.py", "report_benchmark.py", "decision_rules.py", "native_report.py", "articles.py", "classification.py", "document_identity.py", "explanations.py")] + [CODE / "baseline" / f for f in ("runtime.py", "report_benchmark.py", "decision_rules.py", "native_report.py")]
 
 
 def utc():
@@ -205,14 +206,15 @@ def compare(package, report, documents):
         for row in result["rows"]:
             row.update(status="unverified", expected_amount=None, delta=None)
             row["reasons"].extend({"id": report["id"], "reason": issue} for issue in issues)
-    sufficient = bool(result["rows"]) and all(row["status"] != "unverified" for row in result["rows"])
-    expected_total = sum((parse_amount(row["expected_amount"]) for row in result["rows"]), Decimal("0")) if sufficient else None
+    expenses = [row for row in result["rows"] if row["category"] in EXPENSE_ARTICLES]
+    sufficient = bool(expenses) and all(row["status"] != "unverified" for row in expenses)
+    expected_total = sum((parse_amount(row["expected_amount"]) for row in expenses), Decimal("0")) if sufficient else None
     delta = reported_total - expected_total if expected_total is not None and reported_total is not None else None
     result["total"] = {"category": "total", "reported_amount": money_string(reported_total),
         "expected_amount": money_string(expected_total), "delta": money_string(delta),
         "status": "unverified" if delta is None else ("correct" if delta == 0 else "incorrect"),
         "reasons": [] if delta is not None else [{"reason": "total_or_constituent_unverified"}],
-        "source_ids": sorted({i for row in result["rows"] for i in row["source_ids"]})}
+        "source_ids": sorted({i for row in expenses for i in row["source_ids"]})}
     return result
 
 
