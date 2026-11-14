@@ -37,8 +37,13 @@ _MONEY = re.compile(r"-?(?:[0-9]+|[0-9]{1,4}(?: [0-9]{3})+)[,.][0-9]{2}")
 _QUANTITY = re.compile(r"-?[0-9]+(?:[,.][0-9]+)?")
 _RUBLE_UNIT = re.compile(r"(?<!\w)(?:руб(?:л(?:ей|я|ь|ях|и)?)?\.?|RUB|RUR|₽)(?!\w)", re.I)
 _OTHER_CURRENCY = re.compile(
-    r"(?<![A-Za-z0-9/-])(?!(?:RUB|RUR)(?![A-Za-z]))[A-Za-z]{3}(?![A-Za-z0-9/-])"
-    r"|(?<!\w)(?:доллар\w*|евро|юан\w*)(?!\w)|[$€£¥]",
+    r"(?<![A-Za-z0-9/-])(?:USD|EUR|CNY|GBP|JPY|KZT|BYN|CHF|TRY|AZN|AMD|UZS|UAH)"
+    r"(?![A-Za-z0-9/-])|(?<!\w)(?:доллар\w*|евро|юан\w*)(?!\w)|[$€£¥]",
+    re.I,
+)
+_UNKNOWN_UNIT_CODE = re.compile(
+    r"\b(?:валют\w*|единиц\w*(?:\s+измерени\w*)?|ед\.?\s*изм\w*|сумм\w*)"
+    r"\s*[:=]\s*(?:в\s+)?(?!(?:RUB|RUR)\b)[A-Za-z]{3}\b",
     re.I,
 )
 _OTHER_SCALE = re.compile(
@@ -177,7 +182,13 @@ def _unit_declaration(line: OcrLine) -> bool:
     text = line.text.strip()
     if not any(
         pattern.search(text)
-        for pattern in (_RUBLE_UNIT, _OTHER_CURRENCY, _OTHER_SCALE, _UNIT_MULTIPLIER)
+        for pattern in (
+            _RUBLE_UNIT,
+            _OTHER_CURRENCY,
+            _UNKNOWN_UNIT_CODE,
+            _OTHER_SCALE,
+            _UNIT_MULTIPLIER,
+        )
     ):
         return False
     remainder = text
@@ -196,6 +207,7 @@ def _confirmed_rubles(header: Sequence[OcrLine], table_header: Sequence[OcrLine]
     declarations = [line for line in (*header, *table_header) if _unit_declaration(line)]
     if any(
         _OTHER_CURRENCY.search(line.text)
+        or _UNKNOWN_UNIT_CODE.search(line.text)
         or _OTHER_SCALE.search(line.text)
         or _UNIT_MULTIPLIER.search(line.text)
         or _RUBLE_RATE.search(line.text)
