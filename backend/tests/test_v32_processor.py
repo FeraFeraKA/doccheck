@@ -354,6 +354,7 @@ def test_multiple_periods_wrapped_within_same_observation_are_not_truncated():
         "Период: 01.02.2031 — 28.02.2031 — ?",
         "Период: 01.02.2031 — 28.02.2031 — по",
         "Период: 01.02.2031 — 28.02.2031 — 31 января",
+        "Период: 01.02.2031 — 28.02.2031; 99.00 руб. и с 01.04.2031 по 30.04.2031",
         "Период: Февраль 2031 — апр. 2031",
         "Период: Апрель 2031 — июн. 2031",
         "Период: Февраль 2031 — апр 2031",
@@ -363,6 +364,9 @@ def test_multiple_periods_wrapped_within_same_observation_are_not_truncated():
         "Период: Февраль 2031 — по настоящий момент",
         "Период: Февраль 2031 до конца апреля 2031",
         "Период: Февраль 2031 до 30 апр. 2031",
+        "Период: Февраль 2031 до 15-го апреля 2031",
+        "Период: Январь 2031 — 15-го апр. 2031",
+        "Период: Февраль 2031 до 15-го",
         "Период: Февраль 2031 по сегодняшний день",
         "Период: Февраль 2031 и до конца апреля 2031",
         "Период: Апрель 2031 — окончание работ",
@@ -434,6 +438,8 @@ def test_duration_in_an_adjacent_paragraph_is_not_reduced_to_first_month():
         "— услуги связи за месяц",
         "— - 100.00 руб.",
         "по 2-му договору № A-12",
+        "; 99.00 руб.",
+        "; - 99.00 руб.",
         "и с использованием оборудования",
         "| Договор: A-12 | Дата документа: 01.03.2031",
         "| 01.03.2031",
@@ -554,6 +560,32 @@ def test_empty_period_column_does_not_fall_back_to_document_date():
         "Дата документа: 15.02.2031", ParagraphLocator(kind="paragraph", paragraph=1)
     )
     assert _periods((heading, date)) == []
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize("unlabelled", ["01.04.2031 — 30.04.2031", "неразборчиво"])
+def test_period_column_requires_every_nonempty_value_to_be_readable(reverse, unlabelled):
+    def cell(row, text):
+        return Observation(text, TableCellLocator(kind="table_cell", table=1, row=row, cell=1))
+
+    values = ["Период: Февраль 2031", unlabelled]
+    if reverse:
+        values.reverse()
+    assert _periods((cell(1, "Период"), cell(2, values[0]), cell(3, values[1]))) == []
+
+
+@pytest.mark.parametrize(
+    "printed",
+    [
+        "Период: 01.02.2031 — 28.02.2031; 99.00 руб.",
+        "Период: Февраль 2031; 99.00 руб.",
+    ],
+)
+def test_ruble_value_after_period_is_not_an_additional_date(printed):
+    address = ParagraphLocator(kind="paragraph", paragraph=3)
+    assert [(p.start, p.end) for p, _ in _periods((Observation(printed, address),))] == [
+        ("2031-02-01", "2031-02-28")
+    ]
 
 
 @pytest.mark.parametrize("text", ["- 100.00 руб.", "— 1 200,50 руб.", "— услуги связи"])

@@ -132,6 +132,7 @@ _MONTH_ABBREVIATION = r"(?:янв|фев|мар|апр|июн|июл|авг|се
 _PERIOD_BOUND_START = re.compile(
     rf"^(?:\?|[0-9]{{1,4}}(?=$|[./-][0-9?]|\s+(?:{'|'.join(_MONTH)}|г(?:ода?)?)\b"
     rf"|\s+{_MONTH_ABBREVIATION}(?:\.|\s|$))"
+    rf"|[0-9]{{1,2}}[-‑](?:го|е|й|му|я|ое)(?=$|\s+(?:{'|'.join(_MONTH)}|{_MONTH_ABBREVIATION})\b)"
     rf"|(?:{'|'.join(_MONTH)})\b|{_MONTH_ABBREVIATION}(?:\.(?=\s|$)|(?=\s+[0-9]{{4}}\b))"
     rf"|[а-яё]{{2,10}}\.\s+[0-9]{{4}}\b|с\b|неразборчив\w*|неизвест\w*"
     rf"|настоящ(?:ее\s+время|его\s+времени|ий\s+момент|его\s+момента)\b"
@@ -388,15 +389,16 @@ def _independent_duration_column(
 def _period_column_heading(
     observation: Observation,
     cells: dict[tuple[int, int, int], list[Observation]],
-) -> bool:
-    """A labelled table column is not a second unresolved period value."""
+) -> tuple[bool, bool] | None:
+    """Return unresolved/ambiguous when a period column heading has data."""
     header = observation.locator
     if not (
         isinstance(header, TableCellLocator)
         and header.row == 1
         and _PERIOD_COLUMN_HEADING.fullmatch(observation.raw_text.strip())
     ):
-        return False
+        return None
+    values = []
     for (table, row, column), readings in cells.items():
         if (
             table != header.table
@@ -404,12 +406,26 @@ def _period_column_heading(
             or not header.cell <= column < header.cell + observation.column_span
         ):
             continue
-        if any(
-            _DATE_RANGE.search(item.raw_text) or _MONTH_PERIOD.search(item.raw_text)
+        values.extend(
+            item
             for item in readings
-        ):
-            return True
-    return False
+            if isinstance(item.locator, TableCellLocator)
+            and item.locator.row >= header.row + observation.row_span
+        )
+    if not values:
+        return True, False
+    ambiguous = any(
+        not (_DATE_RANGE.search(item.raw_text) or _MONTH_PERIOD.search(item.raw_text))
+        for item in values
+    )
+    return ambiguous, ambiguous
+
+
+def _additional_period(text: str) -> bool:
+    candidate = re.sub(r"^\s*[,;:]\s*", "", text)
+    if _ONLY_RUBLE_VALUE.fullmatch(candidate.strip()) and _text_amount(candidate)[0] is not None:
+        return False
+    return bool(_ADDITIONAL_PERIOD.match(text))
 
 
 def _additional_pipe_period(tail: str) -> bool:
@@ -430,7 +446,7 @@ def _conjoined_period(text: str) -> bool:
     rest = text[match.end() :]
     return bool(
         _period_continuation(rest)
-        or _ADDITIONAL_PERIOD.match(rest)
+        or _additional_period(rest)
         or _duration_continuation(rest)
         or _additional_pipe_period(rest)
     )
@@ -443,7 +459,7 @@ def _unlinked_duration(text: str) -> bool:
     return not any(
         _period_continuation(suffix)
         or _additional_period_prefix(suffix)
-        or _ADDITIONAL_PERIOD.match(suffix)
+        or _additional_period(suffix)
         or _additional_pipe_period(suffix)
         or _duration_continuation(suffix)
         or _conjoined_period(suffix)
@@ -522,7 +538,10 @@ def _period_readings(
                     cells.setdefault(key, []).append(observation)
     for i, observation in enumerate(observations):
         raw = observation.raw_text.strip()
-        if _period_column_heading(observation, cells):
+        heading = _period_column_heading(observation, cells)
+        if heading is not None:
+            unresolved_period |= heading[0]
+            ambiguous_period |= heading[1]
             continue
         # A second labelled field at the same address is not evidence that the
         # document total belongs to only the first one.
@@ -576,7 +595,7 @@ def _period_readings(
                     or duration
                     or (
                         re.match(r"^(?:(?:и|или|а\s+также)\b|[,;+/&])", next_text, re.I)
-                        and _ADDITIONAL_PERIOD.match(next_text)
+                        and _additional_period(next_text)
                     )
                 )
                 if _period_continuation(next_text) or additional_line:
@@ -591,7 +610,7 @@ def _period_readings(
             tail = full_tail.split("|", 1)[0]
             if (
                 _period_continuation(tail)
-                or _ADDITIONAL_PERIOD.match(tail)
+                or _additional_period(tail)
                 or _additional_period_prefix(tail)
                 or _conjoined_period(tail)
                 or _duration_continuation(tail)
@@ -613,7 +632,7 @@ def _period_readings(
                 tail = tail[end_month.end() :]
             full_tail, tail = tail, tail.split("|", 1)[0]
             if (
-                _ADDITIONAL_PERIOD.match(tail)
+                _additional_period(tail)
                 or _additional_period_prefix(tail)
                 or _conjoined_period(tail)
                 or _duration_continuation(tail)

@@ -340,6 +340,22 @@ def test_worker_does_not_use_conflicting_document_date_as_operation_period(
             "period_ambiguous",
         ),
         (
+            "Период: Февраль 2031 до 15-го апреля 2031",
+            None,
+            "299,12",
+            "100,00",
+            False,
+            "period_ambiguous",
+        ),
+        (
+            "Период: Январь 2031 до 15-го апреля 2031",
+            None,
+            "397,62",
+            "1,50",
+            True,
+            "period_ambiguous",
+        ),
+        (
             "Период: Апрель 2031 — настоящее время",
             None,
             "299,12",
@@ -440,6 +456,22 @@ def test_worker_does_not_use_conflicting_document_date_as_operation_period(
             None,
             "299,12",
             "100,00",
+            True,
+            None,
+        ),
+        (
+            "Период: 01.02.2031 — 28.02.2031; 99.00 руб.",
+            None,
+            "299,12",
+            "100,00",
+            False,
+            None,
+        ),
+        (
+            "Период: Февраль 2031; 99.00 руб.",
+            None,
+            "397,62",
+            "1,50",
             True,
             None,
         ),
@@ -873,6 +905,9 @@ def test_worker_docx_adjacent_cells_do_not_truncate_period(
             True,
         ),
         ("standard", "Период", "Трудозатраты", "2 услуги", False, False),
+        ("two_periods", "Период", "Трудозатраты", "2 часа", False, True),
+        ("two_periods_reverse", "Период", "Трудозатраты", "2 часа", True, True),
+        ("unknown_period", "Период", "Трудозатраты", "2 часа", False, True),
     ],
 )
 def test_worker_respects_independent_table_quantity_headers(
@@ -913,6 +948,15 @@ def test_worker_respects_independent_table_quantity_headers(
         table.cell(0, 0).text, table.cell(0, 1).text = period_header, other_header
         table.cell(1, 0).text, table.cell(2, 0).text = "Примечание", period
         table.cell(1, 1).merge(table.cell(2, 1)).text = value
+    elif layout in {"two_periods", "two_periods_reverse", "unknown_period"}:
+        table = document.add_table(rows=3, cols=2)
+        table.cell(0, 0).text, table.cell(0, 1).text = period_header, other_header
+        second_period = "неразборчиво" if layout == "unknown_period" else "01.04.2031 — 30.04.2031"
+        values = ["Период: Февраль 2031", second_period]
+        if layout == "two_periods_reverse":
+            values.reverse()
+        table.cell(1, 0).text, table.cell(2, 0).text = values
+        table.cell(1, 1).text, table.cell(2, 1).text = value, "2 услуги"
     else:
         table = document.add_table(rows=2, cols=2)
         table.cell(0, 0).text, table.cell(0, 1).text = period_header, other_header
