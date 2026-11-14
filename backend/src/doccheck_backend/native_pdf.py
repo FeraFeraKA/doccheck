@@ -3,6 +3,7 @@
 from collections import defaultdict
 from math import isfinite
 from pathlib import Path
+from typing import BinaryIO
 from zlib import error as DecompressionError
 
 import pdfplumber
@@ -189,11 +190,13 @@ _PDF_ERRORS = (
 )
 
 
-def read_pdf(path: Path) -> NativeDocument:
+def read_pdf(path: Path | BinaryIO, *, page_number: int | None = None) -> NativeDocument:
     observations = []
     issues = []
     try:
-        with pdfplumber.open(path) as document:
+        with pdfplumber.open(
+            path, pages=None if page_number is None else [page_number]
+        ) as document:
             if not document.doc.is_extractable:
                 return NativeDocument(issues=(NativeIssue("native_read_error"),))
             for original in document.pages:

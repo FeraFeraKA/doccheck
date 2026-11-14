@@ -23,6 +23,7 @@ _UNUSED_DB = "postgresql+psycopg://unused:unused@127.0.0.1:1/unused"
         ("GET", f"{_RUNS}/run/documents/file"),
         ("GET", f"{_RUNS}/run/documents/file/fragments/evidence"),
         ("GET", f"{_RUNS}/run/documents/file/fragments?evidence_id=evidence"),
+        ("GET", f"{_RUNS}/run/documents/file/fragment-preview?evidence_id=evidence"),
     ],
 )
 def test_public_demo_blocks_document_routes_without_opening_storage(
