@@ -369,3 +369,37 @@ def test_bare_alternative_date_in_same_exact_region_rejects_scope(scanned_stage)
 
     assert parse_scan_report((*case, elsewhere)) is not None
     assert parse_scan_report((*case, alternative)) is None
+
+
+def test_precise_contract_read_does_not_hide_conflict_at_other_occurrence(scanned_stage):
+    from dataclasses import replace
+
+    _, *others = scanned_stage
+    broad = _box("Договор № SYN-41", 0.27, 0.09, 0.50)
+    precise = _box("Договор № SYN-41", 0.52, 0.09, 0.74)
+    number = _box("SYN-41", 0.64, 0.09, 0.74)
+    precise = replace(precise, text_boxes=((10, 16, number.locator),))
+    alternate = _box("SYN-42", 0.30, 0.09, 0.39, confidence=0.72)
+
+    assert parse_scan_report((broad, precise, *others)) is not None
+    assert parse_scan_report((broad, precise, *others, alternate)) is None
+
+
+@pytest.mark.parametrize("alternate", ("2028-04-18", "18.04.2028", "18 апреля 2028 г."))
+def test_bare_cutoff_alternative_survives_different_position_with_precise_read(
+    scanned_stage, alternate
+):
+    from dataclasses import replace
+
+    broad = _box("Окончание 7 этапа 17 апреля 2028 г.", 0.05, 0.16, 0.28)
+    precise = _box(broad.raw_text, 0.48, 0.16, 0.74)
+    date = _box("17 апреля 2028", 0.61, 0.16, 0.74)
+    precise = replace(
+        precise,
+        text_boxes=((precise.raw_text.index("17"), precise.raw_text.index(" г."), date.locator),),
+    )
+    disputed = _box(alternate, 0.18, 0.16, 0.28, confidence=0.72)
+    case = (*scanned_stage[:3], broad, precise, *scanned_stage[5:])
+
+    assert parse_scan_report(case) is not None
+    assert parse_scan_report((*case, disputed)) is None

@@ -216,8 +216,18 @@ def _dated_stages(
 def _preferred_value_locations(
     readings: list[tuple[Observation, Observation | None]],
 ) -> list[Observation]:
-    precise = [location for _, location in readings if location is not None]
-    return precise or [source for source, _ in readings]
+    precise = [(source, location) for source, location in readings if location is not None]
+    locations = [location for _, location in precise]
+    for source, location in readings:
+        if location is not None:
+            continue
+        if any(
+            _same_region(source, precise_source) and _same_region(source, precise_location)
+            for precise_source, precise_location in precise
+        ):
+            continue
+        locations.append(source)
+    return locations
 
 
 _BARE_STAGE_DATE = re.compile(
