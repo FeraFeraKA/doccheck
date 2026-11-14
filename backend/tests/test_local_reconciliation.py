@@ -289,6 +289,152 @@ def test_worker_does_not_use_conflicting_document_date_as_operation_period(
 
 
 @pytest.mark.parametrize(
+    ("field", "extra", "amount", "other_amount", "reverse", "reason"),
+    [
+        (
+            "Период: 01.02.2031 — 28.02.2031 | 01.04.2031 — 30.04.2031",
+            None,
+            "299,12",
+            "100,00",
+            False,
+            "period_ambiguous",
+        ),
+        (
+            "Период: 01.04.2031 — 30.04.2031 | 01.02.2031 — 28.02.2031",
+            None,
+            "397,62",
+            "1,50",
+            True,
+            "period_ambiguous",
+        ),
+        (
+            "Период: 01.02.2031 — 28.02.2031",
+            "и с 01.04.2031 по 30.04.2031",
+            "299,12",
+            "100,00",
+            False,
+            "period_ambiguous",
+        ),
+        (
+            "Период: 01.04.2031 — 30.04.2031",
+            "и с 01.02.2031 по 28.02.2031",
+            "397,62",
+            "1,50",
+            True,
+            "period_ambiguous",
+        ),
+        (
+            "Дата документа: 15.02.2031",
+            "Дата оказания услуги: 31.01.2031",
+            "299,12",
+            "100,00",
+            False,
+            "period_date_conflict",
+        ),
+        (
+            "Дата документа: 05.03.2031",
+            "Дата оказания услуг: 20.02.2031",
+            "397,62",
+            "1,50",
+            True,
+            "period_date_conflict",
+        ),
+        (
+            "Период: 01.02.2031 — 28.02.2031 по договору № A-12",
+            None,
+            "299,12",
+            "100,00",
+            False,
+            None,
+        ),
+        (
+            "Период: 01.02.2031 — 28.02.2031 — услуги связи",
+            None,
+            "397,62",
+            "1,50",
+            True,
+            None,
+        ),
+        (
+            "Дата документа: 15.02.2031",
+            None,
+            "299,12",
+            "100,00",
+            False,
+            None,
+        ),
+    ],
+)
+def test_worker_period_boundaries_preserve_other_admitted_amounts(
+    database_url, tmp_path, field, extra, amount, other_amount, reverse, reason
+):
+    report, files = write_reconciliation_case(tmp_path)
+    primary = next(path for path in files if path.name == "ADM-72.docx")
+    document = Document(primary)
+    document.paragraphs[2].text = field
+    document.paragraphs[4].text = f"Итого: {amount} руб."
+    if extra and reason == "period_ambiguous":
+        document.paragraphs[3].insert_paragraph_before(extra)
+    elif extra:
+        document.add_paragraph(extra)
+    document.save(primary)
+
+    supporting = Document()
+    for line in (
+        "УПД № ADM-73",
+        f"Договор № {CONTRACT}",
+        f"Период: {START} — {END}",
+        "Общехозяйственные расходы.",
+        f"Итого: {other_amount} руб.",
+    ):
+        supporting.add_paragraph(line)
+    second = tmp_path / "ADM-73.docx"
+    supporting.save(second)
+    files.append(second)
+    settings = Settings(database_url, upload_root=tmp_path / "uploads")
+    with TestClient(create_app(settings)) as client:
+        run_id = _prepare_and_start(
+            client,
+            [
+                ("report", (report.name, report.read_bytes())),
+                *(
+                    ("documents", (path.name, path.read_bytes()))
+                    for path in (reversed(files) if reverse else files)
+                ),
+            ],
+        )
+        assert run_document_worker(
+            client.app.state.engine,
+            settings.upload_root,
+            V32Processor(no_model, no_model),
+            once=True,
+        )
+        response = client.get(f"/api/v0/runs/{run_id}/findings")
+        assert response.status_code == 200, client.get(f"/api/v0/runs/{run_id}").json()
+        result = response.json()
+
+    source = next(item for item in result["documents"] if item["name"] == primary.name)
+    row = next(item for item in result["rows"] if item["id"] == "general_admin")
+    if reason:
+        assert (source["decision"]["state"], source["decision"]["reason_code"]) == (
+            "needs_review",
+            reason,
+        )
+        assert row["status"] == "unverified"
+        assert row["expected_value"] is None and row["delta"] is None
+        assert row["observed_evidence_sum"] == other_amount.replace(",", ".")
+        assert reason in {item["code"] for item in row["reasons"]}
+        assert not any(
+            item["document_id"] == source["id"] and item["kind"] == "period"
+            for item in result["evidence"]
+        )
+    else:
+        assert source["decision"]["state"] == "include"
+        assert row["status"] == "verified"
+        assert row["expected_value"] == "399.12" and row["delta"] == "0.00"
+
+
+@pytest.mark.parametrize(
     ("filename", "code"),
     [
         ("truncated.pdf", "pdf_unreadable"),

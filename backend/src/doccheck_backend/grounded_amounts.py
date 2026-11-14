@@ -8,7 +8,13 @@ from math import ulp
 from pathlib import Path
 from uuid import UUID
 
-from doccheck_backend.contracts.locators import Locator, PageLocator, SheetLocator, TableCellLocator
+from doccheck_backend.contracts.locators import (
+    Locator,
+    PageLocator,
+    ParagraphLocator,
+    SheetLocator,
+    TableCellLocator,
+)
 from doccheck_backend.contracts.result import EvidenceKind, FileFormat, Period
 from doccheck_backend.evidence_binding import ObservationAssertion
 from doccheck_backend.native_observations import NativeDocument, NativeIssue, Observation
@@ -61,7 +67,14 @@ _ADDITIONAL_PERIOD = re.compile(
     rf"(?:{_DAY}|[0-9]{{1,2}}[./][0-9]{{1,2}}|(?:{'|'.join(_MONTH)})\b|период\b)",
     re.I,
 )
-_ADDITIONAL_PERIOD_PREFIX = re.compile(r"^\s*(?:и|или|а\s+также)\s+с\s+", re.I)
+_ADDITIONAL_PERIOD_PREFIX = re.compile(r"^\s*(?:и|или|а\s+также)\s+с(?:\s+|$)", re.I)
+_PERIOD_BOUND_START = re.compile(
+    rf"^(?:\?|[0-9]{{1,4}}(?=$|[./-][0-9?]|\s+(?:{'|'.join(_MONTH)}|г(?:ода?)?)\b)"
+    rf"|(?:{'|'.join(_MONTH)})\b|с\b|неразборчив\w*|неизвест\w*)",
+    re.I,
+)
+_BARE_DATE_RANGE = re.compile(rf"^\s*(?:с\s+)?{_DAY}(?:\s+г\.?)?\s*(?:по\b|до\b|[–—-])", re.I)
+_BARE_MONTH_PERIOD = re.compile(rf"^\s*(?:(?:с|за|в)\s+)?{_MONTH_YEAR}", re.I)
 _DATE_RANGE = re.compile(
     rf"(?:{_PERIOD_LABEL})(?:с\s+)?({_DAY})(?:\s+г\.?)?\s*(?:по|до|[–—-])\s*({_DAY})\b",
     re.I,
@@ -71,7 +84,8 @@ _HEADER_DATE = re.compile(
     rf"^(?:акт|счет-акт|счёт-акт|упд)\b[^\n]{{0,72}}?\bот\s+({_DAY})(?:\s*г\.?)?$", re.I
 )
 _OPERATION_DATE = re.compile(
-    rf"^(?:услуги\s+оказаны|услуга\s+оказана|работы\s+выполнены)\s*"
+    rf"^(?:услуги\s+оказаны|услуга\s+оказана|работы\s+выполнены|"
+    rf"дата\s+оказания\s+услуг(?:и)?|дата\s+выполнения\s+работ(?:ы)?)\s*"
     rf"(?:[:—–-]\s*)?({_DAY})(?:\s*г\.?)?\.?$",
     re.I,
 )
@@ -207,6 +221,48 @@ def _following(label: Observation, value: Observation) -> bool:
     )
 
 
+def _period_continuation(text: str) -> bool:
+    match = _PERIOD_CONTINUATION.match(text)
+    if not match:
+        return False
+    rest = text[match.end() :].strip()
+    # A delimiter followed by unrelated prose (e.g. "по договору") is not
+    # another period; a missing or period-shaped bound remains uncertain.
+    return not rest or bool(_PERIOD_BOUND_START.match(rest))
+
+
+def _additional_period_prefix(text: str) -> bool:
+    match = _ADDITIONAL_PERIOD_PREFIX.match(text)
+    if not match:
+        return False
+    rest = text[match.end() :].strip()
+    return not rest or bool(_PERIOD_BOUND_START.match(rest))
+
+
+def _period_following(first: Observation, second: Observation) -> bool:
+    left, right = first.locator, second.locator
+    return (
+        left == right
+        or _following(first, second)
+        or (
+            isinstance(left, ParagraphLocator)
+            and isinstance(right, ParagraphLocator)
+            and right.paragraph == left.paragraph + 1
+        )
+    )
+
+
+def _additional_pipe_period(tail: str) -> bool:
+    for part in tail.split("|")[1:]:
+        if _BARE_MONTH_PERIOD.match(part):
+            return True
+        if match := _BARE_DATE_RANGE.match(part):
+            rest = part[match.end() :].strip()
+            if not rest or _PERIOD_BOUND_START.match(rest):
+                return True
+    return False
+
+
 def _stages(
     observations: tuple[Observation, ...],
 ) -> tuple[list[tuple[str, Observation]], bool]:
@@ -279,7 +335,8 @@ def _period_readings(
         following = observations[i + 1] if i + 1 < len(observations) else None
         next_text = following.raw_text.strip() if following else ""
         additional_line = bool(
-            _ADDITIONAL_PERIOD_PREFIX.match(next_text)
+            _additional_pipe_period(next_text)
+            or _additional_period_prefix(next_text)
             or (
                 re.match(r"^(?:(?:и|или|а\s+также)\b|[,;+/&])", next_text, re.I)
                 and _ADDITIONAL_PERIOD.match(next_text)
@@ -287,19 +344,21 @@ def _period_readings(
         )
         if (
             following
-            and (_following(observation, following) or observation.locator == following.locator)
-            and (_PERIOD_CONTINUATION.match(next_text) or additional_line)
+            and _period_following(observation, following)
+            and (_period_continuation(next_text) or additional_line)
             and (_PERIOD_FIELD.search(raw) or _MONTH_PERIOD.search(raw))
         ):
             unresolved_period = True
             ambiguous_period |= additional_line
             continue
         if match := _DATE_RANGE.search(raw):
-            tail = raw[match.end() :].split("|", 1)[0]
+            full_tail = raw[match.end() :]
+            tail = full_tail.split("|", 1)[0]
             if (
-                _PERIOD_CONTINUATION.match(tail)
+                _period_continuation(tail)
                 or _ADDITIONAL_PERIOD.match(tail)
-                or _ADDITIONAL_PERIOD_PREFIX.match(tail)
+                or _additional_period_prefix(tail)
+                or _additional_pipe_period(full_tail)
             ):
                 unresolved_period = ambiguous_period = True
                 continue
@@ -315,12 +374,16 @@ def _period_readings(
             if end_month := _MONTH_RANGE_END.match(tail):
                 last_month, last_year = _MONTH[end_month[1].casefold()], int(end_month[2])
                 tail = tail[end_month.end() :]
-            tail = tail.split("|", 1)[0]
-            if _ADDITIONAL_PERIOD.match(tail) or _ADDITIONAL_PERIOD_PREFIX.match(tail):
+            full_tail, tail = tail, tail.split("|", 1)[0]
+            if (
+                _ADDITIONAL_PERIOD.match(tail)
+                or _additional_period_prefix(tail)
+                or _additional_pipe_period(full_tail)
+            ):
                 unresolved_period = ambiguous_period = True
                 continue
             if (
-                _PERIOD_CONTINUATION.match(tail)
+                _period_continuation(tail)
                 or not first_year
                 or not last_year
                 or (first_year, first_month) > (last_year, last_month)
