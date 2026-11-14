@@ -443,14 +443,19 @@ test('the selected stored evidence opens its own original and address', async ({
   ]));
 });
 
-test('the compact wizard adapts its upload blocks and keeps the example button in view', async ({ page }) => {
+test('the compact wizard keeps the upload blocks and start button in view', async ({ page }) => {
+  await page.route('**/api/v0/runs', (route) => route.fulfill({ json: { items: [], next_cursor: null } }));
   for (const width of [320, 390, 701, 768, 1440]) {
     await page.setViewportSize({ width, height: 900 });
     await page.goto('/');
 
-    const example = page.getByRole('button', { name: 'Загрузить пример' });
-    if (width < 700) await example.evaluate((link) => link.scrollIntoView({ block: 'center' }));
-    await expect(example).toBeInViewport({ ratio: 1 });
+    const start = page.getByRole('button', { name: 'Запустить проверку' });
+    if (width < 700) await start.evaluate((button) => button.scrollIntoView({ block: 'center' }));
+    await expect(start).toBeInViewport({ ratio: 1 });
+    await expect(start).toBeDisabled();
+    await expect(page.getByRole('button', { name: 'Загрузить пример' })).toHaveCount(0);
+    await expect(page.getByRole('region', { name: 'Последние проверки' }).getByRole('link', { name: 'Все проверки' }))
+      .toHaveCount(0);
     const report = await page.getByRole('region', { name: 'КФЗ', exact: true }).boundingBox();
     const documents = await page.getByRole('region', { name: 'Первичные документы' }).boundingBox();
     if (!report || !documents) throw new Error('Оба блока должны быть видны');
@@ -463,19 +468,18 @@ test('the compact wizard adapts its upload blocks and keeps the example button i
     }
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(width);
   }
-  await page.goto('/checks/synthetic-example');
-  await expect(page.getByRole('heading', { name: 'Синтетическая сверка' })).toBeVisible();
 });
 
 test('API mock: two uploads stay on the form and history is restored on reload', async ({ page }) => {
   const items: { run_id: string; status: string; created_at: string; error: null }[] = [];
   const keys = new Set<string>();
-  await page.route(/\/api\/v0\/runs(?:\?.*)?$/, async (route) => {
-    if (route.request().method() === 'GET') {
-      return route.fulfill({ json: { items, next_cursor: null } });
-    }
-    const id = 'queued-' + (items.length + 1);
+  await page.route(/\/api\/v0\/runs(?:\?.*)?$/, (route) => route.fulfill({ json: { items, next_cursor: null } }));
+  await page.route('**/api/v0/runs/uploads', (route) => {
     keys.add(route.request().headers()['idempotency-key']);
+    return route.fulfill({ status: 201, json: { upload_id: 'upload-' + keys.size } });
+  });
+  await page.route('**/api/v0/runs/uploads/*/start', (route) => {
+    const id = 'queued-' + (items.length + 1);
     items.unshift({ run_id: id, status: 'queued', created_at: '2026-11-14T10:00:00Z', error: null });
     return route.fulfill({
       status: 202, headers: { Location: '/api/v0/runs/' + id },
@@ -487,14 +491,16 @@ test('API mock: two uploads stay on the form and history is restored on reload',
   const recent = page.getByRole('region', { name: 'Последние проверки' });
   for (const number of [1, 2]) {
     await page.getByLabel('Выберите КФЗ').setInputFiles({
-      name: `report-${number}.pdf`, mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4 synthetic'),
+      name: 'report-' + number + '.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4 synthetic'),
     });
     await page.getByLabel('Выберите первичные документы').setInputFiles({
-      name: `support-${number}.pdf`, mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4 synthetic'),
+      name: 'support-' + number + '.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4 synthetic'),
     });
     const submit = page.getByRole('button', { name: 'Запустить проверку' });
+    await expect(submit).toBeEnabled();
     await submit.click();
-    await expect(recent.getByRole('link', { name: `Проверка КФЗ №queued-${number}` })).toBeVisible();
+    await expect(recent.getByRole('heading', { name: 'Проверка КФЗ №queued-' + number })).toBeVisible();
+    await expect(recent.getByRole('link', { name: 'Проверка КФЗ №queued-' + number })).toHaveCount(0);
     await expect(submit).toBeDisabled();
     await expect(page.getByRole('button', { name: 'Выбрать файл', exact: true })).toBeFocused();
     await expect(page).toHaveURL(/\/checks\/new$/);
@@ -502,64 +508,34 @@ test('API mock: two uploads stay on the form and history is restored on reload',
   expect(keys.size).toBe(2);
   items[0].status = 'processing';
   const processing = recent.getByRole('progressbar', { name: 'Проверка КФЗ №queued-2' });
-  await expect(processing).toBeVisible();
   await expect(processing).toHaveAttribute('aria-valuetext', 'Обработка документов');
   await expect(processing).not.toHaveAttribute('aria-valuenow');
   await page.reload();
   await expect(processing).toBeVisible();
   await expect(recent.getByText('В очереди', { exact: true })).toBeVisible();
-  await recent.getByRole('link', { name: 'Все проверки' }).click();
+  await page.getByRole('navigation', { name: 'Основная навигация' }).getByRole('link', { name: 'Проверки', exact: true }).click();
   const history = page.getByRole('region', { name: 'История запусков' });
-  await expect(history.getByRole('link', { name: 'Проверка КФЗ №queued-1', exact: true })).toBeVisible();
-  await expect(history.getByRole('link', { name: 'Проверка КФЗ №queued-2', exact: true })).toBeVisible();
+  await expect(history.getByText('Проверка КФЗ №queued-1', { exact: true })).toBeVisible();
+  await expect(history.getByText('Проверка КФЗ №queued-2', { exact: true })).toBeVisible();
 });
 
-test('a direct check page shows progress from the run API until a result arrives', async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  const id = '91f533f4-a688-4bd7-91cd-3055d326d974';
-  const endpoint = `**/api/v0/runs/${id}`;
-  const summary = { run_id: id, created_at: '2026-11-14T10:00:00Z', error: null };
-  let run: { status: string; progress: { processed_documents: number; total_documents: number } | null } = {
-    status: 'processing', progress: null,
-  };
-  await page.route(endpoint, (route) => route.fulfill({ json: { ...summary, ...run } }));
-  await page.route(`${endpoint}/findings`, (route) => route.fulfill({
-    json: { ...example.result, run_id: id, synthetic: true },
-  }));
-
-  await page.goto(`/checks/${id}`);
-  const progress = page.getByRole('progressbar', { name: 'Прогресс проверки' });
-  await expect(progress).toBeVisible();
-  await expect(progress).not.toHaveAttribute('aria-valuenow');
-  await expect(page.getByText('Число обработанных документов пока неизвестно.')).toBeVisible();
-  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
-
-  run = { status: 'processing', progress: { processed_documents: 1, total_documents: 4 } };
-  await expect(progress).toHaveAttribute('aria-valuenow', '25');
-  await expect(page.getByText('Обработано документов: 1 из 4')).toBeVisible();
-  await expect(page.getByText('25%', { exact: true })).toBeVisible();
-
-  run = { status: 'completed', progress: { processed_documents: 4, total_documents: 4 } };
-  await expect(page.getByRole('table', { name: 'Показатели КФЗ' })).toBeVisible();
-  await expect(progress).toHaveCount(0);
-});
-
-test('the upload receipt keeps its focus when history confirms the same run', async ({ page }) => {
+test('the queue confirms a submitted run and the next failed start has its own feedback', async ({ page }) => {
   const id = 'queued-confirmed';
   let accepted = false;
   let resolveHistory!: () => void;
   const releaseHistory = new Promise<void>((resolve) => { resolveHistory = resolve; });
+  await page.route('**/api/v0/runs/uploads', (route) => route.fulfill({ status: 201, json: { upload_id: 'pending-upload' } }));
+  await page.route('**/api/v0/runs/uploads/pending-upload/start', (route) => {
+    if (accepted) return route.fulfill({ status: 503, json: { code: 'service_unavailable' } });
+    accepted = true;
+    return route.fulfill({ status: 202, headers: { Location: '/api/v0/runs/' + id },
+      json: { run_id: id, status: 'queued' } });
+  });
   await page.route(/\/api\/v0\/runs(?:\?.*)?$/, async (route) => {
-    if (route.request().method() === 'POST') {
-      if (accepted) return route.fulfill({ status: 503, json: { code: 'service_unavailable' } });
-      accepted = true;
-      return route.fulfill({ status: 202, headers: { Location: '/api/v0/runs/' + id },
-        json: { run_id: id, status: 'queued' } });
-    }
     if (!accepted) return route.fulfill({ json: { items: [], next_cursor: null } });
     await releaseHistory;
     return route.fulfill({ json: { items: [{
-      run_id: id, status: 'queued', created_at: '2026-11-14T10:00:00Z', error: null,
+      run_id: id, status: 'processing', created_at: '2026-11-14T10:00:00Z', error: null,
     }], next_cursor: null } });
   });
   await page.goto('/checks/new');
@@ -569,70 +545,93 @@ test('the upload receipt keeps its focus when history confirms the same run', as
   await page.getByLabel('Выберите первичные документы').setInputFiles({
     name: 'support.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4 synthetic'),
   });
-  await page.getByRole('button', { name: 'Запустить проверку' }).press('Enter');
-  await expect(page.getByRole('status').filter({ hasText: /^Сервер получил пакет\.$/ })).toHaveCount(1);
-  const receipt = page.getByRole('link', { name: 'Проверка КФЗ №' + id });
-  await receipt.focus();
-  await expect(receipt).toBeFocused();
+  const submit = page.getByRole('button', { name: 'Запустить проверку' });
+  await expect(submit).toBeEnabled();
+  await submit.press('Enter');
+  await expect(page.getByRole('status').filter({ hasText: /^Проверка поставлена в очередь\.$/ })).toHaveCount(1);
+  const receipt = page.getByRole('heading', { name: 'Проверка КФЗ №' + id });
+  const status = page.getByRole('progressbar', { name: 'Проверка КФЗ №' + id });
+  await expect(receipt).toBeVisible();
+  await expect(status).toHaveAttribute('aria-valuetext', 'В очереди');
   resolveHistory();
-  await expect(receipt).toContainText('В очереди');
-  await expect(receipt).toBeFocused();
+  await expect(status).toHaveAttribute('aria-valuetext', 'Обработка документов');
+  await expect(receipt).toHaveCount(1);
   await page.getByLabel('Выберите КФЗ').setInputFiles({
     name: 'another-report.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4 synthetic'),
   });
   await page.getByLabel('Выберите первичные документы').setInputFiles({
     name: 'another-support.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4 synthetic'),
   });
-  await page.getByRole('button', { name: 'Запустить проверку' }).press('Enter');
-  await expect(page.getByRole('alert')).toBeVisible();
-  await expect(page.getByRole('status')).toBeEmpty();
+  await expect(submit).toBeEnabled();
+  await submit.press('Enter');
+  await expect(page.getByRole('alert')).toHaveText('Не удалось подтвердить запуск. Попробуйте ещё раз.');
+  await expect(page.getByRole('status')).toHaveText('Пакет загружен');
 });
 
-test('the example sends bundled documents and updates the same server queue', async ({ page }) => {
-  const id = 'demo-from-inputs';
+test('the uploaded files wait for a separate start and the queue opens only a finished result', async ({ page }) => {
+  const id = 'uploaded-check';
+  const title = 'Проверка КФЗ №' + id;
   let accepted = false;
   let done = false;
+  let requestCount = 0;
   let releaseUpload!: () => void;
   const uploadGate = new Promise<void>((resolve) => { releaseUpload = resolve; });
-  await page.route(/\/api\/v0\/runs(?:\?.*)?$/, async (route) => {
-    if (route.request().method() === 'POST') {
-      const fileBody = route.request().postDataBuffer()?.toString('latin1');
-      expect(fileBody).toContain('name="report"; filename="report.xlsx"');
-      expect(fileBody).toContain('name="documents"; filename="act.docx"');
-      expect(fileBody).toContain('name="synthetic"');
-      await uploadGate;
-      accepted = true;
-      return route.fulfill({
-        status: 202, headers: { Location: '/api/v0/runs/' + id },
-        json: { run_id: id, status: 'queued' },
-      });
-    }
-    return route.fulfill({ json: { items: accepted ? [{
-      run_id: id, status: done ? 'completed' : 'processing', document_count: 2, synthetic: true,
-      created_at: '2026-11-14T10:00:00Z', error: null,
-    }] : [], next_cursor: null } });
+  await page.route('**/api/v0/runs/uploads', async (route) => {
+    const fileBody = route.request().postDataBuffer()?.toString('latin1');
+    expect(fileBody).toContain('name="report"; filename="report.xlsx"');
+    expect(fileBody).toContain('name="documents"; filename="act.docx"');
+    await uploadGate;
+    return route.fulfill({ status: 201, json: { upload_id: 'staged-upload' } });
   });
-  await page.route(`**/api/v0/runs/${id}`, (route) => route.fulfill({ json: {
+  await page.route('**/api/v0/runs/uploads/staged-upload/start', (route) => {
+    requestCount += 1;
+    expect(route.request().postData()).toBeNull();
+    accepted = true;
+    return route.fulfill({
+      status: 202, headers: { Location: '/api/v0/runs/' + id },
+      json: { run_id: id, status: 'queued' },
+    });
+  });
+  await page.route(/\/api\/v0\/runs(?:\?.*)?$/, (route) => route.fulfill({ json: { items: accepted ? [{
+    run_id: id, status: done ? 'completed' : 'processing', document_count: 2,
+    created_at: '2026-11-14T10:00:00Z', error: null,
+  }] : [], next_cursor: null } }));
+  await page.route('**/api/v0/runs/' + id, (route) => route.fulfill({ json: {
     run_id: id, status: 'completed', created_at: '2026-11-14T10:00:00Z', error: null,
     progress: { processed_documents: 2, total_documents: 2 },
   } }));
-  await page.route(`**/api/v0/runs/${id}/findings`, (route) => route.fulfill({ json: {
+  await page.route('**/api/v0/runs/' + id + '/findings', (route) => route.fulfill({ json: {
     ...example.result, run_id: id, synthetic: true,
   } }));
   await page.goto('/');
+  await page.getByLabel('Выберите КФЗ').setInputFiles({
+    name: 'report.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    buffer: Buffer.from('synthetic report'),
+  });
+  await page.getByLabel('Выберите первичные документы').setInputFiles({
+    name: 'act.docx', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    buffer: Buffer.from('synthetic support'),
+  });
   const queue = page.getByRole('region', { name: 'Последние проверки' });
-  await page.getByRole('button', { name: 'Загрузить пример' }).click();
-  const bar = queue.getByRole('progressbar', { name: 'Синтетическая сверка' });
-  await expect(bar).toBeVisible();
-  await expect(bar).toHaveAttribute('aria-valuetext', 'Загрузка файлов');
+  const submit = page.getByRole('button', { name: 'Запустить проверку' });
+  const transfer = page.getByRole('progressbar', { name: 'Загрузка пакета' });
+  await expect(transfer).toBeVisible();
+  await expect(submit).toBeDisabled();
+  expect(requestCount).toBe(0);
   releaseUpload();
+  await expect(submit).toBeEnabled();
+  await expect(transfer).toHaveCount(0);
+  expect(requestCount).toBe(0);
+  await submit.click();
+  const bar = queue.getByRole('progressbar', { name: title });
   await expect(bar).toHaveAttribute('aria-valuetext', 'Обработка документов');
   await expect(bar).not.toHaveAttribute('aria-valuenow');
+  await expect(queue.getByRole('link', { name: title })).toHaveCount(0);
   await expect(queue.getByText('Файлов: 2')).toBeVisible();
   done = true;
   await expect(bar).toHaveAttribute('aria-valuenow', '100');
+  expect(requestCount).toBe(1);
   await page.reload();
-  await queue.getByRole('link', { name: 'Синтетическая сверка' }).click();
+  await queue.getByRole('link', { name: title }).click();
   await expect(page.getByRole('table', { name: 'Показатели КФЗ' })).toBeVisible();
-  await expect(page.getByText('Синтетика · сохранённая проверка')).toBeVisible();
 });

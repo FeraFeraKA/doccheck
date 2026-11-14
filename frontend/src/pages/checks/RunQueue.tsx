@@ -1,31 +1,21 @@
-import { Link } from 'react-router';
+import { useEffect, useRef } from 'react';
+import { Link, useLocation } from 'react-router';
 import { classes } from '../../shared/lib/classes';
 import { runStatusLabels } from './checkData';
 import type { HistoryEntry, RunStatus } from './checkData';
 import { WorkspaceIcon } from './WorkspaceIcon';
 import { runTitle } from './runTitle';
-import { demoTitle, demoUploadFiles } from './demoData';
 import { RunProgressBar } from './RunProgressBar';
 import './run-queue.css';
 
 export interface QueueReceipt {
   id: string;
   documentCount: number;
-  synthetic?: boolean;
-  createdAt?: string;
-}
-
-export interface DemoTransfer {
-  id: string;
-  createdAt: string;
-  percent?: number;
-  error?: string;
 }
 
 interface RunQueueProps {
   entries?: HistoryEntry[];
   receipts: QueueReceipt[];
-  demoTransfer?: DemoTransfer;
   loading: boolean;
   error: boolean;
   onRetry: () => void;
@@ -41,42 +31,35 @@ const tones: Record<RunStatus, QueueTone> = {
 };
 const dateFormat = new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short', timeStyle: 'short' });
 
-export function RunQueue({ entries = [], receipts, demoTransfer, loading, error, onRetry }: RunQueueProps) {
+export function RunQueue({ entries = [], receipts, loading, error, onRetry }: RunQueueProps) {
+  const location = useLocation();
+  const queue = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    if (location.hash !== '#queue') return;
+    queue.current?.scrollIntoView?.();
+  }, [location.hash, location.key]);
+
   const listedIds = new Set(entries.map(({ id }) => id));
   const pendingReceipts = receipts.filter(({ id }) => !listedIds.has(id));
   const items: RunQueueItemProps[] = [
     ...pendingReceipts.map((receipt): RunQueueItemProps => ({
       ...receipt,
-      title: receipt.synthetic ? demoTitle : runTitle(receipt.id),
-      label: 'Сервер получил пакет',
+      title: runTitle(receipt.id),
+      label: 'В очереди',
       tone: 'neutral',
       progress: null,
     })),
     ...entries.map(({ id, title, createdAt, status, synthetic, documentCount, error }) => ({
       id, title, label: runStatusLabels[status], tone: tones[status], createdAt, synthetic, documentCount, error,
-      progress: queueProgress(status, synthetic),
+      progress: queueProgress(status),
+      openResult: status === 'completed' || status === 'completed_with_issues',
     })),
   ];
-  if (demoTransfer) {
-    items.unshift({
-      ...demoTransfer,
-      title: demoTitle,
-      label: demoTransfer.error ? 'Ошибка загрузки' : 'Загрузка файлов',
-      tone: demoTransfer.error ? 'peach' : 'neutral',
-      synthetic: true,
-      documentCount: demoUploadFiles.length,
-      progress: demoTransfer.error ? undefined : demoTransfer.percent ?? null,
-      pendingUpload: true,
-    });
-  }
   return (
-    <section className="upload-card queue-card" aria-label="Последние проверки" aria-busy={loading}>
+    <section ref={queue} id="queue" className="upload-card queue-card" aria-label="Последние проверки" aria-busy={loading}>
       <header className="upload-card-header">
-        <div>
-          <h2>Очередь проверок</h2>
-          <p>Загрузите пример, чтобы запустить проверку синтетического комплекта.</p>
-        </div>
-        <Link to="/checks" className="queue-history-link">Все проверки</Link>
+        <h2>Очередь проверок</h2>
       </header>
       {error && <p className="upload-validation" role="alert">Не удалось обновить историю.
         {' '}<button type="button" onClick={onRetry} className="underline">Повторить</button>
@@ -90,10 +73,9 @@ export function RunQueue({ entries = [], receipts, demoTransfer, loading, error,
   );
 }
 
-function queueProgress(status: RunStatus, synthetic?: boolean) {
-  if (status === 'queued') return 0;
-  if (status === 'processing') return null;
-  if (synthetic && (status === 'completed' || status === 'completed_with_issues')) return 100;
+function queueProgress(status: RunStatus) {
+  if (status === 'queued' || status === 'processing') return null;
+  if (status === 'completed' || status === 'completed_with_issues') return 100;
   return undefined;
 }
 
@@ -107,11 +89,11 @@ interface RunQueueItemProps {
   error?: string;
   documentCount?: number;
   progress?: number | null;
-  pendingUpload?: boolean;
+  openResult?: boolean;
 }
 
 function RunQueueItem({
-  id, title, label, tone, createdAt, synthetic, error, documentCount, progress, pendingUpload,
+  id, title, label, tone, createdAt, synthetic, error, documentCount, progress, openResult,
 }: RunQueueItemProps) {
   const content = <>
     <div className="queue-job-heading">
@@ -132,11 +114,11 @@ function RunQueueItem({
       </div>
     </div>
     {progress !== undefined && <RunProgressBar
-      label={title} value={progress} valueText={label} complete={progress === 100 && !pendingUpload} />}
-    {error && <p className="upload-validation" role={pendingUpload ? 'alert' : undefined}>{error}</p>}
+      label={title} value={progress} valueText={label} complete={progress === 100} />}
+    {error && <p className="upload-validation">{error}</p>}
   </>;
-  return <li>{pendingUpload
-    ? <div className="queue-job">{content}</div>
-    : <Link className="queue-job" aria-label={title} to={'/checks/' + encodeURIComponent(id)}>{content}</Link>}
+  return <li>{openResult
+    ? <Link className="queue-job" aria-label={title} to={'/checks/' + encodeURIComponent(id)}>{content}</Link>
+    : <div className="queue-job">{content}</div>}
   </li>;
 }
