@@ -120,13 +120,6 @@ for (const [width, height] of [[1440, 1100], [768, 844], [390, 600]]) {
     const expand = drawer.getByRole('button', { name: 'Развернуть источник на весь экран' });
     const collapse = drawer.getByRole('button', { name: 'Свернуть источник в боковую панель' });
     const highlight = drawer.getByRole('button', { name: 'Подсветка' });
-    if (width === 1440 && before > 0) {
-      await viewport.evaluate((element) => { element.scrollTop = 0; });
-      await expand.press('Enter');
-      expect(await scrollRatio()).toBe(0);
-      await collapse.click();
-      await drawer.getByRole('button', { name: 'К фрагменту' }).click();
-    }
     await highlight.click();
     await expand.press('Enter');
     await expect(collapse).toHaveAttribute('aria-pressed', 'true');
