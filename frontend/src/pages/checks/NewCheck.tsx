@@ -180,9 +180,8 @@ export function NewCheck() {
         </Link>
       </div>
       {submitError && <p className="upload-validation" role="alert">{submitError}</p>}
-      {isSending && <p role="status">Загрузка файлов…</p>}
-      <p role="status" className="sr-only">
-        {acceptedCount > 0 && <span key={acceptedCount}>Сервер получил пакет.</span>}
+      <p role="status" className={isSending ? undefined : 'sr-only'}>
+        {isSending ? 'Загрузка файлов…' : acceptedCount > 0 && <span key={acceptedCount}>Сервер получил пакет.</span>}
       </p>
       {!publicDemo && <RunQueue entries={history.page?.entries} receipts={receipts}
         loading={history.loading} error={history.error} onRetry={history.refresh} />}
