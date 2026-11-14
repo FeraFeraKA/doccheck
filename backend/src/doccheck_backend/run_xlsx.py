@@ -191,7 +191,15 @@ def export_check_result(result: CheckResult) -> bytes:
     _finish(components, 1, (24, 22, 24, 12, 58, 29, 29, 29, 29, 35))
 
     sources = workbook.create_sheet("Источники")
-    _append(sources, "ID источника", "ID документа", "Документ", "Адрес", "Тип свидетельства")
+    _append(
+        sources,
+        "ID источника",
+        "ID документа",
+        "Документ",
+        "Адрес",
+        "Тип свидетельства",
+        "ID источника (JSON)",
+    )
     for evidence in result.evidence:
         _append(
             sources,
@@ -200,8 +208,9 @@ def export_check_result(result: CheckResult) -> bytes:
             documents[evidence.document_id].name,
             _location(evidence.locator),
             evidence.kind,
+            json.dumps(evidence.id, ensure_ascii=False),
         )
-    _finish(sources, 1, (29, 32, 42, 61, 24))
+    _finish(sources, 1, (29, 32, 42, 61, 24, 40))
 
     files = workbook.create_sheet("Документы")
     _append(

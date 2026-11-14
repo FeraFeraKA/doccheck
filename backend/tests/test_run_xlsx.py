@@ -26,12 +26,17 @@ def fixture_payload() -> dict:
 def decision_result() -> dict:
     result = fixture_payload()["result"]
     decisions = [
-        ("other-period", "outside_period", "Документ вне периода", ["late-period"]),
+        (
+            "other-period",
+            "outside_period",
+            "Документ вне периода",
+            ["late-period", "ambig\x01"],
+        ),
         (
             "other-contract",
             "different_contract",
             "Документ относится к другому договору",
-            ['=HYPERLINK("https://example.test/")', "contract\nsecond"],
+            ['=HYPERLINK("https://example.test/")', "contract\nsecond", r"ambig\x01"],
         ),
         ("unresolved", "needs_check", "Основание не установлено", []),
     ]
@@ -95,6 +100,26 @@ def decision_result() -> dict:
                 "method": "native",
                 "locator": {"kind": "page", "page": 1, "line": 6},
             },
+            {
+                "id": "ambig\x01",
+                "document_id": "other-period",
+                "kind": "contract",
+                "raw_value": "DEMO-K1",
+                "normalized_value": "DEMO-K1",
+                "unit": None,
+                "method": "native",
+                "locator": {"kind": "page", "page": 1, "line": 7},
+            },
+            {
+                "id": r"ambig\x01",
+                "document_id": "other-contract",
+                "kind": "contract",
+                "raw_value": "DEMO-K2",
+                "normalized_value": "DEMO-K2",
+                "unit": None,
+                "method": "native",
+                "locator": {"kind": "page", "page": 1, "line": 8},
+            },
         ]
     )
     return result
@@ -127,26 +152,51 @@ def assert_document_decision_links(workbook) -> None:
         None,
         "outside_period",
     ]
-    assert json.loads(period[9].value) == ["late-period"]
+    period_refs = json.loads(period[9].value)
+    assert period_refs == ["late-period", "ambig\x01"]
     contract = rows["other-contract"]
     assert contract[4].value == "exclude"
     assert contract[5].value == "Документ относится к другому договору"
     assert contract[8].value == "different_contract"
     contract_refs = json.loads(contract[9].value)
-    assert contract_refs == ['=HYPERLINK("https://example.test/")', "contract\nsecond"]
+    assert contract_refs == [
+        '=HYPERLINK("https://example.test/")',
+        "contract\nsecond",
+        r"ambig\x01",
+    ]
     assert rows["unresolved"][8].value == "needs_check"
     assert rows["unresolved"][9].value is None
 
-    sources = {row[0].value: row for row in workbook["Источники"].iter_rows(min_row=2)}
-    assert [sources[ref][1].value for ref in json.loads(period[9].value)] == ["other-period"]
+    source_sheet = workbook["Источники"]
+    assert [cell.value for cell in source_sheet[1]] == [
+        "ID источника",
+        "ID документа",
+        "Документ",
+        "Адрес",
+        "Тип свидетельства",
+        "ID источника (JSON)",
+    ]
+    source_rows = list(source_sheet.iter_rows(min_row=2))
+    sources = {json.loads(row[5].value): row for row in source_rows}
+    assert len(sources) == len(source_rows)
+    assert sources["late-period"][5].value == '"late-period"'
+    assert [sources[ref][1].value for ref in period_refs] == ["other-period"] * 2
     assert sources["late-period"][3].value == "Страница 1; строка 3"
-    assert [sources[ref][1].value for ref in contract_refs] == ["other-contract"] * 2
+    assert [sources[ref][1].value for ref in contract_refs] == ["other-contract"] * 3
     assert [sources[ref][3].value for ref in contract_refs] == [
         "Страница 1; строка 4",
         "Страница 1; строка 5",
+        "Страница 1; строка 8",
     ]
     assert sources["unlinked-source"][1].value == "unresolved"
-    for cell in (contract[8], contract[9], *(sources[ref][0] for ref in contract_refs)):
+    assert sources["ambig\x01"][0].value == sources[r"ambig\x01"][0].value == r"ambig\x01"
+    assert sources["ambig\x01"][5].value != sources[r"ambig\x01"][5].value
+    assert sources["ambig\x01"][3].value == "Страница 1; строка 7"
+    for cell in (
+        contract[8],
+        contract[9],
+        *(sources[ref][column] for ref in contract_refs for column in (0, 5)),
+    ):
         assert cell.data_type == "s" and cell.hyperlink is None
 
 
