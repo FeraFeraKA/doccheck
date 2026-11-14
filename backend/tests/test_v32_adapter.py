@@ -932,3 +932,35 @@ def test_primary_raster_pdf_keeps_only_usable_ocr_evidence(
     if expected:
         assert evidence[0].locator.page == 2
         assert evidence[0].normalized_value == "E2E-31"
+
+
+def test_only_trusted_local_worker_can_add_omitted_requested_row(
+    uploaded_files, tmp_path, monkeypatch
+):
+    from doccheck_backend.contracts.locators import SheetLocator
+    from doccheck_backend.run_worker import RunIdentity, _process
+
+    _stub_ollama(monkeypatch, "1172.70")
+    run_id = uuid4()
+    run = StoredRun(
+        run_id,
+        {
+            "report_document_id": uploaded_files[0]["id"],
+            "contract_number": "E2E-31",
+            "period_start": "2027-02-01",
+            "period_end": "2027-03-31",
+            "report_row_locator": None,
+        },
+        uploaded_files,
+    )
+    job = process(run, tmp_path)
+    assert job.result is not None
+    job.result.scope.report_row_locator = SheetLocator(kind="sheet", sheet="КФЗ", range="A7")
+    identity = RunIdentity.from_run(run)
+
+    assert _process(run, tmp_path, lambda *_: job).result.scope.report_row_locator.range == "A7"
+    with pytest.raises(ValueError, match="uploaded scope"):
+        identity.validate(job, synthetic=True)
+
+    job.result.scope.contract_number = "OTHER-CONTRACT"
+    assert _process(run, tmp_path, lambda *_: job).status == "failed"
