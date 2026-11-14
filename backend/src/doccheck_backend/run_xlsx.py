@@ -94,6 +94,7 @@ def export_check_result(result: CheckResult) -> bytes:
             len(result.documents) + 1,
             len(summary.primary_issues) + 1,
             sum(len(row.calculation.components) for row in result.rows) + 1,
+            sum(len(document.decision.evidence_refs) for document in result.documents) + 1,
         )
         > 1_048_576
     ):
@@ -102,6 +103,7 @@ def export_check_result(result: CheckResult) -> bytes:
     sheet = workbook.active
     sheet.title = "Сверка"
     documents = {document.id: document for document in result.documents}
+    source_keys = {evidence.id: f"S{number}" for number, evidence in enumerate(result.evidence, 1)}
     scope = result.scope
     _append(sheet, "Проверка", result.run_id)
     _append(sheet, "Тип данных", "Синтетические" if result.synthetic else "Рабочие")
@@ -190,7 +192,15 @@ def export_check_result(result: CheckResult) -> bytes:
     _finish(components, 1, (24, 22, 24, 12, 58, 29, 29, 29, 29, 35))
 
     sources = workbook.create_sheet("Источники")
-    _append(sources, "ID источника", "ID документа", "Документ", "Адрес", "Тип свидетельства")
+    _append(
+        sources,
+        "ID источника",
+        "ID документа",
+        "Документ",
+        "Адрес",
+        "Тип свидетельства",
+        "Ключ источника в книге",
+    )
     for evidence in result.evidence:
         _append(
             sources,
@@ -199,8 +209,9 @@ def export_check_result(result: CheckResult) -> bytes:
             documents[evidence.document_id].name,
             _location(evidence.locator),
             evidence.kind,
+            source_keys[evidence.id],
         )
-    _finish(sources, 1, (29, 32, 42, 61, 24))
+    _finish(sources, 1, (29, 32, 42, 61, 24, 40))
 
     files = workbook.create_sheet("Документы")
     _append(
@@ -213,8 +224,10 @@ def export_check_result(result: CheckResult) -> bytes:
         "Основание",
         "Ошибки файла",
         "ID исходного документа",
+        "Код причины решения",
+        "Ключ оснований решения",
     )
-    for document in result.documents:
+    for number, document in enumerate(result.documents, 1):
         _append(
             files,
             document.id,
@@ -226,8 +239,10 @@ def export_check_result(result: CheckResult) -> bytes:
             "\n".join(f"{error.id} · {error.code}: {error.message}" for error in document.errors)
             or None,
             document.duplicate_of,
+            document.decision.reason_code,
+            f"D{number}" if document.decision.evidence_refs else None,
         )
-    _finish(files, 1, (32, 42, 16, 17, 17, 45, 45, 32))
+    _finish(files, 1, (32, 42, 16, 17, 17, 45, 45, 32, 28, 45))
 
     issues = workbook.create_sheet("Первичные замечания")
     _append(issues, "ID замечания", "Код", "Описание", "ID источников", "ID ошибок файлов")
@@ -241,6 +256,13 @@ def export_check_result(result: CheckResult) -> bytes:
             "\n".join(issue.file_error_refs) or None,
         )
     _finish(issues, 1, (27, 27, 61, 32, 32))
+
+    decision_sources = workbook.create_sheet("Основания решений")
+    _append(decision_sources, "Ключ оснований решения", "Ключ источника в книге")
+    for number, document in enumerate(result.documents, 1):
+        for ref in document.decision.evidence_refs:
+            _append(decision_sources, f"D{number}", source_keys[ref])
+    _finish(decision_sources, 1, (30, 30))
 
     with BytesIO() as output:
         workbook.save(output)

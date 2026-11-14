@@ -1,4 +1,5 @@
 import json
+from copy import deepcopy
 from io import BytesIO
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -13,13 +14,226 @@ from doccheck_backend.api import create_app
 from doccheck_backend.config import Settings
 from doccheck_backend.contracts import CheckJob, CheckResult
 from doccheck_backend.models import Run
-from doccheck_backend.run_xlsx import XLSX_MEDIA_TYPE, export_check_result
+from doccheck_backend.run_xlsx import XLSX_MEDIA_TYPE, XlsxReportLimitError, export_check_result
 
 FIXTURE = Path(__file__).resolve().parents[2] / "contracts/check-result.v1.synthetic.json"
 
 
 def fixture_payload() -> dict:
     return json.loads(FIXTURE.read_text(encoding="utf-8"))
+
+
+def decision_result() -> dict:
+    result = fixture_payload()["result"]
+    decisions = [
+        (
+            "other-period",
+            "outside_period",
+            "Документ вне периода",
+            ["late-period", "ambig\x01"],
+        ),
+        (
+            "other-contract",
+            "different_contract",
+            "Документ относится к другому договору",
+            ['=HYPERLINK("https://example.test/")', "contract\nsecond", r"ambig\x01"],
+        ),
+        ("unresolved", "needs_check", "Основание не установлено", []),
+    ]
+    for number, (document_id, code, message, refs) in enumerate(decisions, 4):
+        result["documents"].append(
+            {
+                "id": document_id,
+                "name": f"synthetic-{document_id}.pdf",
+                "sha256": str(number) * 64,
+                "format": "pdf",
+                "role": "support",
+                "parse_status": "parsed",
+                "decision": {
+                    "state": "needs_review" if document_id == "unresolved" else "exclude",
+                    "reason_code": code,
+                    "message": message,
+                    "evidence_refs": refs,
+                },
+                "errors": [],
+            }
+        )
+    result["evidence"].extend(
+        [
+            {
+                "id": "late-period",
+                "document_id": "other-period",
+                "kind": "period",
+                "raw_value": "Март 2025",
+                "normalized_value": {"start": "2025-03-01", "end": "2025-03-31"},
+                "unit": None,
+                "method": "native",
+                "locator": {"kind": "page", "page": 1, "line": 3},
+            },
+            {
+                "id": '=HYPERLINK("https://example.test/")',
+                "document_id": "other-contract",
+                "kind": "contract",
+                "raw_value": "DEMO-K2",
+                "normalized_value": "DEMO-K2",
+                "unit": None,
+                "method": "native",
+                "locator": {"kind": "page", "page": 1, "line": 4},
+            },
+            {
+                "id": "contract\nsecond",
+                "document_id": "other-contract",
+                "kind": "contract",
+                "raw_value": "DEMO-K2",
+                "normalized_value": "DEMO-K2",
+                "unit": None,
+                "method": "native",
+                "locator": {"kind": "page", "page": 1, "line": 5},
+            },
+            {
+                "id": "unlinked-source",
+                "document_id": "unresolved",
+                "kind": "contract",
+                "raw_value": "DEMO-K3",
+                "normalized_value": "DEMO-K3",
+                "unit": None,
+                "method": "native",
+                "locator": {"kind": "page", "page": 1, "line": 6},
+            },
+            {
+                "id": "ambig\x01",
+                "document_id": "other-period",
+                "kind": "contract",
+                "raw_value": "DEMO-K1",
+                "normalized_value": "DEMO-K1",
+                "unit": None,
+                "method": "native",
+                "locator": {"kind": "page", "page": 1, "line": 7},
+            },
+            {
+                "id": r"ambig\x01",
+                "document_id": "other-contract",
+                "kind": "contract",
+                "raw_value": "DEMO-K2",
+                "normalized_value": "DEMO-K2",
+                "unit": None,
+                "method": "native",
+                "locator": {"kind": "page", "page": 1, "line": 8},
+            },
+        ]
+    )
+    return result
+
+
+def assert_document_decision_links(workbook) -> None:
+    sheet = workbook["Документы"]
+    rows = {row[0].value: row for row in sheet.iter_rows(min_row=2)}
+    assert [cell.value for cell in sheet[1]] == [
+        "ID документа",
+        "Документ",
+        "Роль",
+        "Состояние",
+        "Решение",
+        "Основание",
+        "Ошибки файла",
+        "ID исходного документа",
+        "Код причины решения",
+        "Ключ оснований решения",
+    ]
+    period = rows["other-period"]
+    assert [cell.value for cell in period[:9]] == [
+        "other-period",
+        "synthetic-other-period.pdf",
+        "Первичный",
+        "parsed",
+        "exclude",
+        "Документ вне периода",
+        None,
+        None,
+        "outside_period",
+    ]
+    period_key = period[9].value
+    contract = rows["other-contract"]
+    assert contract[4].value == "exclude"
+    assert contract[5].value == "Документ относится к другому договору"
+    assert contract[8].value == "different_contract"
+    contract_key = contract[9].value
+    assert rows["unresolved"][8].value == "needs_check"
+    assert rows["unresolved"][9].value is None
+
+    source_sheet = workbook["Источники"]
+    assert [cell.value for cell in source_sheet[1]] == [
+        "ID источника",
+        "ID документа",
+        "Документ",
+        "Адрес",
+        "Тип свидетельства",
+        "Ключ источника в книге",
+    ]
+    source_rows = list(source_sheet.iter_rows(min_row=2))
+    sources = {row[5].value: row for row in source_rows}
+    assert len(sources) == len(source_rows)
+    link_sheet = workbook["Основания решений"]
+    assert [cell.value for cell in link_sheet[1]] == [
+        "Ключ оснований решения",
+        "Ключ источника в книге",
+    ]
+    links = [(row[0].value, row[1].value) for row in link_sheet.iter_rows(min_row=2)]
+    period_sources = [sources[source] for group, source in links if group == period_key]
+    contract_sources = [sources[source] for group, source in links if group == contract_key]
+    assert [row[1].value for row in period_sources] == ["other-period"] * 2
+    assert [row[3].value for row in period_sources] == [
+        "Страница 1; строка 3",
+        "Страница 1; строка 7",
+    ]
+    assert [row[1].value for row in contract_sources] == ["other-contract"] * 3
+    assert [row[3].value for row in contract_sources] == [
+        "Страница 1; строка 4",
+        "Страница 1; строка 5",
+        "Страница 1; строка 8",
+    ]
+    assert period_sources[0][0].value == "late-period"
+    assert contract_sources[0][0].value == '=HYPERLINK("https://example.test/")'
+    assert contract_sources[1][0].value == "contract\nsecond"
+    assert period_sources[1][0].value == contract_sources[2][0].value == r"ambig\x01"
+    assert period_sources[1][5].value != contract_sources[2][5].value
+    assert any(
+        row[0].value == "unlinked-source" and row[1].value == "unresolved" for row in source_rows
+    )
+    for cell in (
+        contract[8],
+        contract[9],
+        *(row[column] for row in contract_sources for column in (0, 5)),
+    ):
+        assert cell.data_type == "s" and cell.hyperlink is None
+
+
+def test_document_decisions_preserve_only_their_saved_sources():
+    result = CheckResult.model_validate(decision_result())
+    workbook = load_workbook(BytesIO(export_check_result(result)))
+    assert_document_decision_links(workbook)
+
+
+def test_document_decision_code_is_literal_and_not_truncated():
+    payload = decision_result()
+    code = '=HYPERLINK("https://example.test/")'
+    payload["documents"][-1]["decision"]["reason_code"] = code
+    workbook = load_workbook(BytesIO(export_check_result(CheckResult.model_validate(payload))))
+    row = next(
+        row for row in workbook["Документы"].iter_rows(min_row=2) if row[0].value == "unresolved"
+    )
+    assert row[8].value == code and row[8].data_type == "s" and row[8].hyperlink is None
+
+    payload["documents"][-1]["decision"]["reason_code"] = "x" * 32_768
+    with pytest.raises(XlsxReportLimitError, match="cell text exceeds Excel limit"):
+        export_check_result(CheckResult.model_validate(payload))
+
+
+def test_too_many_document_decision_sources_fails_before_writing():
+    result = CheckResult.model_validate(decision_result())
+    result.documents[-1].decision.evidence_refs = ["late-period"] * 1_048_576
+    with pytest.raises(XlsxReportLimitError, match="too many worksheet rows"):
+        export_check_result(result)
 
 
 def test_workbook_preserves_amounts_and_keeps_all_untrusted_cells_literal():
@@ -45,6 +259,7 @@ def test_workbook_preserves_amounts_and_keeps_all_untrusted_cells_literal():
         "Источники",
         "Документы",
         "Первичные замечания",
+        "Основания решений",
     ]
     reconciliation = workbook["Сверка"]
     rows = {row[0].value: row for row in reconciliation if row[0].value in ("row-a", "row-b")}
@@ -146,13 +361,13 @@ def test_components_preserve_individual_relations_and_typed_references():
     assert sources[identity][3] == "Лист «Синтетика», A5"
 
 
-def set_saved_result(client, run_id: str, *, status: str) -> None:
+def set_saved_result(client, run_id: str, *, status: str, result: dict | None = None) -> None:
     with Session(client.app.state.engine) as session, session.begin():
         run = session.get(Run, UUID(run_id))
         assert run is not None
         run.status = status
         if status in ("completed", "completed_with_issues"):
-            result = fixture_payload()["result"]
+            result = result or fixture_payload()["result"]
             result["run_id"] = run_id
             run.result = CheckResult.model_validate(result).model_dump(mode="json")
 
@@ -162,7 +377,7 @@ def test_export_saved_result_via_http(database_url, tmp_path, status):
     with TestClient(create_app(Settings(database_url, upload_root=tmp_path))) as client:
         created = submit(client, uuid4())
         run_id = created.json()["run_id"]
-        set_saved_result(client, run_id, status=status)
+        set_saved_result(client, run_id, status=status, result=decision_result())
         response = client.get(f"/api/v0/runs/{run_id}/exports/xlsx")
 
     assert response.status_code == 200
@@ -174,6 +389,58 @@ def test_export_saved_result_via_http(database_url, tmp_path, status):
     workbook = load_workbook(BytesIO(response.content))
     assert workbook["Сверка"]["B1"].value == run_id
     assert workbook["Сверка"]["B2"].value == "Синтетические"
+    assert_document_decision_links(workbook)
+
+
+def test_download_long_id_and_many_decision_sources(database_url, tmp_path):
+    result = decision_result()
+    document = next(item for item in result["documents"] if item["id"] == "other-period")
+    template = next(item for item in result["evidence"] if item["id"] == "late-period")
+    evidence_ids = ["x" * 32_766, *(f"many-{number}" for number in range(5_000))]
+    for number, evidence_id in enumerate(evidence_ids, 100):
+        source = deepcopy(template)
+        source["id"] = evidence_id
+        source["locator"]["line"] = number
+        result["evidence"].append(source)
+    document["decision"]["evidence_refs"].extend(evidence_ids)
+
+    with TestClient(create_app(Settings(database_url, upload_root=tmp_path))) as client:
+        run_id = submit(client, uuid4()).json()["run_id"]
+        set_saved_result(client, run_id, status="completed", result=result)
+        response = client.get(f"/api/v0/runs/{run_id}/exports/xlsx")
+
+    assert response.status_code == 200
+    workbook = load_workbook(BytesIO(response.content))
+    file_row = next(
+        row for row in workbook["Документы"].iter_rows(min_row=2) if row[0].value == "other-period"
+    )
+    key = file_row[9].value
+    linked = [
+        row[1].value
+        for row in workbook["Основания решений"].iter_rows(min_row=2)
+        if row[0].value == key
+    ]
+    sources = {row[5].value: row for row in workbook["Источники"].iter_rows(min_row=2)}
+    assert len(linked) == len(evidence_ids) + 2
+    assert len(set(linked)) == len(linked)
+    assert [sources[source_key][0].value for source_key in linked[2:]] == evidence_ids
+    assert sources[linked[2]][3].value == "Страница 1; строка 100"
+
+
+def test_export_rejects_saved_result_with_missing_decision_evidence(database_url, tmp_path):
+    with TestClient(create_app(Settings(database_url, upload_root=tmp_path))) as client:
+        run_id = submit(client, uuid4()).json()["run_id"]
+        set_saved_result(client, run_id, status="completed", result=decision_result())
+        with Session(client.app.state.engine) as session, session.begin():
+            run = session.get(Run, UUID(run_id))
+            assert run is not None
+            result = deepcopy(run.result)
+            result["documents"][-1]["decision"]["evidence_refs"] = ["missing-id"]
+            run.result = result
+        response = client.get(f"/api/v0/runs/{run_id}/exports/xlsx")
+
+    assert response.status_code == 503
+    assert response.json()["code"] == "service_unavailable"
 
 
 @pytest.mark.parametrize(
