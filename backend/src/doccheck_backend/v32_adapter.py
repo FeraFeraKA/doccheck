@@ -235,11 +235,13 @@ def _read_pdf_report(
         candidates = []
         for item in observations:
             text = item.raw_text.strip()
-            if not text.casefold().startswith(label.casefold()):
+            if text.partition(":")[0].strip().casefold() != label.casefold():
                 continue
             if isinstance(item.locator, PageLocator):
                 amount = _PDF_MONEY.fullmatch(text[len(label) :])
                 candidates.append((item, amount[1] if amount else None))
+        if len(candidates) > 1 or (candidates and candidates[0][1] is None):
+            return None
         if len(candidates) == 1:
             item, raw_amount = candidates[0]
             value = decision_rules.parse_amount(raw_amount)
@@ -484,6 +486,17 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
                     entry = file.v32_entry(folder, "primary")
                     copyfile(source_path, entry["path"])
                     native = read_native_document(Path(entry["path"]), file.format)
+                    if file.format == "xlsx" and any(
+                        issue.code == "formula_cache_mismatch" for issue in native.issues
+                    ):
+                        documents[file.id] = _document(
+                            file,
+                            state="needs_review",
+                            reason_code="formula_cache_mismatch",
+                            message="Сохранённое значение формулы не совпадает с пересчитанным.",
+                        )
+                        observations_by_id[file.id] = native.observations
+                        continue
                     if any(
                         issue.code in {"native_read_error", "encrypted_pdf"}
                         for issue in native.issues

@@ -9,6 +9,7 @@ from xml.etree.ElementTree import Element
 from zipfile import ZipFile
 
 from defusedxml.ElementTree import fromstring
+from openpyxl.styles.numbers import BUILTIN_FORMATS, is_date_format, is_timedelta_format
 
 from doccheck_backend.contracts.locators import SheetLocator
 from doccheck_backend.native_observations import NativeDocument, NativeIssue, Observation
@@ -81,7 +82,27 @@ def _text_runs(element: Element) -> str:
     return "".join(chunks)
 
 
-def _cells(root: Element, shared_strings: list[str]) -> dict[str, _Cell]:
+def _temporal_styles(archive: ZipFile) -> tuple[bool, ...]:
+    if "xl/styles.xml" not in archive.namelist():
+        return (False,)
+    root = _part(archive, "xl/styles.xml")
+    formats = dict(BUILTIN_FORMATS)
+    formats.update(
+        {
+            int(item.attrib["numFmtId"]): item.attrib["formatCode"]
+            for item in root.findall(f"{_SHEET}numFmts/{_SHEET}numFmt")
+        }
+    )
+    result = []
+    for cell_format in root.findall(f"{_SHEET}cellXfs/{_SHEET}xf"):
+        code = formats.get(int(cell_format.get("numFmtId", "0")))
+        result.append(is_date_format(code) or is_timedelta_format(code))
+    return tuple(result) or (False,)
+
+
+def _cells(
+    root: Element, shared_strings: list[str], temporal_styles: tuple[bool, ...]
+) -> dict[str, _Cell]:
     if root.tag != _SHEET + "worksheet":
         raise ValueError("Invalid worksheet")
     cells = {}
@@ -93,6 +114,12 @@ def _cells(root: Element, shared_strings: list[str]) -> dict[str, _Cell]:
         kind = node.get("t", "n")
         value = node.findtext(_SHEET + "v") or ""
         formula = node.find(_SHEET + "f")
+        style = int(node.get("s", "0"))
+        if not 0 <= style < len(temporal_styles):
+            raise ValueError("Invalid spreadsheet cell style")
+        if kind in {"b", "d", "e"} or temporal_styles[style]:
+            cells[key] = _Cell(value, "nonmonetary", formula=formula is not None)
+            continue
         if formula is not None:
             content = formula.text or ""
             expression = content if content.startswith("=") else "=" + content
@@ -177,7 +204,7 @@ def _sum_candidate(
             current = cells.get(key)
             if current is None:
                 continue
-            if key == address or current.formula or current.kind == "e":
+            if key == address or current.formula or current.kind == "nonmonetary":
                 return None, (), "unsupported_sum_input"
             if current.kind == "n":
                 if current.numeric is None:
@@ -209,6 +236,10 @@ def _read_sheet(
     sheet_observations = {}
     for address, cell in cells.items():
         locator = SheetLocator(kind="sheet", sheet=title, range=address)
+        if cell.kind == "nonmonetary":
+            issues.append(NativeIssue("nonmonetary_cell", locator=locator))
+            sheet_observations[address] = Observation(cell.raw, locator)
+            continue
         if cell.formula:
             amount, inputs, issue = _sum_candidate(address, cell.raw, cells)
             if (
@@ -281,6 +312,7 @@ def read_workbook(path: Path) -> NativeDocument:
     observations: list[Observation] = []
     issues: list[NativeIssue] = []
     with ZipFile(path) as archive:
+        temporal = _temporal_styles(archive)
         workbook = _part(archive, "xl/workbook.xml")
         if workbook.tag != _SHEET + "workbook":
             raise ValueError("Invalid workbook")
@@ -317,7 +349,7 @@ def read_workbook(path: Path) -> NativeDocument:
                 continue
             _read_sheet(
                 sheet.attrib["name"],
-                _cells(_part(archive, str(member)), shared),
+                _cells(_part(archive, str(member)), shared, temporal),
                 observations,
                 issues,
             )
