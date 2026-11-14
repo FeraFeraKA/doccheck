@@ -35,6 +35,7 @@ from doccheck_backend.evidence_binding import (
     bind_observations,
 )
 from doccheck_backend.grounded_amounts import GroundedDocument, format_rubles, ground_document
+from doccheck_backend.native_pdf import read_pdf
 from doccheck_backend.normalization import normalize_contract_number, normalize_document_period
 from doccheck_backend.page_ocr import OcrError, render_pages
 from doccheck_backend.result_summary import build_summary
@@ -87,6 +88,7 @@ _CODES = {
     "different_contract": "В оригинале указан другой договор.",
     "outside_period": "Документ относится к периоду вне выбранной области.",
     "source_unreadable": "Оригинал недоступен, изменён или не читается.",
+    "encrypted_pdf": "PDF защищён паролем. Загрузите доступную копию файла.",
     "source_incomplete": "Часть оригинала не прочитана. Итог требует проверки.",
     "report_incomplete": "Не удалось прочитать все обязательные показатели строки КФЗ.",
     "qwen_prediction_failed": "Локальная модель не смогла прочитать документ.",
@@ -746,6 +748,21 @@ class V32Processor:
                         if document.format == "xlsx":
                             native = read_native_report(path)
                         elif document.format in {"pdf", "png"}:
+                            if document.format == "pdf" and any(
+                                issue.code == "encrypted_pdf"
+                                for issue in read_pdf(path, page_number=1).issues
+                            ):
+                                return CheckJob(
+                                    run_id=run_id,
+                                    status="failed",
+                                    result=None,
+                                    error=Issue(
+                                        code="encrypted_pdf",
+                                        message=(
+                                            "Файл КФЗ защищён паролем. Загрузите доступную копию."
+                                        ),
+                                    ),
+                                )
                             report_copy = path
                             if run.scope is None:
                                 matches = set()
@@ -771,6 +788,9 @@ class V32Processor:
                         grounded = ground_document(
                             run.id, document.id, path, document.format, _digest(path)
                         )
+                        if any(issue.code == "encrypted_pdf" for issue in grounded.issues):
+                            _file_error(document, "encrypted_pdf")
+                            continue
                         grounds[document.id] = grounded
                         if grounded.issues:
                             _file_error(document, "source_incomplete")
