@@ -106,6 +106,18 @@ def _line_score(image: Image, x: int, top: int, bottom: int) -> float:
     return sum(min(rows[i : i + stride]) < 160 for i in range(0, len(rows), stride)) / crop.height
 
 
+def _has_long_line_gap(image: Image, x: int, top: int, bottom: int) -> bool:
+    radius = max(2, image.width // 1500)
+    crop = image.crop((x - radius, top, x + radius + 1, bottom))
+    pixels = crop.tobytes()
+    gap = 0
+    for cursor in range(0, len(pixels), crop.width):
+        gap = gap + 1 if min(pixels[cursor : cursor + crop.width]) >= 200 else 0
+        if gap > max(crop.height * 0.14, image.height * 0.018):
+            return True
+    return False
+
+
 def _cell_box(grid: TableGrid, index: int, top: int, bottom: int) -> PixelBox:
     return grid.x[index] + 4, top + 3, grid.x[index + 1] - 4, bottom - 2
 
@@ -147,7 +159,7 @@ def _safe_row_cell(image: Image, grid: TableGrid, index: int) -> bool:
         span = right - left - 10
         if span <= 0:
             return False
-        region = image.crop((left + 5, top + 4, right - 5, bottom - 4))
+        region = image.crop((left + 5, top + 2, right - 5, bottom - 2))
         stripe = region.tobytes()
         if any(
             sum(pixel <= 160 for pixel in stripe[i : i + span]) >= span * 0.68
@@ -253,6 +265,11 @@ def _scoped_column_roles(
                 _line_score(image, grid.x[index + 1], header_bottom + 4, grid.row[0] - 3),
             )
             < 0.60
+        ):
+            continue
+        if any(
+            _has_long_line_gap(image, grid.x[column], header_bottom + 4, grid.row[0] - 3)
+            for column in (index, index + 1)
         ):
             continue
         roles[category] = index
