@@ -1,30 +1,6 @@
-interface PageAddress {
-  page: number;
-  table_row?: number | null;
-  table_column?: number | null;
-  bbox?: number[] | null;
-  line?: number | null;
-  fragment_id?: string | null;
-}
+import type { SourceAddress } from '../../shared/lib/sourceLocation';
 
-interface SheetAddress {
-  sheet: string;
-  range: string;
-}
-
-interface ParagraphAddress {
-  kind: 'paragraph';
-  paragraph: number;
-}
-
-interface TableCellAddress {
-  kind: 'table_cell';
-  table: number;
-  row: number;
-  cell: number;
-}
-
-type SourceAddress = PageAddress | SheetAddress | ParagraphAddress | TableCellAddress;
+export { formatLocation } from '../../shared/lib/sourceLocation';
 
 interface SourceEvidence {
   id: string;
@@ -115,19 +91,4 @@ export function formatDecimal(value: string | null) {
   const [integer, decimals] = value.split('.');
   const grouped = integer.replace(/\B(?=(\d{3})+(?!\d))/g, '\u00a0');
   return decimals === undefined ? grouped : `${grouped},${decimals}`;
-}
-
-export function formatLocation(locator: SourceAddress) {
-  if ('sheet' in locator) return `Лист «${locator.sheet}», ${locator.range}`;
-  if ('paragraph' in locator) return `Абзац ${locator.paragraph}`;
-  if ('table' in locator) return `Таблица ${locator.table}, строка ${locator.row}, ячейка ${locator.cell}`;
-
-  const parts = [`Страница ${locator.page}`];
-  if (locator.table_row != null && locator.table_column != null) {
-    parts.push(`строка ${locator.table_row}`, `столбец ${locator.table_column}`);
-  } else if (locator.line != null) {
-    parts.push(`строка ${locator.line}`);
-  }
-  if (locator.fragment_id != null) parts.push(`фрагмент ${locator.fragment_id}`);
-  return parts.join(', ');
 }
