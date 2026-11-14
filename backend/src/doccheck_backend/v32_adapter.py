@@ -50,7 +50,8 @@ _CONTRACT = re.compile(r"^Договор\s*№\s*(\S+?)\.?$", re.IGNORECASE)
 _DATE = re.compile(r"(?<!\d)(?:\d{4}-\d{2}-\d{2}|\d{2}\.\d{2}\.\d{4})(?!\d)")
 _PERIOD = re.compile(r"^Период\b", re.IGNORECASE)
 _TOTAL_CANDIDATE = re.compile(
-    r"\b(?:итого|всего|итоговая\s+сумма|стоимость\s+(?:услуг|работ|оказанных|выполненных))\b",
+    r"\b(?:итого|всего|итоговая\s+сумма|к\s+(?:оплате|уплате)|"
+    r"стоимость\s+(?:услуг|работ|оказанных|выполненных))\b",
     re.IGNORECASE,
 )
 _CURRENT_TOTAL = re.compile(
