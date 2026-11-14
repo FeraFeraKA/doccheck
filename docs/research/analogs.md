@@ -18,7 +18,7 @@
 - **Работает на базе `544677aa3871c9e259614dd538d1c9792994c89c`.** Экран
   создаёт синтетическое задание и показывает статус и тестовый результат.
   FastAPI отдаёт его из PostgreSQL, отдельный worker формирует тестовое
-  сообщение. Compose поднимает этот контур. [Экран](../../frontend/src/pages/home/HomePage.tsx) ·
+  сообщение. Compose поднимает этот контур. [Исторический экран](https://github.com/VCyberPunk2077/doccheck/blob/e454fa91978527a5fb0051e3b504a9a37db08d90/frontend/src/pages/home/HomePage.tsx) ·
   [Маршруты](../../backend/src/doccheck_backend/api.py) ·
   [Worker](../../backend/src/doccheck_backend/worker.py) ·
   [Запуск](../../README.md#запуск-каркаса-через-docker-compose)
@@ -33,7 +33,7 @@
   Сценарий решения по расхождению, журнал решений и применение исправлений
   также требуют реализации. Упоминание этих функций в постановке NRT-62
   описывает замысел демо. GPU, запуск Qwen с весами и локальная обработка
-  рабочего пакета требуют отдельных проверок. [Экран](../../frontend/src/pages/home/HomePage.tsx) ·
+  рабочего пакета требуют отдельных проверок. [Исторический экран](https://github.com/VCyberPunk2077/doccheck/blob/e454fa91978527a5fb0051e3b504a9a37db08d90/frontend/src/pages/home/HomePage.tsx) ·
   [Маршруты](../../backend/src/doccheck_backend/api.py) · [Граница модуля](../ml-module-boundary.md) ·
   [NRT-62][nrt62]
 

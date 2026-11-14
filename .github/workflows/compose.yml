@@ -129,7 +129,7 @@ jobs:
           else
             test "$?" = 2
           fi
-      - name: Run browser scenario against the Compose stack
+      - name: Check browser navigation and worker lifecycle against the Compose stack
         working-directory: frontend
         run: |
           node --input-type=module <<'JAVASCRIPT'
@@ -142,29 +142,40 @@ jobs:
           try {
             const page = await browser.newPage();
             await page.goto(origin + '/system-status');
-            await expect(page.getByText('API и PostgreSQL доступны.')).toBeVisible();
-            const created = page.waitForResponse(response =>
-              response.url() === origin + '/api/synthetic-jobs' && response.request().method() === 'POST');
+            await expect(page).toHaveURL(origin + '/checks/new');
+            await expect(page.getByRole('heading', { name: 'Новая проверка', exact: true })).toBeVisible();
+            await expect(page.getByRole('link', { name: 'Проверка системы' })).toHaveCount(0);
+
+            const health = await page.request.get(origin + '/health');
+            assert.equal(health.status(), 200);
+            assert.deepEqual(await health.json(), { status: 'ok', database: 'ok' });
+
+            const jobsUrl = origin + '/api/synthetic-jobs';
             const start = Date.now();
-            await page.getByRole('button', { name: 'Создать синтетическое задание' }).click();
-            const response = await created;
+            const response = await page.request.post(jobsUrl);
             assert.equal(response.status(), 201);
             const job = await response.json();
             assert.equal(job.status, 'queued');
             assert.equal(job.synthetic, true);
             assert.match(job.id, /^[a-f0-9-]{36}$/);
-            await expect(page.getByText('Статус: В очереди')).toBeVisible();
-            await expect(page.getByText('Статус: Обрабатывается')).toBeVisible();
-            await expect(page.getByText('Статус: Завершено')).toBeVisible({ timeout: 15000 });
-            await expect(page.getByText(/^Тестовый результат:/)).toBeVisible();
-            const completed = await page.request.get(origin + '/api/synthetic-jobs/' + job.id);
+            const jobUrl = jobsUrl + '/' + job.id;
+            let observedProcessing = false;
+            await expect.poll(async () => {
+              const current = await page.request.get(jobUrl);
+              assert.equal(current.status(), 200);
+              const { status } = await current.json();
+              observedProcessing ||= status === 'processing';
+              return status;
+            }, { timeout: 15000 }).toBe('completed');
+            assert.equal(observedProcessing, true);
+            const completed = await page.request.get(jobUrl);
             assert.equal(completed.status(), 200);
             const result = await completed.json();
             assert.equal(result.status, 'completed');
             assert.equal(result.result.synthetic, true);
             assert.equal(result.error, null);
             appendFileSync(process.env.GITHUB_ENV, 'DOCCHECK_CI_JOB_ID=' + job.id + '\n');
-            console.log('Browser synthetic job completed in ' + (Date.now() - start) + ' ms.');
+            console.log('Synthetic job completed via the API in ' + (Date.now() - start) + ' ms.');
           } finally {
             await browser.close();
           }

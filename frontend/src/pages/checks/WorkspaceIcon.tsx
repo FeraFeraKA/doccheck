@@ -16,7 +16,6 @@ const icons = {
   help: <><circle cx="12" cy="12" r="10" /><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3m.1 4h.01" /></>,
   fileSearch: <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Zm0 0v6h6m-8 8 3 3" /><circle cx="10" cy="13" r="3" /></>,
   close: <path d="m6 6 12 12M18 6 6 18" />,
-  status: <><rect x="3" y="4" width="18" height="13" rx="2" /><path d="M8 21h8m-4-4v4m-3-11 2 2 4-4" /></>,
 } satisfies Record<string, ReactNode>;
 
 export function WorkspaceIcon({ name, size = 20 }: { name: keyof typeof icons; size?: number }) {
