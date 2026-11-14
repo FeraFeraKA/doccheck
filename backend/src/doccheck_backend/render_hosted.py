@@ -3,12 +3,15 @@
 import os
 import subprocess
 import sys
+from pathlib import Path
 from uuid import NAMESPACE_URL, uuid5
 
 from doccheck_backend.config import Settings
-from doccheck_backend.hosted_fixtures import materialize
 from doccheck_backend.hosted_seed import seed
 from doccheck_backend.render_demo import _environment
+
+_MANIFEST = Path(__file__).with_name("hosted_demo_inputs") / "manifest.json"
+_MANIFEST_SHA256 = "bb0d7e4d6a4ceae77f21cb0eb3676cee8c7958a4f14ce9d6c511f0fc7cc812ab"
 
 
 def main() -> int:
@@ -50,11 +53,10 @@ def main() -> int:
 
 
 def seed_demo(settings: Settings) -> None:
-    """Generate only compiled synthetic inputs in the service's own data directory."""
-    manifest, digest = materialize(settings.upload_root.parent / "approved-demo-001")
+    """Admit or restore only the package pinned in the built artifact."""
     for viewer in settings.hosted_viewers or {}:
         key = uuid5(NAMESPACE_URL, f"doccheck-preview:demo-001:{viewer}")
-        seed(settings, manifest, digest, key, viewer=viewer)
+        seed(settings, _MANIFEST, _MANIFEST_SHA256, key, viewer=viewer, restore_originals=True)
 
 
 if __name__ == "__main__":

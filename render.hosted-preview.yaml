@@ -5,22 +5,18 @@ services:
   - type: web
     name: doccheck-hosted-preview-api
     runtime: docker
-    plan: 0.5c-512mb
+    plan: free
     region: frankfurt
     autoDeployTrigger: 'off'
     dockerfilePath: ./backend/Dockerfile
     dockerContext: .
     dockerCommand: python -m doccheck_backend.render_hosted
     healthCheckPath: /health
-    disk:
-      name: synthetic-preview-originals
-      mountPath: /var/lib/doccheck
-      sizeGB: 1
     envVars:
       - key: DOCCHECK_PUBLIC_DEMO
         value: '1'
       - key: DOCCHECK_UPLOAD_ROOT
-        value: /var/lib/doccheck/runs
+        value: /tmp/doccheck-preview/runs
       - key: DOCCHECK_HOSTED_WORKER_SHA256
         sync: false
       - key: DOCCHECK_HOSTED_VIEWERS

@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import hmac
+import http.client
 import json
 import logging
 import os
@@ -31,6 +32,10 @@ _RESULT_LIMIT = 1024**2
 class _NoRedirects(HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
+
+
+class _TransientDownloadError(RuntimeError):
+    """The current lease can expire and be reclaimed."""
 
 
 class HostedClient:
@@ -97,14 +102,31 @@ class HostedClient:
                 or not 0 < size <= _FILE_LIMIT
             ):
                 raise ValueError("Invalid document manifest")
-            with self.request("GET", f"/claims/{lease}/files/{identifier}") as response:
-                payload = response.read(size + 1)
-            if len(payload) != size or not hmac.compare_digest(
-                hashlib.sha256(payload).hexdigest(), digest
-            ):
+            payload = self._download_payload(lease, identifier, size)
+            if not hmac.compare_digest(hashlib.sha256(payload).hexdigest(), digest):
                 raise ValueError("Document integrity check failed")
             with (folder / identifier).open("xb") as output:
                 output.write(payload)
+
+    def _download_payload(self, lease: UUID, identifier: str, size: int) -> bytes:
+        for attempt in range(3):
+            try:
+                with self.request("GET", f"/claims/{lease}/files/{identifier}") as response:
+                    payload = response.read(size + 1)
+                if len(payload) > size:
+                    raise ValueError("Document exceeds recorded size")
+                if len(payload) == size:
+                    return payload
+            except HTTPError as error:
+                if error.code in {404, 409}:
+                    raise _TransientDownloadError("Hosted original or lease disappeared") from None
+                if error.code not in {408, 429, 500, 502, 503, 504}:
+                    raise
+            except (OSError, http.client.HTTPException):
+                pass
+            if attempt < 2:
+                time.sleep(attempt + 1)
+        raise _TransientDownloadError("Retryable failure while downloading hosted original")
 
     def process_one(self, process: RunProcessor) -> bool:
         claim = self.claim()
@@ -143,6 +165,9 @@ class HostedClient:
         try:
             self.download(claim, folder)
             return process(StoredRun(run_id, claim["scope"], claim["documents"]), folder)
+        except _TransientDownloadError:
+            # Let the server reassign the generation when the last heartbeat expires.
+            raise
         except Exception as error:
             _LOG.warning("Hosted processing failed (%s)", type(error).__name__)
             return self._failure(run_id)
@@ -182,7 +207,7 @@ def main() -> int:
             if args.once or error.code in (401, 403, 404):
                 return 1
             claimed = False
-        except (OSError, ValueError):
+        except (OSError, ValueError, _TransientDownloadError):
             _LOG.error("Hosted worker request failed")
             if args.once:
                 return 1

@@ -78,6 +78,29 @@ def _require_current(claim: HostedClaim, run: Run, now: datetime) -> None:
         raise HTTPException(409, "Worker lease expired")
 
 
+def expire_terminal_runs(session: Session, *, viewer: UUID | None = None) -> None:
+    """Persist terminal expiration even when a worker never returns."""
+    now = _clock(session)
+    expired = (
+        select(HostedClaim, Run)
+        .join(Run, HostedClaim.run_id == Run.id)
+        .where(
+            Run.status == "processing",
+            (HostedClaim.deadline_at <= now)
+            | ((HostedClaim.attempt >= 3) & (HostedClaim.expires_at <= now)),
+        )
+        .with_for_update(skip_locked=True)
+    )
+    if viewer is not None:
+        expired = expired.where(HostedClaim.viewer_id == viewer)
+    for _, run in session.execute(expired):
+        run.status = "failed"
+        run.finished_at = now
+        run.error = Issue(
+            code="worker_interrupted", message="Истекло время обработки пакета."
+        ).model_dump(mode="json")
+
+
 def _noncache() -> dict[str, str]:
     return {"Cache-Control": "no-store"}
 
@@ -85,6 +108,7 @@ def _noncache() -> dict[str, str]:
 @router.post("/claims", response_model=Lease)
 def claim_run(request: Request, response: Response, _auth: Auth) -> Lease | Response:
     with Session(request.app.state.engine) as session, session.begin():
+        expire_terminal_runs(session)
         now = _clock(session)
         candidates = session.execute(
             select(HostedClaim, Run)

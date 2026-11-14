@@ -294,10 +294,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @application.post("/api/synthetic-jobs", response_model=JobResponse, status_code=201)
     def post_job(request: Request) -> JobResponse:
+        if request.app.state.hosted_worker_digest is not None:
+            raise HTTPException(404, "Synthetic demo queue unavailable")
         return create_job(request.app.state.engine)
 
     @application.get("/api/synthetic-jobs/{job_id}", response_model=JobResponse)
     def read_job(job_id: UUID, request: Request) -> JobResponse:
+        if request.app.state.hosted_worker_digest is not None:
+            raise HTTPException(404, "Synthetic demo queue unavailable")
         job = get_job(request.app.state.engine, job_id)
         if job is None:
             raise HTTPException(status_code=404, detail="Job not found")

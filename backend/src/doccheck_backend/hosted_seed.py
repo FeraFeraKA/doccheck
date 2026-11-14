@@ -34,7 +34,13 @@ class SyntheticPackage(BaseModel):
 
 
 def seed(
-    settings: Settings, manifest: Path, expected: str, key: UUID, *, viewer: UUID | None = None
+    settings: Settings,
+    manifest: Path,
+    expected: str,
+    key: UUID,
+    *,
+    viewer: UUID | None = None,
+    restore_originals: bool = False,
 ) -> UUID:
     if not settings.public_demo or settings.hosted_worker_digest is None:
         raise ValueError("Synthetic worker queue is disabled")
@@ -79,6 +85,7 @@ def seed(
             FormData(uploads),
             hosted_synthetic=True,
             hosted_viewer=viewer,
+            restore_hosted_originals=restore_originals,
         )
 
 

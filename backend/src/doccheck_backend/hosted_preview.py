@@ -17,6 +17,7 @@ from doccheck_backend import run_reads
 from doccheck_backend.contracts import CheckResult
 from doccheck_backend.contracts.result import Evidence
 from doccheck_backend.fragment_preview import FragmentPreview
+from doccheck_backend.hosted_queue import expire_terminal_runs
 from doccheck_backend.models import HostedClaim, Run
 from doccheck_backend.run_xlsx import XLSX_MEDIA_TYPE, XlsxReportLimitError, export_check_result
 
@@ -102,19 +103,22 @@ async def open_session(request: Request) -> Response:
 
 
 def _owned(request: Request, viewer: UUID, run_id: UUID) -> None:
-    with Session(request.app.state.engine) as session:
+    with Session(request.app.state.engine) as session, session.begin():
         found = session.scalar(
             select(HostedClaim.run_id).where(
                 HostedClaim.run_id == run_id, HostedClaim.viewer_id == viewer
             )
         )
+        if found is not None:
+            expire_terminal_runs(session, viewer=viewer)
     if found is None:
         raise HTTPException(404, "Preview run not found")
 
 
 @router.get("/runs", response_model=list[run_reads.RunSummary])
 def runs(request: Request, response: Response, viewer: Viewer) -> list[run_reads.RunSummary]:
-    with Session(request.app.state.engine) as session:
+    with Session(request.app.state.engine) as session, session.begin():
+        expire_terminal_runs(session, viewer=viewer)
         items = session.execute(
             select(Run.id, Run.status, Run.created_at, Run.error)
             .join(HostedClaim, HostedClaim.run_id == Run.id)

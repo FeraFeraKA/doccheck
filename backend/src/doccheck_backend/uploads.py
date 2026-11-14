@@ -5,7 +5,7 @@ import os
 from hashlib import sha256
 from pathlib import Path
 from shutil import rmtree
-from tempfile import mkdtemp
+from tempfile import TemporaryDirectory, mkdtemp
 from uuid import UUID, uuid4
 from zipfile import BadZipFile, ZipFile
 
@@ -146,9 +146,10 @@ def store_run(
     *,
     hosted_synthetic: bool = False,
     hosted_viewer: UUID | None = None,
+    restore_hosted_originals: bool = False,
 ) -> UUID:
-    if hosted_viewer is not None and not hosted_synthetic:
-        raise ValueError("Viewer assignment requires synthetic admission")
+    if (hosted_viewer is not None or restore_hosted_originals) and not hosted_synthetic:
+        raise ValueError("Hosted options require synthetic admission")
     if set(form) - {*SCOPE_FIELDS, "report", "documents"}:
         raise input_error("Неизвестное поле")
     (report,) = _get_files(form, "report", 1)
@@ -199,8 +200,10 @@ def store_run(
                 .returning(Run.id)
             )
             if connection.execute(query).scalar_one_or_none() is None:
-                existing, existing_digest = connection.execute(
-                    select(Run.id, Run.request_digest).where(Run.idempotency_key == key)
+                existing, existing_digest, previous_documents = connection.execute(
+                    select(Run.id, Run.request_digest, Run.documents)
+                    .where(Run.idempotency_key == key)
+                    .with_for_update()
                 ).one()
                 if existing_digest != digest:
                     raise UploadError(
@@ -213,6 +216,8 @@ def store_run(
                     admission is not None and admission.viewer_id != hosted_viewer
                 ):
                     raise UploadError(409, "idempotency_conflict", "Ключ связан с другой очередью")
+                if restore_hosted_originals:
+                    _restore_hosted_dir(root, existing, staging, previous_documents, documents)
                 return existing
             if hosted_synthetic:
                 connection.execute(
@@ -230,3 +235,29 @@ def store_run(
     finally:
         if staging.exists():
             rmtree(staging)
+
+
+def _restore_hosted_dir(
+    root: Path, run_id: UUID, staged: Path, previous: list[dict], current: list[dict]
+) -> None:
+    """Restore byte-identical originals under saved IDs after ephemeral storage loss."""
+    if len(previous) != len(current):
+        raise ValueError("Hosted package manifest differs from saved originals")
+    for old, new in zip(previous, current, strict=True):
+        identifier = old["id"]
+        if UUID(hex=identifier).hex != identifier or any(
+            old[key] != new[key] for key in ("sha256", "size", "name", "format", "role")
+        ):
+            raise ValueError("Hosted package manifest differs from saved originals")
+    destination = root / str(run_id)
+    if destination.exists():
+        return
+    # Work via unique staged names first, then switch atomically into place.
+    with TemporaryDirectory(prefix=".restore-", dir=root) as directory:
+        restored = Path(directory) / "originals"
+        restored.mkdir(mode=0o700)
+        for old, new in zip(previous, current, strict=True):
+            (staged / new["id"]).rename(restored / old["id"])
+        _sync_directory(restored)
+        restored.rename(destination)
+        _sync_directory(root)

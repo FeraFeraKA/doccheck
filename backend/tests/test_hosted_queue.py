@@ -1,8 +1,10 @@
 import hashlib
 import json
 from datetime import UTC, datetime, timedelta
+from shutil import rmtree
 from uuid import UUID, uuid4
 
+import pytest
 from docx import Document
 from fastapi.testclient import TestClient
 from openpyxl import Workbook
@@ -18,6 +20,7 @@ from doccheck_backend.database import create_database_engine
 from doccheck_backend.hosted_seed import seed
 from doccheck_backend.hosted_worker import HostedClient
 from doccheck_backend.models import HostedClaim, Run
+from doccheck_backend.render_hosted import _MANIFEST, _MANIFEST_SHA256, seed_demo
 from doccheck_backend.run_worker import StoredRun
 
 _CLAIMS = "/api/worker/v1/claims"
@@ -56,6 +59,8 @@ def test_hosted_claim_fences_expired_worker_and_persists_result(database_url, tm
     with TestClient(create_app(config), headers=_HEADERS) as http:
         assert http.get("/api/v0/runs").status_code == 503
         assert submit(http, uuid4()).status_code == 503
+        assert http.post("/api/synthetic-jobs").status_code == 404
+        assert http.get(f"/api/synthetic-jobs/{uuid4()}").status_code == 404
         assert http.post(_CLAIMS, headers={"Authorization": "Bearer wrong"}).status_code == 401
         first = http.post(_CLAIMS).json()
         assert first["run_id"] == str(run)
@@ -194,3 +199,62 @@ def test_restricted_preview_has_secure_session_and_denies_cross_viewer(database_
             assert http.get(f"{base}/runs/{run_two}{suffix}").status_code == 404
         assert http.get("/api/v0/runs").status_code == 503
         assert http.post(_CLAIMS).status_code == 401
+        # No worker is running when the deadline passes. A viewer read must
+        # still move its own job to a terminal status.
+        with http.app.state.engine.begin() as connection:
+            connection.execute(
+                update(HostedClaim)
+                .where(HostedClaim.run_id == run_one)
+                .values(deadline_at=datetime.now(UTC) - timedelta(seconds=1))
+            )
+        expired = http.get(f"{base}/runs/{run_one}")
+        assert expired.json()["status"] == "failed"
+        assert expired.json()["error"]["code"] == "worker_interrupted"
+        with http.app.state.engine.connect() as connection:
+            persisted = connection.execute(Run.__table__.select().where(Run.id == run_one)).one()
+        assert persisted.status == "failed"
+
+
+def test_bundled_package_recovers_original_ids_after_ephemeral_storage_loss(database_url, tmp_path):
+    viewer = uuid4()
+    root = tmp_path / "runs"
+    config = Settings(
+        database_url,
+        upload_root=root,
+        public_demo=True,
+        hosted_worker_digest=hashlib.sha256(_TOKEN.encode()).hexdigest(),
+        hosted_viewers={viewer: hashlib.sha256(b"viewer-secret").hexdigest()},
+    )
+    seed_demo(config)
+    assert hashlib.sha256(_MANIFEST.read_bytes()).hexdigest() == _MANIFEST_SHA256
+    run = next(root.iterdir())
+    originals = {file.name: file.read_bytes() for file in run.iterdir()}
+    rmtree(run)
+    seed_demo(config)
+    assert list(root.iterdir()) == [run]
+    assert {file.name: file.read_bytes() for file in run.iterdir()} == originals
+    with TestClient(create_app(config), headers=_HEADERS) as http:
+        claim = http.post(_CLAIMS).json()
+        assert claim["run_id"] == run.name
+        for doc in claim["documents"]:
+            url = f"{_CLAIMS}/{claim['lease_id']}/files/{doc['id']}"
+            assert http.get(url).content == originals[doc["id"]]
+
+
+def test_modified_bundled_manifest_cannot_be_its_own_trust_anchor(
+    database_url, tmp_path, monkeypatch
+):
+    altered = tmp_path / "manifest.json"
+    altered.write_bytes(_MANIFEST.read_bytes() + b" ")
+    monkeypatch.setattr("doccheck_backend.render_hosted._MANIFEST", altered)
+    viewer = uuid4()
+    config = Settings(
+        database_url,
+        upload_root=tmp_path / "runs",
+        public_demo=True,
+        hosted_worker_digest=hashlib.sha256(_TOKEN.encode()).hexdigest(),
+        hosted_viewers={viewer: hashlib.sha256(b"viewer-secret").hexdigest()},
+    )
+    with pytest.raises(ValueError, match="manifest digest mismatch"):
+        seed_demo(config)
+    assert not config.upload_root.exists()
