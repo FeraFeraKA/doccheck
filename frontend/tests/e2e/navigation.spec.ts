@@ -147,3 +147,22 @@ test('the expanded desktop rail does not cover history pagination', async ({ pag
   await older.click();
   await expect(page.getByRole('link', { name: 'Проверка older-run', exact: true })).toBeVisible();
 });
+
+test('Escape immediately restores breadcrumb clicks with animations enabled', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await page.route('**/api/v0/runs', (route) => route.fulfill({ json: { items: [], next_cursor: null } }));
+  await page.goto('/checks/synthetic-example');
+  const breadcrumb = page.getByRole('link', { name: 'Все проверки', exact: true });
+  const bounds = await breadcrumb.boundingBox();
+  if (!bounds) throw new Error('Ссылка на список проверок недоступна');
+  const target = { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 };
+  const sidebar = page.getByRole('complementary', { name: 'Меню DocCheck' });
+  await page.mouse.move(25, target.y);
+  await expect(sidebar).toHaveCSS('width', '220px');
+
+  await page.keyboard.press('Escape');
+  // Click through the shrinking area without letting Playwright wait for actionability.
+  await page.mouse.click(target.x, target.y);
+  await expect(page).toHaveURL(/\/checks$/);
+});

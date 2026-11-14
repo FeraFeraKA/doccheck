@@ -293,7 +293,6 @@
     overflow-x: hidden;
     scrollbar-width: none;
     pointer-events: none;
-    transition: width 175ms ease, box-shadow 175ms ease;
   }
   .app-sidebar::before {
     content: '';
@@ -303,7 +302,11 @@
     pointer-events: auto;
   }
   .app-sidebar :is(a, button) { position: relative; pointer-events: auto; }
-  .app-sidebar[data-expanded="true"] { width: 220px; box-shadow: 4px 0 16px #16373517; }
+  .app-sidebar[data-expanded="true"] {
+    width: 220px;
+    box-shadow: 4px 0 16px #16373517;
+    transition: width 175ms ease, box-shadow 175ms ease;
+  }
   .app-content { margin-left: 64px; }
   .app-sidebar .brand { padding-inline: 16px; }
   .app-sidebar :is(.nav-item, .system-status-link) { padding-inline: 21px; white-space: nowrap; }
@@ -317,7 +320,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .app-sidebar, .app-sidebar :is(.brand-name, .nav-item span, .system-status-link span) { transition: none; }
+  .app-sidebar[data-expanded="true"],
+  .app-sidebar :is(.brand-name, .nav-item span, .system-status-link span) { transition: none; }
 }
 
 .accountant-workspace .workspace-button {
