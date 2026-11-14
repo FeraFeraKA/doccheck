@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pypdfium2
 import pytest
 
@@ -254,3 +256,12 @@ def test_pdf_without_native_text_and_invalid_pdf_have_distinct_diagnostics(tmp_p
     broken.write_bytes(b"Not a PDF")
     assert [i.code for i in read_native_document(empty, "pdf").issues] == ["no_native_text"]
     assert [i.code for i in read_native_document(broken, "pdf").issues] == ["native_read_error"]
+
+
+def test_pdf_that_requires_password_has_a_distinct_file_diagnostic():
+    path = Path(__file__).with_name("fixtures") / "encrypted-empty.pdf"
+    result = read_native_document(path, "pdf")
+    assert result.observations == ()
+    assert [(issue.code, issue.page, issue.locator) for issue in result.issues] == [
+        ("encrypted_pdf", None, None),
+    ]
