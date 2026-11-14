@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { MemoryRouter, Route, Routes, useParams } from 'react-router';
+import { Link, MemoryRouter, Route, Routes, useParams } from 'react-router';
 import { afterEach, expect, it, vi } from 'vitest';
 import { NewCheck } from '../../src/pages/checks';
 
@@ -28,7 +28,7 @@ function RunCard() {
 function renderWizard() {
   render(<MemoryRouter initialEntries={['/checks/new']}>
     <Routes>
-      <Route path="/checks/new" element={<NewCheck />} />
+      <Route path="/checks/new" element={<><NewCheck /><Link to="/checks/other">Другая страница</Link></>} />
       <Route path="/checks/:id" element={<RunCard />} />
     </Routes>
   </MemoryRouter>);
@@ -60,7 +60,7 @@ it('отправляет только два поля, блокирует дво
 
   renderWizard();
   selectPacket();
-  const submit = screen.getByRole('button', { name: 'Отправить на проверку' });
+  const submit = screen.getByRole('button', { name: 'Запустить проверку' });
   fireEvent.click(submit);
   fireEvent.click(submit);
   expect(submit).toBeDisabled();
@@ -97,7 +97,7 @@ it('повторяет тот же ключ после потери ответа
   renderWizard();
   selectPacket();
 
-  const submit = screen.getByRole('button', { name: 'Отправить на проверку' });
+  const submit = screen.getByRole('button', { name: 'Запустить проверку' });
   fireEvent.click(submit);
   expect(await screen.findByRole('alert')).toHaveTextContent('Не удалось подтвердить приём пакета');
   fireEvent.click(submit);
@@ -112,7 +112,7 @@ it('повторяет тот же ключ после потери ответа
   expect(attempts[2]).not.toBe(attempts[0]);
 });
 
-it('не отправляет синтетический пример и отменяет запрос при уходе', async () => {
+it('отменяет запрос при уходе из мастера', async () => {
   const fetchMock = vi.fn<typeof fetch>().mockImplementation((_path, init) => new Promise((_resolve, reject) => {
     init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true });
   }));
@@ -123,10 +123,10 @@ it('не отправляет синтетический пример и отм�
   renderWizard();
   selectPacket();
 
-  fireEvent.click(screen.getByRole('button', { name: 'Отправить на проверку' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Запустить проверку' }));
   const state = fetchMock.mock.calls[0][1];
-  fireEvent.click(screen.getByRole('link', { name: 'Открыть готовый синтетический результат' }));
-  expect(await screen.findByRole('heading', { name: 'Карточка synthetic-example' })).toBeVisible();
+  fireEvent.click(screen.getByRole('link', { name: 'Другая страница' }));
+  expect(await screen.findByRole('heading', { name: 'Карточка other' })).toBeVisible();
   await waitFor(() => expect(state?.signal?.aborted).toBe(true));
   expect(fetchMock).toHaveBeenCalledTimes(1);
 });
@@ -134,7 +134,7 @@ it('не отправляет синтетический пример и отм�
 it('принимает первичные документы до отчёта и показывает ошибки отдельно', async () => {
   mockUpload();
   renderWizard();
-  await screen.findByText('Проверок пока нет.');
+  await screen.findByText('В очереди пока нет проверок.');
   const report = screen.getByRole('region', { name: 'КФЗ' });
   const documents = screen.getByRole('region', { name: 'Первичные документы' });
 
@@ -142,9 +142,9 @@ it('принимает первичные документы до отчёта �
   pick('Выберите первичные документы', [new File(['support'], 'support.xlsx')]);
   expect(within(documents).getByText('support.xlsx')).toBeVisible();
   expect(within(report).getByRole('alert')).toBeVisible();
-  expect(screen.getByRole('button', { name: 'Отправить на проверку' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Запустить проверку' })).toBeDisabled();
 
   pick('Выберите КФЗ', [new File(['synthetic report'], 'report.docx')]);
   expect(within(report).queryByRole('alert')).not.toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Отправить на проверку' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Запустить проверку' })).toBeEnabled();
 });

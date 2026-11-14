@@ -1,7 +1,8 @@
 import { Fragment } from 'react';
 import type { Ref } from 'react';
-import { formatMeasure, rowExplanation, statusLabels } from './reviewResult';
+import { formatDecimal, formatMeasure, rowExplanation, statusLabels } from './reviewResult';
 import type { ReviewResult } from './reviewResult';
+import { WorkspaceIcon } from './WorkspaceIcon';
 import './result-table.css';
 
 type Row = ReviewResult['rows'][number];
@@ -16,6 +17,7 @@ interface ResultTableProps {
   filter: string;
   query: string;
   selectedId?: string;
+  activeSourceRowId?: string;
   selectedEvidenceId?: string;
   expanded: ReadonlySet<string>;
   tableScroll: Ref<HTMLDivElement>;
@@ -32,7 +34,7 @@ interface ResultTableProps {
 }
 
 export function ResultTable({
-  rows, total, filters, filter, query, selectedId, selectedEvidenceId, expanded,
+  rows, total, filters, filter, query, selectedId, activeSourceRowId, selectedEvidenceId, expanded,
   tableScroll, selectedRow, evidenceFields, evidenceById, documentsById,
   formatAddress, onFilterChange, onQueryChange, onReset, onToggle, onSelectSource,
 }: ResultTableProps) {
@@ -46,13 +48,13 @@ export function ResultTable({
         ))}
       </div>
       <div className="reconcile-search">
-        <span aria-hidden="true">⌕</span>
+        <WorkspaceIcon name="search" size={15} />
         <input
           type="search" aria-label="Поиск показателя или документа"
-          placeholder="Показатель или документ…" value={query}
+          placeholder="Показатель или номер документа…" value={query}
           onChange={(event) => onQueryChange(event.target.value)}
         />
-        {query && <button type="button" aria-label="Очистить поиск" onClick={() => onQueryChange('')}>×</button>}
+        {query && <button type="button" aria-label="Очистить поиск" onClick={() => onQueryChange('')}><WorkspaceIcon name="close" size={14} /></button>}
       </div>
       <div ref={tableScroll} className="reconcile-table-scroll" role="region" aria-label="Таблица показателей" tabIndex={0}>
         <table className="reconcile-table kfz-result-table" aria-label="Показатели КФЗ">
@@ -74,7 +76,10 @@ export function ResultTable({
             ));
             return (
               <Fragment key={row.id}>
-                <tr ref={selected ? selectedRow : undefined} data-selected={selected} data-status={row.status}>
+                <tr ref={selected ? selectedRow : undefined} data-selected={row.id === activeSourceRowId} data-status={row.status}
+                  onClick={(event) => {
+                    if (event.target instanceof Element && !event.target.closest('a, button, .row-status, details')) onToggle(row.id);
+                  }}>
                   <td>
                     <button
                       id={`indicator-${row.id}`} className="row-name-button indicator-name"
@@ -82,24 +87,24 @@ export function ResultTable({
                       aria-controls={isExpanded ? detailsId : undefined}
                       onClick={() => onToggle(row.id)}
                     >
-                      <span className="indicator-chevron" aria-hidden="true">›</span>
+                      <span className="indicator-chevron"><WorkspaceIcon name="chevron" size={14} /></span>
                       <span>{row.label}{row.unit !== 'RUB' && <small className="ml-1">({row.unit})</small>}</span>
                     </button>
                     <span className="indicator-meta">
-                      {sourceDocuments.size ? `${sourceDocuments.size} док.` : 'Нет источника суммы'}
+                      {sourceDocuments.size ? `${sourceDocuments.size} док.` : 'Нет источника'}
                     </span>
                   </td>
-                  <td>{formatMeasure(row.reported_value, row.unit)}</td>
+                  <td><Measure value={row.reported_value} unit={row.unit} /></td>
                   <td className="expected-cell">
-                    {formatMeasure(row.expected_value, row.unit)}
+                    <Measure value={row.expected_value} unit={row.unit} />
                     {row.expected_value === null && row.observed_evidence_sum !== null && (
                       <small className="checks-caption">Частичная сумма: {formatMeasure(row.observed_evidence_sum, row.unit)}</small>
                     )}
                   </td>
-                  <td className="difference-cell">{formatMeasure(row.delta, row.unit)}</td>
+                  <td className="difference-cell"><Measure value={row.delta} unit={row.unit} /></td>
                   <td className="indicator-status-cell"><span className="row-status" data-status={row.status}
                     role="img" aria-label={statusLabels[row.status]} tabIndex={0} title={statusLabels[row.status]}>
-                    <span aria-hidden="true">{row.status === 'verified' ? '✓' : row.status === 'discrepancy' ? '⚠' : '?'}</span>
+                    <WorkspaceIcon name={row.status === 'verified' ? 'check' : row.status === 'discrepancy' ? 'warning' : 'help'} size={14} />
                     <span className="indicator-status-label" aria-hidden="true">{statusLabels[row.status]}</span>
                   </span></td>
                   <td className="indicator-explanation">
@@ -161,9 +166,12 @@ export function ResultTable({
         <p role="status">Показатели не найдены.</p>
         <button type="button" onClick={onReset}>Сбросить фильтры</button>
       </div>}
-      <div className="reconcile-left-footer">
-        <span>Показателей: {rows.length} из {total}</span><span>— означает, что значение отсутствует.</span>
-      </div>
+      <p className="sr-only">Показателей: {rows.length} из {total}. Прочерк означает, что значение отсутствует.</p>
     </section>
   );
+}
+
+function Measure({ value, unit }: { value: string | null; unit: string }) {
+  if (value === null) return '—';
+  return <>{formatDecimal(value)} <small className="measure-unit">{unit === 'RUB' ? '₽' : unit}</small></>;
 }

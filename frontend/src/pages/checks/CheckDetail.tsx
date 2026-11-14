@@ -3,7 +3,7 @@ import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useParams } from 'react-router';
 import { loadCheckRun, runStatusLabels } from './checkData';
 import type { RunDetails } from './checkData';
-import { demoJob } from './demoData';
+import { demoJob, demoTitle } from './demoData';
 import { SourceWorkspace, useSourceWorkspace } from './SourceWorkspace';
 import { FindingsHttpError, loadFindings } from './loadFindings';
 import { ResultHeader } from './ResultHeader';
@@ -144,10 +144,11 @@ function ResultContent({ id, view, result, run, synthetic, stored }: ResultConte
 
   function renderHeader(documentFilters?: ReactNode, documentActions?: ReactNode) {
     return <>
-      <ResultHeader title={result.reportNumber ? runTitle(id, result.reportNumber) : run.title}
+      <ResultHeader title={result.reportNumber ? runTitle(id, result.reportNumber) : synthetic ? demoTitle : run.title}
         runPath={runPath} view={view} scope={scope} syntheticLabel={syntheticLabel}
         documentFilters={documentFilters} documentActions={documentActions} />
-      {stored && <div className="stored-run-status mt-2 text-[13px]"><RunState run={run} /></div>}
+      {stored && (run.status !== 'completed' || run.error) &&
+        <div className="stored-run-status mt-2 text-[13px]"><RunState run={run} /></div>}
     </>;
   }
 
@@ -351,7 +352,7 @@ function Reconciliation({ result, storedRunId, runPath, rowJump, onOpenRow }: {
   const filters = [
     ['all', 'Все', rows.length],
     ['discrepancy', 'Расхождения', summary.counts.discrepancy],
-    ['unverified', 'Не проверено', summary.counts.unverified],
+    ['unverified', 'Нет данных', summary.counts.unverified],
     ['verified', 'Подтверждено', summary.counts.verified],
   ] as const;
   const issue = summary.primary_issues.find(({ id }) => id === row?.root_issue_id);
@@ -407,7 +408,7 @@ function Reconciliation({ result, storedRunId, runPath, rowJump, onOpenRow }: {
     }}>
       <div className="reconcile-commandbar">
         <h2 className="reconcile-title">Показатели отчёта</h2>
-        <div className="issue-navigation">
+        <div className="issue-navigation" aria-label="Навигация по расхождениям">
           <p className="issue-counter">Расхождения: {summary.counts.discrepancy}</p>
           {discrepancies.length > 0 && <p aria-live="polite">
             Расхождение {issueIndex < 0 ? '—' : issueIndex + 1} из {discrepancies.length}
@@ -430,7 +431,7 @@ function Reconciliation({ result, storedRunId, runPath, rowJump, onOpenRow }: {
       <div className="reconcile-panes reconcile-panes-stacked">
         <ResultTable
           rows={visible} total={rows.length} filters={filters} filter={filter} query={query}
-          selectedId={sourceWorkspace.open ? sourceWorkspace.rowId : row?.id} selectedEvidenceId={source?.id} expanded={expanded}
+          selectedId={row?.id} activeSourceRowId={sourceWorkspace.rowId} selectedEvidenceId={source?.id} expanded={expanded}
           tableScroll={tableScroll} selectedRow={selectedRow} evidenceFields={componentEvidenceFields}
           evidenceById={allEvidenceById} documentsById={documentsById}
           formatAddress={formatSourceChoice}
@@ -444,7 +445,8 @@ function Reconciliation({ result, storedRunId, runPath, rowJump, onOpenRow }: {
             if (storedRunId) openSource(id, trigger, rowId);
           }}
         />
-        <section className="evidence-panel">
+        <details className="evidence-panel evidence-disclosure">
+          <summary>Основания выбранного показателя</summary>
           {row ? <div className="evidence-header">
             <div className="evidence-heading"><h2>{row.label}</h2><span className="checks-status" data-status={row.status}>{statusLabels[row.status]}</span></div>
             <div className="evidence-amounts">
@@ -505,7 +507,7 @@ function Reconciliation({ result, storedRunId, runPath, rowJump, onOpenRow }: {
             {!storedRunId && <p className="checks-caption">В готовом примере доступны адреса источников.</p>}
             </div>
           </div>}
-        </section>
+        </details>
       </div>
     </section>
     </dialog>

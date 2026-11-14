@@ -63,6 +63,13 @@ paths:
                   maxItems: 100
                   items: {format: binary}
                   description: Первичные документы, каждый передаётся отдельной частью documents.
+                synthetic:
+                  type: string
+                  const: 'true'
+                  description: |
+                    Для запуска встроенного примера. Принимается только опубликованный комплект
+                    синтетических файлов с совпадающими байтами и автоматической областью.
+                    Пакет проходит обычную проверку в worker.
                 contract_number: {type: string, minLength: 1}
                 period_start: {type: string, format: date}
                 period_end: {type: string, format: date}
@@ -380,6 +387,8 @@ components:
           properties:
             counts: {$ref: './check-result.v1.schema.json#/$defs/StatusCounts'}
             report_number: {type: [string, 'null']}
+            document_count: {type: integer, minimum: 0}
+            contract_number: {type: [string, 'null']}
             synthetic: {type: [boolean, 'null']}
     RunState:
       allOf:

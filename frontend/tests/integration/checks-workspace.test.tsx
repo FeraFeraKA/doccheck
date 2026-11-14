@@ -212,6 +212,8 @@ it('показывает абзац и ячейку таблицы DOCX в сп�
     <Routes><Route path="/checks/:id" element={<CheckDetail view="table" loadRun={loadRun} />} /></Routes>
   </MemoryRouter>);
 
+  const disclosure = await screen.findByText('Основания выбранного показателя', { selector: 'summary' });
+  disclosure.parentElement?.setAttribute('open', '');
   const select = await screen.findByRole('combobox', { name: 'Доказательство' });
   for (const [id, location] of [
     ['docx-paragraph', 'Абзац 3'],
@@ -265,6 +267,8 @@ it('показывает доказательства слагаемых при 
     <Routes><Route path="/checks/:id" element={<CheckDetail view="table" loadRun={loadRun} />} /></Routes>
   </MemoryRouter>);
 
+  const disclosure = await screen.findByText('Основания выбранного показателя', { selector: 'summary' });
+  disclosure.parentElement?.setAttribute('open', '');
   const select = await screen.findByRole('combobox', { name: 'Доказательство' });
   expect(within(select).getByRole('option', { name: /Лист «Синтетика», C6/ })).toBeVisible();
   expect(within(select).getByRole('option', { name: /Лист «Синтетика», C7/ })).toBeVisible();

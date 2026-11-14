@@ -96,7 +96,7 @@ def test_history_cursor_orders_ties_and_survives_inserts(client):
     assert first.status_code == 200
     page = first.json()
     assert [item["run_id"] for item in page["items"]] == ordered[:2]
-    assert set(page["items"][0]) == {"run_id", "status", "created_at", "error"}
+    assert set(page["items"][0]) == {"run_id", "status", "created_at", "error", "document_count"}
     assert page["next_cursor"]
     newest = _create(client)
     _update_run(client, newest, created_at=identical_date + timedelta(seconds=1))

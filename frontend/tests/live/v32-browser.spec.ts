@@ -19,13 +19,14 @@ for (const { name, contract, partial } of packages) {
     const [accepted] = await Promise.all([
       page.waitForResponse((response) => response.request().method() === 'POST'
         && new URL(response.url()).pathname === '/api/v0/runs'),
-      page.getByRole('button', { name: 'Отправить на проверку' }).click(),
+      page.getByRole('button', { name: 'Запустить проверку' }).click(),
     ]);
     expect(accepted.status()).toBe(202);
     const { run_id: runId } = await accepted.json();
     if (!isRunId(runId)) throw new Error('The API did not return a valid run ID.');
     expect(accepted.headers().location).toBe(`/api/v0/runs/${runId}`);
     await testInfo.attach('run-id', { body: runId, contentType: 'text/plain' });
+    await page.locator(`a[href="/checks/${runId}"]`).first().click();
     await expect(page).toHaveURL(`/checks/${runId}`);
 
     const table = page.getByRole('table', { name: 'Показатели КФЗ' });

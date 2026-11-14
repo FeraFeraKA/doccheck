@@ -1,5 +1,5 @@
 .upload-page .queue-card { margin-top: 24px; padding: 20px; }
-.queue-card .upload-card-header { align-items: center; margin-bottom: 12px; }
+.queue-card .upload-card-header { align-items: flex-start; margin-bottom: 12px; }
 .queue-history-link {
   margin-inline-start: auto;
   font-size: 13px;
@@ -8,7 +8,7 @@
 }
 .queue-card .queue-message { color: var(--ui-secondary); font-size: 14px; }
 .queue-list { display: grid; gap: 10px; }
-.checks-content .queue-card a.queue-job {
+.checks-content .queue-card .queue-job {
   display: block;
   padding: 12px 14px;
   border: 1px solid var(--ui-line);
@@ -16,7 +16,7 @@
   text-decoration: none;
   color: var(--ui-ink);
 }
-.queue-job:hover { background: var(--ui-soft); }
+a.queue-job:hover { background: var(--ui-soft); }
 .queue-job:focus-visible, .queue-history-link:focus-visible {
   outline: 2px solid var(--ui-primary);
   outline-offset: 2px;
@@ -41,7 +41,7 @@
 }
 .queue-job-meta { flex-wrap: wrap; gap: 3px 8px; color: var(--ui-secondary); font-size: 12px; }
 .queue-job-meta > * + *::before { content: '·'; padding-right: 8px; }
-.queue-job-state { margin-inline-start: auto; }
+.queue-job-state { margin-inline-start: auto; font-size: 13px; font-weight: 500; }
 .queue-status-chip {
   display: inline-flex;
   align-items: center;
@@ -53,6 +53,34 @@
 .queue-status-chip.mint { background: var(--ui-mint); }
 .queue-status-chip.peach { background: var(--ui-peach); }
 .queue-status-chip.neutral { background: #eee0ff; }
+
+.queue-progress {
+  height: 7px;
+  margin: 8px 0 28px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--ui-soft);
+}
+.queue-progress > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--ui-primary);
+  transition: width 170ms linear;
+}
+.queue-progress[data-indeterminate="true"] > span {
+  width: 28%;
+  animation: queue-progress 1.25s ease-in-out infinite alternate;
+}
+.queue-progress[data-complete="true"] > span { background: var(--ui-lime); }
+
+@keyframes queue-progress {
+  from { transform: translateX(-60%); }
+  to { transform: translateX(320%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .queue-progress > span { animation: none; transition: none; }
+}
 
 @media (max-width: 1000px) {
   .queue-card.upload-card h2 { font-size: 25px; }

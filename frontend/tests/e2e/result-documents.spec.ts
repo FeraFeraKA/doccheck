@@ -16,11 +16,11 @@ test('synthetic document decisions, addresses and row links work without the doc
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   await filters.getByRole('button', { name: 'Прочитано (3)' }).click();
   const duplicate = table.getByRole('row').filter({ hasText: 'synthetic-ledger-copy.xlsx' });
-  await expect(duplicate.getByRole('cell', { name: 'Исключён', exact: true })).toBeVisible();
+  await expect(duplicate.getByText('Исключён', { exact: true })).toBeVisible();
   await filters.getByRole('button', { name: 'Ошибочные (1)' }).click();
   await expect(duplicate).toHaveCount(0);
-  await expect(table.getByRole('cell', { name: 'Не удалось прочитать', exact: true })).toBeVisible();
-  await expect(table.getByRole('cell', { name: 'Ошибка чтения', exact: true })).toBeVisible();
+  await expect(table.getByText('Не удалось прочитать', { exact: true })).toBeVisible();
+  await expect(table.getByText('Ошибка чтения', { exact: true })).toBeVisible();
   await filters.getByRole('button', { name: 'Все (4)' }).click();
   const file = table.getByRole('button', { name: 'synthetic-ledger.xlsx', exact: true });
   await file.press('Enter');

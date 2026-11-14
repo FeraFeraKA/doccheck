@@ -145,6 +145,10 @@ def _process(run: StoredRun, upload_root: Path, process: RunProcessor) -> CheckJ
                 else _PROCESSING_COMPLETED_WITH_ISSUES
             )
         if outcome.result is not None:
+            if any(
+                doc.get("synthetic") is True and doc["role"] == "report" for doc in run.documents
+            ):
+                outcome.result.synthetic = True
             for document in outcome.result.documents:
                 if document.format is not None and document.format != formats[document.id]:
                     raise ValueError("result document format must match the upload manifest")

@@ -49,6 +49,7 @@ for (const width of [390, 768]) {
       route.fulfill({ body: pixelPng, contentType: 'application/octet-stream' }));
 
     await page.goto('/checks/' + id);
+    await page.getByText('Основания выбранного показателя', { exact: true }).click();
     await page.getByRole('button', { name: 'На весь экран' }).click();
     await expect(page.getByRole('dialog', { name: 'Полноэкранная сверка' })).toBeVisible();
     const source = page.getByRole('button', { name: 'Просмотреть источник' });

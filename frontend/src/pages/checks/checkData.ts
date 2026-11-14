@@ -26,6 +26,8 @@ export interface HistoryEntry {
   createdAt: string;
   counts?: FindingCounts;
   synthetic?: boolean;
+  documentCount?: number;
+  contractNumber?: string;
   error?: string;
 }
 
@@ -56,11 +58,13 @@ export async function loadRunHistory(
   return {
     entries: page.items.map((run) => ({
       id: run.run_id,
-      title: runTitle(run.run_id, run.report_number),
+      title: run.synthetic && !run.report_number ? demoTitle : runTitle(run.run_id, run.report_number),
       status: run.status,
       createdAt: run.created_at,
       counts: run.counts,
       synthetic: run.synthetic,
+      documentCount: run.document_count,
+      contractNumber: run.contract_number,
       error: run.error?.message,
     })),
     nextCursor: page.next_cursor,

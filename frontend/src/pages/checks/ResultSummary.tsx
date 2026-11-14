@@ -5,6 +5,7 @@ import { documentDecisionLabels } from './ResultDocuments';
 import { XlsxDownload } from './XlsxDownload';
 
 const indicatorList = new Intl.ListFormat('ru');
+const plural = new Intl.PluralRules('ru');
 
 const statuses = [
   ['verified', 'Подтверждено'],
@@ -13,9 +14,9 @@ const statuses = [
 ] as const;
 
 export const resultHeadline = {
-  verified: 'Показатели подтверждены',
-  discrepancy: 'Есть расхождения',
-  unverified: 'Есть непроверенные показатели',
+  verified: 'Достоверен',
+  discrepancy: 'Недостоверен',
+  unverified: 'Подтвердить полностью нельзя',
   empty: 'Нет показателей',
 };
 
@@ -112,6 +113,9 @@ export function ResultConclusion({ result, exportRunId }: { result: ReviewResult
   const tone = resultTone(counts);
   const discrepancies = result.rows.filter((row) => row.status === 'discrepancy');
   const unverified = result.rows.filter((row) => row.status === 'unverified');
+  const discrepancyForm = plural.select(discrepancies.length);
+  const unverifiedForm = plural.select(unverified.length);
+  const summaryCoverage = rubCoverage?.total;
   return <section aria-label="Заключение по проверке" className="result-summary mt-4">
     <p className="result-summary-muted mb-1 text-[13px]">Вывод по проверке</p>
     <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
@@ -125,13 +129,21 @@ export function ResultConclusion({ result, exportRunId }: { result: ReviewResult
     </div>
     <div className="mt-2 max-w-[930px] space-y-1 text-sm leading-relaxed tabular-nums">
       <p>{conclusion}</p>
-      {discrepancies.length > 0 && <ul className="list-disc space-y-1 pl-5">
+      {discrepancies.length > 0 && <>
+        <p>{discrepancyForm === 'one' ? 'Обнаружено' : 'Обнаружены'} {discrepancies.length}
+          {' '}{discrepancyForm === 'one' ? 'расхождение' : discrepancyForm === 'few' ? 'расхождения' : 'расхождений'}.</p>
+        <ul className="list-disc space-y-1 pl-5">
         {discrepancies.map((row) => <li key={row.id}>{row.label}: в КФЗ {formatMeasure(row.reported_value, row.unit)},
-          по документам {formatMeasure(row.expected_value, row.unit)}. Разница {formatMeasure(row.delta, row.unit)}.</li>)}
-      </ul>}
-      {unverified.length > 0 && <p>Не удалось проверить: {indicatorList.format(unverified.map(({ label }) => label))}.</p>}
-      {rubCoverage ? <p>Известные денежные статьи КФЗ: <strong className="font-medium">{formatMeasure(rubCoverage.total, 'RUB')}</strong>.</p>
-        : <p className="result-summary-muted">Сводка по сумме недоступна.</p>}
+          по документам {formatMeasure(row.expected_value, row.unit)}. Разница {row.delta !== null && !row.delta.startsWith('-') ? '+' : ''}{formatMeasure(row.delta, row.unit)}.</li>)}
+        </ul>
+      </>}
+      {unverified.length > 0 && <p>Не удалось проверить {unverified.length}
+        {' '}{unverifiedForm === 'one' ? 'показатель' : unverifiedForm === 'few' ? 'показателя' : 'показателей'}:
+        {' '}{indicatorList.format(unverified.map(({ label }) => label))}.</p>}
+      {summaryCoverage && <p>Известные денежные статьи КФЗ: <strong className="font-medium">{formatMeasure(summaryCoverage, 'RUB')}</strong>.</p>}
+      {unverified.filter((row) => row.observed_evidence_sum !== null).map((row) => <p key={row.id}>
+        {row.label}: подтверждена часть суммы {formatMeasure(row.observed_evidence_sum, row.unit)}.
+      </p>)}
       {rubCoverage && <details className="text-[13px]">
         <summary className="cursor-pointer">Покрытие по сумме</summary>
         <ul className="mt-1 flex flex-wrap gap-x-5 gap-y-1">

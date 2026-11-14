@@ -252,6 +252,8 @@ function decodeFindings(value: unknown, runId: string): RunFindings {
         contract_number: text(scope.contract_number),
         period_start: date(scope.period_start),
         period_end: date(scope.period_end),
+        ...(scope.report_document_id == null ? {} : { report_document_id: text(scope.report_document_id) }),
+        ...(scope.report_row_locator == null ? {} : { report_row_locator: address(scope.report_row_locator) }),
       },
       documents: list(findings.documents, document),
       evidence: list(findings.evidence, (value) => {
@@ -259,8 +261,10 @@ function decodeFindings(value: unknown, runId: string): RunFindings {
         return {
           id: text(item.id),
           document_id: text(item.document_id),
+          ...(item.kind === undefined ? {} : { kind: text(item.kind) }),
           locator: address(item.locator),
           raw_value: text(item.raw_value),
+          ...(typeof item.normalized_value === 'string' ? { normalized_value: item.normalized_value } : {}),
         };
       }),
       rows: list(findings.rows, row),

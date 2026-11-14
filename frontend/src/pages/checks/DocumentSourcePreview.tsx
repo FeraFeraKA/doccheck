@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import './source-drawer.css';
 import { formatLocation } from './reviewResult';
+import type { PageAddress } from './reviewResult';
 import {
   getSourceEvidence, getSourceFragmentPreview, getSourceOriginal, InvalidSourceResponseError, SourceHttpError,
 } from './sourceApi';
@@ -16,6 +17,7 @@ interface DocumentSourcePreviewProps {
   runId: string;
   document: SourceDocument | null;
   evidenceId: string | null;
+  reportPage?: PageAddress;
   active?: boolean;
   compact?: boolean;
   imageView?: DocumentImageView;
@@ -69,7 +71,7 @@ function locatorMatchesDocument(evidence: SourceEvidence, format: string | null)
   }
 }
 
-export function DocumentSourcePreview({ runId, document, evidenceId, active = true, compact = false, imageView, onImageViewChange }: DocumentSourcePreviewProps) {
+export function DocumentSourcePreview({ runId, document, evidenceId, reportPage, active = true, compact = false, imageView, onImageViewChange }: DocumentSourcePreviewProps) {
   const [attempt, setAttempt] = useState(0);
 
   if (document === null) return <p>Документ источника недоступен.</p>;
@@ -80,6 +82,7 @@ export function DocumentSourcePreview({ runId, document, evidenceId, active = tr
     runId={runId}
     document={document}
     evidenceId={evidenceId}
+    reportPage={reportPage}
     active={active}
     compact={compact}
     imageView={imageView}
@@ -88,10 +91,11 @@ export function DocumentSourcePreview({ runId, document, evidenceId, active = tr
   />;
 }
 
-function SelectedDocumentSource({ runId, document, evidenceId, active, compact, imageView, onImageViewChange, onRetry }: {
+function SelectedDocumentSource({ runId, document, evidenceId, reportPage, active, compact, imageView, onImageViewChange, onRetry }: {
   runId: string;
   document: SourceDocument;
   evidenceId: string | null;
+  reportPage?: PageAddress;
   active: boolean;
   compact: boolean;
   imageView?: DocumentImageView;
@@ -141,7 +145,8 @@ function SelectedDocumentSource({ runId, document, evidenceId, active, compact, 
 
   const address = evidence.status === 'ready' && locatorMatchesDocument(evidence.value, format)
     ? evidence.value.locator : null;
-  const page = address?.kind === 'page' ? address : null;
+  const evidencePage = address?.kind === 'page' ? address : undefined;
+  const page = evidencePage ?? (evidenceId === null && format === 'pdf' ? reportPage : undefined);
   const canRetry = original.status === 'error' || evidence.status === 'error';
   const pdfUrl = original.status === 'ready'
     ? page ? `${original.value}#page=${page.page}` : original.value
@@ -169,7 +174,9 @@ function SelectedDocumentSource({ runId, document, evidenceId, active, compact, 
   return <section aria-label="Просмотр источника" className="source-viewer">
     <div className="source-viewer-heading">
       {!compact && <strong className="source-viewer-name" title={document.name}>{document.name}</strong>}
-      {evidenceId === null && <p>Адрес фрагмента отсутствует.</p>}
+      {evidenceId === null && (page
+        ? <p>Строка КФЗ · {formatLocation(page)}</p>
+        : <p>Адрес фрагмента отсутствует.</p>)}
       {evidenceId !== null && evidence.status === 'loading' && <p role="status">Загрузка адреса…</p>}
       {evidence.status === 'error' && <p role="alert">{evidence.message}</p>}
       {evidence.status === 'ready' && (address === null
@@ -194,7 +201,7 @@ function SelectedDocumentSource({ runId, document, evidenceId, active, compact, 
     {original.status === 'ready' && format === 'png' && (
       <SourceImage key={original.value} url={original.value} name={document.name} page={page?.page ?? (compact ? 1 : undefined)}
         imageView={imageView} onImageViewChange={onImageViewChange}
-        box={page?.bbox} active={active} download={download} fragment={fragment} retry={retry} />
+        box={evidencePage?.bbox} active={active} download={download} fragment={fragment} retry={retry} />
     )}
     {embeddedPdf && <iframe className="source-viewer-pdf" title={`Просмотр документа: ${document.name}`} src={embeddedPdf} />}
     {original.status === 'ready' && format !== 'png' && !embeddedPdf && <div className="source-viewer-placeholder">

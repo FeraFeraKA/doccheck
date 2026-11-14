@@ -13,7 +13,7 @@ test('the result opens with a compact summary and retains legacy document routes
     ['Показатель КФЗ', 'В КФЗ', 'Ожидаемо', 'Разница Δ', 'Статус', 'Пояснение'],
   );
   expect((await conclusion.boundingBox())?.y).toBeLessThan((await table.boundingBox())?.y ?? 0);
-  await expect(conclusion.getByRole('heading', { name: 'Есть расхождения' })).toBeVisible();
+  await expect(conclusion.getByRole('heading', { name: 'Недостоверен' })).toBeVisible();
   await expect(conclusion.getByText(/По статье A обнаружено расхождение/)).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Найденные проблемы' })).toHaveCount(0);
   const indicator = page.getByRole('button', { name: 'Синтетическая статья A', exact: true });

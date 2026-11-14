@@ -3,6 +3,7 @@ import { expect, test } from '@playwright/test';
 test('the result disclosure keeps each component and its source address selectable', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/checks/synthetic-example');
+  await page.getByText('Основания выбранного показателя', { exact: true }).click();
 
   const table = page.getByRole('table', { name: 'Показатели КФЗ' });
   const row = table.getByRole('button', { name: 'Синтетическая статья A' });
@@ -46,7 +47,7 @@ test('search finds document names and Alt+Arrow selects, opens and focuses an is
   await workspace.getByRole('button', { name: 'Сбросить фильтры' }).click();
   await expect(search).toHaveValue('');
 
-  await workspace.getByRole('button', { name: 'Не проверено 1' }).click();
+  await workspace.getByRole('button', { name: 'Нет данных 1' }).click();
   await search.focus();
   await search.press('Alt+ArrowDown');
   await expect(issue).toHaveCount(0);

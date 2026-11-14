@@ -30,7 +30,8 @@ export function useSourceWorkspace({
   onSelectionChange?: (documentId: string, evidenceId?: string) => void;
 }) {
   const { documents, evidence } = result;
-  const report = documents.find(({ role }) => role === 'report');
+  const report = documents.find(({ id }) => id === result.scope.report_document_id)
+    ?? documents.find(({ role }) => role === 'report');
   const evidenceById = useMemo(() => new Map(evidence.map((item) => [item.id, item])), [evidence]);
   const evidenceByDocument = useMemo(() => {
     const byDocument = new Map<string, Evidence[]>();
@@ -118,6 +119,7 @@ export function useSourceWorkspace({
     open, documentId, evidenceId: selected?.id, rowId: open ? row?.id : undefined,
     openEvidence, openDocument, close, clear, toggle, focusRequest, row,
     selectDocument, selectEvidence, selected, documents, sources, storedRunId,
+    reportLocator: documentId === report?.id ? result.scope.report_row_locator : undefined,
     togglePanel: () => {
       if (open) close();
       else if (!selection && defaultDocumentId) openDocument(defaultDocumentId);
@@ -228,7 +230,9 @@ export function SourceWorkspace({ workspace }: { workspace: ReturnType<typeof us
       </p>}
       {workspace.storedRunId ? <DocumentSourcePreview
         runId={workspace.storedRunId} document={{ ...selectedDocument, format: selectedDocument.format ?? null }}
-        evidenceId={workspace.evidenceId ?? null} active={active} compact imageView={imageViews.get(selectedDocument.id) ?? { zoom: 100, highlight: true }}
+        evidenceId={workspace.evidenceId ?? null}
+        reportPage={workspace.reportLocator && 'page' in workspace.reportLocator ? workspace.reportLocator : undefined}
+        active={active} compact imageView={imageViews.get(selectedDocument.id) ?? { zoom: 100, highlight: true }}
         onImageViewChange={(view) => setImageViews((previous) => new Map(previous).set(selectedDocument.id, view))}
       /> : <div className="source-viewer source-workspace-empty" aria-label="Просмотр источника" role="region">
         <div className="source-viewer-placeholder">

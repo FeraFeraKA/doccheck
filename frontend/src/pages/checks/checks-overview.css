@@ -184,8 +184,12 @@
   .overview-heading p { font-size: 13px; }
   .overview-filters { gap: 3px; }
   .checks-content .overview-filters button { padding: 10px; font-size: 11px; }
+  .overview-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
   .overview-search { width: 100%; }
-  .overview-sort { margin-inline-start: 0; }
+  .overview-sort { grid-column: 2; grid-row: 1; margin-inline-start: 0; }
+  .overview-sort > span { position: absolute; width: 1px; height: 1px; clip-path: inset(50%); overflow: hidden; }
+  .overview-sort select { max-width: 126px; font-size: 11px; padding: 8px; }
+  .overview-filters { grid-column: 1 / -1; }
   .overview-section:not(.overview-example) .overview-table { min-width: 0; }
   .overview-table thead { display: none; }
   .overview-table, .overview-table tbody { display: block; width: 100%; }

@@ -80,7 +80,9 @@ function OverviewLayout({ demo, cursor, page, loading, error, retry, finding, ch
   const [sort, setSort] = useState<Sort>('recent');
   const entries = page?.entries ?? [];
   const search = query.trim().toLocaleLowerCase('ru');
-  const shown = entries.filter((entry) => entry.title.toLocaleLowerCase('ru').includes(search));
+  const shown = entries.filter((entry) =>
+    `${entry.title} ${entry.contractNumber ?? ''}`.toLocaleLowerCase('ru').includes(search),
+  );
   // The default order follows the server cursor. Name sorting applies to this page.
   if (sort === 'name') shown.sort((a, b) => a.title.localeCompare(b.title, 'ru', { numeric: true }));
 
@@ -104,7 +106,7 @@ function OverviewLayout({ demo, cursor, page, loading, error, retry, finding, ch
         {!demo && <div className="overview-toolbar">
           <label className="overview-search">
             <OverviewIcon name="search" size={16} />
-            <input type="search" aria-label="Поиск на странице" placeholder="Название проверки"
+            <input type="search" aria-label="Поиск на странице" placeholder="Название или договор"
               value={query} onChange={(event) => setQuery(event.target.value)} />
           </label>
           <div className="overview-filters" role="group" aria-label="Фильтры проверок">
@@ -114,7 +116,7 @@ function OverviewLayout({ demo, cursor, page, loading, error, retry, finding, ch
             ))}
           </div>
           <label className="overview-sort">
-            Сортировка
+            <span>Сортировка</span>
             <select className="overview-secondary" value={sort}
               onChange={(event) => setSort(event.target.value === 'name' ? 'name' : 'recent')}>
               <option value="recent">Сначала новые</option>
@@ -158,11 +160,14 @@ function OverviewLayout({ demo, cursor, page, loading, error, retry, finding, ch
   );
 }
 
-function CheckTitle({ to, title, tone, synthetic }: { to: string; title: string; tone: string; synthetic?: boolean }) {
+function CheckTitle({ to, title, tone, synthetic, contractNumber }: {
+  to: string; title: string; tone: string; synthetic?: boolean; contractNumber?: string;
+}) {
   return <div className="overview-check-title">
     <span className={classes('overview-file-symbol', tone)}><OverviewIcon name="file" size={21} /></span>
     <div>
       <Link to={to}>{title}</Link>
+      {contractNumber && <small>Договор {contractNumber}</small>}
       {synthetic && <small>Синтетика</small>}
     </div>
   </div>;
@@ -212,13 +217,16 @@ function HistoryTable({ entries, sort, filtered, reset }: {
           const tone = counts ? findingLabel(counts).tone : tones[status];
           const total = counts ? counts.verified + counts.discrepancy + counts.unverified : 0;
           return <tr key={id} className="overview-check-row" onClick={(event) => openRow(event, to)}>
-            <td><CheckTitle to={to} title={title} tone={tone} synthetic={synthetic} /></td>
+            <td><CheckTitle to={to} title={title} tone={tone} synthetic={synthetic} contractNumber={entry.contractNumber} /></td>
             <td className="overview-result"><CheckResult entry={entry} /></td>
             <td className="overview-coverage">
               <span aria-label="Покрытие по сумме недоступно">—</span>
               {counts && total > 0 && <small>{counts.verified} из {total} показателей</small>}
             </td>
-            <td className="overview-documents" aria-label="Количество документов недоступно">—</td>
+            <td className="overview-documents">
+              {entry.documentCount === undefined ? <span aria-label="Количество документов недоступно">—</span>
+                : <span className="overview-document-count"><OverviewIcon name="files" size={15} />{entry.documentCount}</span>}
+            </td>
             <td className="overview-date"><time dateTime={createdAt}>{dateFormat.format(new Date(createdAt))}</time></td>
           </tr>;
         })}</tbody>

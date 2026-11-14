@@ -22,6 +22,11 @@ MAX_FILE_SIZE = 50 * 1024**2
 MAX_PACKAGE_SIZE = 250 * 1024**2
 MAX_MULTIPART_SIZE = MAX_PACKAGE_SIZE + 2 * 1024**2
 MAX_DOCUMENTS = 100
+# The bundled browser example contains two generated inputs, without a stored result.
+_DEMO_INPUT_DIGESTS = (
+    "4361e7581119c2416e983f21c672ac64deabca9bd94ed4076f22b60a73c2e8ee",
+    "a5b65780bb835cedc83f59bd57d529a69c35b6a37a42ae99338fd86ec8637812",
+)
 SCOPE_FIELDS = ("contract_number", "period_start", "period_end", "report_row_locator")
 LOCATOR_KINDS = {
     "pdf": {"page"},
@@ -139,8 +144,12 @@ def _sync_directory(path: Path) -> None:
 
 
 def store_run(engine: Engine, root: Path, key: UUID, form: FormData) -> UUID:
-    if set(form) - {*SCOPE_FIELDS, "report", "documents"}:
+    if set(form) - {*SCOPE_FIELDS, "report", "documents", "synthetic"}:
         raise input_error("Неизвестное поле")
+    synthetic_values = form.getlist("synthetic")
+    if synthetic_values and synthetic_values != ["true"]:
+        raise input_error("Допустимое значение для синтетического комплекта: true", "synthetic")
+    synthetic = bool(synthetic_values)
     (report,) = _get_files(form, "report", 1)
     uploads = [report, *_get_files(form, "documents", MAX_DOCUMENTS)]
     if sum(upload.size or 0 for upload in uploads) > MAX_PACKAGE_SIZE:
@@ -166,12 +175,18 @@ def store_run(engine: Engine, root: Path, key: UUID, form: FormData) -> UUID:
                 zip(uploads, ids, formats, strict=True)
             )
         ]
+        if synthetic:
+            if tuple(doc["sha256"] for doc in documents) != _DEMO_INPUT_DIGESTS or stored_scope:
+                raise input_error("Синтетический комплект должен совпадать с примером", "synthetic")
+            documents[0]["synthetic"] = True
         fingerprint_scope = stored_scope.copy()
         fingerprint_scope.pop("report_document_id", None)
         fingerprint = {
             "scope": fingerprint_scope,
             "files": [[doc["name"], doc["sha256"]] for doc in documents],
         }
+        if synthetic:
+            fingerprint["synthetic"] = True
         digest = sha256(json.dumps(fingerprint, sort_keys=True).encode()).hexdigest()
         run_id = uuid4()
         with engine.begin() as connection:

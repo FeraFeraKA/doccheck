@@ -145,7 +145,7 @@ test('the expanded desktop rail does not cover history pagination', async ({ pag
   });
   expect(reachable).toBe(true);
   await older.click();
-  await expect(page.getByRole('link', { name: 'Проверка older-run', exact: true })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Проверка КФЗ №older-run', exact: true })).toBeVisible();
 });
 
 test('Escape immediately restores breadcrumb clicks with animations enabled', async ({ page }) => {

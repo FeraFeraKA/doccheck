@@ -35,6 +35,7 @@ for (const { width, imageHeight, bbox } of visibleFragmentCases) {
       route.fulfill({ body: Buffer.from(png, 'base64'), contentType: 'application/octet-stream' }));
 
     await page.goto('/checks/' + id);
+    await page.getByText('Основания выбранного показателя', { exact: true }).click();
     await page.getByRole('button', { name: 'Просмотреть источник' }).click();
     const viewport = page.getByRole('region', { name: 'Просмотр документа: synthetic-report.png' });
     const box = viewport.locator('.source-viewer-highlight');
@@ -83,6 +84,7 @@ for (const [width, height] of [[1440, 1100], [768, 844], [390, 600]]) {
     });
 
     await page.goto(`/checks/${id}`);
+    await page.getByText('Основания выбранного показателя', { exact: true }).click();
     const opener = page.getByRole('button', { name: 'Просмотреть источник' });
     await opener.click();
     const drawer = page.getByLabel('Источник документа', { exact: true }).and(page.locator('.source-workspace-panel[open]'));
@@ -148,9 +150,10 @@ test('results keep the selected row and its evidence together when filtering', a
   await page.goto('/checks/synthetic-example');
   const panel = page.getByRole('region', { name: 'Рабочее место сверки' });
   const table = panel.getByRole('table');
+  await panel.getByText('Основания выбранного показателя', { exact: true }).click();
   await expect(table.getByRole('button', { name: 'Синтетическая статья A' })).toHaveAttribute('aria-pressed', 'true');
   await expect(panel.getByRole('heading', { name: 'Синтетическая статья A' })).toBeVisible();
-  await panel.getByRole('button', { name: 'Не проверено 1' }).click();
+  await panel.getByRole('button', { name: 'Нет данных 1' }).click();
   await expect(table.getByRole('row')).toHaveCount(2);
   await expect(panel.getByRole('heading', { name: 'Синтетическая статья B' })).toBeVisible();
   await expect(panel.getByText('Страница 1, строка 4, столбец 2', { exact: true })).toBeVisible();
@@ -193,7 +196,7 @@ test('issue navigation scrolls the selected row into the mobile table and shows 
   await expect(panel.getByText('Расхождение 22 из 22', { exact: true })).toBeVisible();
   await expect(lastRow).toHaveAttribute('aria-pressed', 'true');
   await expect(lastRow).toBeInViewport({ ratio: 0.95 });
-  expect(await table.evaluate((node) => node.scrollTop)).toBeGreaterThan(0);
+  expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
   await expect(next).toBeDisabled();
 
   for (let index = 1; index < count; index += 1) await previous.click();
@@ -232,6 +235,7 @@ test('source pane opens the stored original at a mobile width', async ({ page })
     route.fulfill({ json: { text: 'Итого 60,25', highlight: { start_byte: 11, end_byte: 16 } } }));
 
   await page.goto(`/checks/${id}`);
+  await page.getByText('Основания выбранного показателя', { exact: true }).click();
   await page.getByRole('button', { name: 'Просмотреть источник' }).click();
   const preview = page.getByRole('region', { name: 'Просмотр источника' });
   const drawer = page.getByLabel('Источник документа', { exact: true }).and(page.locator('.source-workspace-panel[open]'));
@@ -297,6 +301,7 @@ test('sources on the same PDF page have distinct selectable boxes at 320px', asy
   await page.route(`**/api/v0/runs/${id}/documents/ledger/fragments?evidence_id=${second.id}`, (route) =>
     route.fulfill({ json: second }));
   await page.goto('/checks/' + id);
+  await page.getByText('Основания выбранного показателя', { exact: true }).click();
   await page.getByText('Основания по слагаемым', { exact: true }).click();
   const component = page.getByRole('list', { name: 'Слагаемые' }).locator(':scope > li').first();
   const choices = page.getByRole('combobox', { name: 'Доказательство' });

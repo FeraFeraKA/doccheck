@@ -1,4 +1,4 @@
-interface PageAddress {
+export interface PageAddress {
   page: number;
   table_row?: number | null;
   table_column?: number | null;
@@ -27,10 +27,12 @@ interface TableCellAddress {
 type SourceAddress = PageAddress | SheetAddress | ParagraphAddress | TableCellAddress;
 
 interface SourceEvidence {
+  kind?: string;
   id: string;
   document_id: string;
   locator: SourceAddress;
   raw_value: string | null;
+  normalized_value?: unknown;
 }
 
 interface ReviewIssue {
@@ -100,7 +102,13 @@ export interface RubCoverage extends Record<ResultStatus, string | null> {
 
 export interface ReviewResult {
   reportNumber?: string;
-  scope: { contract_number: string; period_start: string; period_end: string };
+  scope: {
+    contract_number: string;
+    period_start: string;
+    period_end: string;
+    report_document_id?: string;
+    report_row_locator?: SourceAddress | null;
+  };
   documents: ReviewDocument[];
   evidence: SourceEvidence[];
   rows: ReviewRow[];
@@ -121,7 +129,7 @@ export const statusLabels: Record<string, string> = {
 export function formatDecimal(value: string | null) {
   if (value === null) return '—';
   const [integer, decimals] = value.split('.');
-  const grouped = integer.replace(/\B(?=(\d{3})+(?!\d))/g, '\u00a0');
+  const grouped = integer.replace(/\B(?=(\d{3})+(?!\d))/g, '\u202f').replace(/^-/, '−');
   return decimals === undefined ? grouped : `${grouped},${decimals}`;
 }
 

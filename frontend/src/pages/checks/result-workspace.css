@@ -117,3 +117,12 @@
   .result-reconciliation .evidence-heading { flex-wrap: wrap; }
   .result-reconciliation .evidence-amounts strong { font-size: .8125rem; }
 }
+
+
+.result-reconciliation .evidence-disclosure { margin-top: 12px; }
+.result-reconciliation .evidence-disclosure > summary {
+  padding: 8px 0;
+  color: var(--ui-secondary);
+  cursor: pointer;
+  font-size: 13px;
+}

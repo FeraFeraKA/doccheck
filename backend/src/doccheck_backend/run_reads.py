@@ -14,7 +14,7 @@ from typing import BinaryIO, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ValidationError
-from sqlalchemy import Engine, and_, select, tuple_
+from sqlalchemy import Engine, and_, func, select, tuple_
 from sqlalchemy.orm import Session, defer
 
 from doccheck_backend.contracts import CheckResult
@@ -55,6 +55,8 @@ class HistoryRun(RunSummary):
     counts: StatusCounts | None = None
     report_number: str | None = None
     synthetic: bool | None = None
+    document_count: int
+    contract_number: str | None = None
 
 
 FindingFilter = Literal["discrepancy", "unverified", "verified"]
@@ -81,6 +83,9 @@ def list_runs(
         counts,
         Run.result["report_number"].as_string(),
         Run.result["synthetic"].as_boolean(),
+        Run.documents[0]["synthetic"].as_boolean(),
+        func.jsonb_array_length(Run.documents),
+        Run.result["scope"]["contract_number"].as_string(),
     )
     query = select(*columns)
     if finding is not None:
@@ -100,14 +105,34 @@ def list_runs(
     query = query.order_by(Run.created_at.desc(), Run.id.desc()).limit(limit + 1)
     with Session(engine) as session:
         items = []
-        for run_id, status, created_at, error, row_counts, number, synthetic in session.execute(
-            query
-        ):
-            item = HistoryRun(run_id=run_id, status=status, created_at=created_at, error=error)
+        for (
+            run_id,
+            status,
+            created_at,
+            error,
+            row_counts,
+            number,
+            synthetic,
+            demo,
+            document_count,
+            contract_number,
+        ) in session.execute(query):
+            item = HistoryRun(
+                run_id=run_id,
+                status=status,
+                created_at=created_at,
+                error=error,
+                document_count=document_count,
+            )
+            if demo is True:
+                item.synthetic = True
+            if contract_number is not None:
+                item.contract_number = contract_number
             if status in ("completed", "completed_with_issues") and row_counts is not None:
                 item.counts = StatusCounts.model_validate(row_counts)
                 item.report_number = number
-                item.synthetic = synthetic
+                if synthetic is not None:
+                    item.synthetic = synthetic or demo is True
             items.append(item)
     if len(items) <= limit:
         return RunPage(items=items, next_cursor=None)

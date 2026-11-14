@@ -23,7 +23,8 @@ export interface RunState extends RunSummary {
 }
 
 interface RunHistoryPage {
-  items: (RunSummary & { counts?: FindingCounts; report_number?: string; synthetic?: boolean })[];
+  items: (RunSummary & { counts?: FindingCounts; report_number?: string; synthetic?: boolean;
+    document_count?: number; contract_number?: string })[];
   next_cursor: string | null;
 }
 
@@ -140,14 +141,19 @@ export async function listRuns(
 function parseHistoryRun(value: unknown): RunHistoryPage['items'][number] {
   const run = parseRunSummary(value);
   if (!isRecord(value)) throw new InvalidRunResponseError();
-  const { counts, report_number: number, synthetic } = value;
+  const { counts, report_number: number, synthetic, document_count, contract_number } = value;
   if (number != null && typeof number !== 'string') throw new InvalidRunResponseError();
   if (synthetic != null && typeof synthetic !== 'boolean') throw new InvalidRunResponseError();
+  if (contract_number != null && typeof contract_number !== 'string') throw new InvalidRunResponseError();
+  if (document_count != null && (typeof document_count !== 'number' || !Number.isSafeInteger(document_count)
+    || document_count < 0 || document_count > 101)) throw new InvalidRunResponseError();
   return {
     ...run,
     ...(counts == null ? {} : { counts: parseCounts(counts) }),
     ...(number == null ? {} : { report_number: number }),
     ...(synthetic == null ? {} : { synthetic }),
+    ...(document_count == null ? {} : { document_count }),
+    ...(contract_number == null ? {} : { contract_number }),
   };
 }
 
