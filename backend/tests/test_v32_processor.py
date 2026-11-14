@@ -364,6 +364,7 @@ def test_multiple_periods_wrapped_within_same_observation_are_not_truncated():
         "Период: Февраль 2031 до конца апреля 2031",
         "Период: Февраль 2031 до 30 апр. 2031",
         "Период: Февраль 2031 по сегодняшний день",
+        "Период: Февраль 2031 и до конца апреля 2031",
         "Период: Апрель 2031 — окончание работ",
     ],
 )
@@ -499,6 +500,60 @@ def test_docx_table_continuation_requires_adjacent_row_or_column():
     assert [(p.start, p.end) for p, _ in _periods((vertical_period, cell(3, 2, extra)))] == [
         ("2031-02-01", "2031-02-28")
     ]
+
+
+@pytest.mark.parametrize(
+    ("period_header", "other_header", "value", "independent"),
+    [
+        ("Учётный интервал", "Трудозатраты исполнителя", "2 часа", True),
+        ("Период", "Трудоёмкость, чел.-ч.", "два часа", True),
+        ("Отчётный период", "Количество рабочих часов", "2 рабочих дня отпуска", True),
+        ("Период сверки", "Дней отпуска", "2 дня", True),
+        ("Период сверки", "Время работы", "2 часа", True),
+        ("Период", "Затрачено времени", "два часа", True),
+        ("Период", "Рабочее время", "2 часа", True),
+        ("Период", "Длительность периода", "2 месяца", False),
+        ("Период", "Примечание", "2 часа", False),
+        ("Период", "Трудозатраты", "на два месяца", False),
+        ("Период", "Трудозатраты", "— два месяца", False),
+        ("Период", "Трудозатраты", "и с 01.04.2031 по 30.04.2031", False),
+        ("Период", "Трудозатраты", "2 часа и с 01.04.2031 по 30.04.2031", False),
+        ("Период", "Трудозатраты", "2 часа — на два месяца", False),
+        ("Период", "Трудозатраты", "2 часа и до конца апреля 2031", False),
+        ("Период", "Трудозатраты", "2 часа и на два месяца", False),
+        ("Период", "Трудозатраты", "2 часа и по договору № A-12", True),
+        ("Период", "Трудозатраты", "2 часа (и с 01.04.2031 по 30.04.2031)", False),
+        ("Период", "Трудозатраты", "2 часа (в течение двух недель)", False),
+        ("Период", "Трудозатраты", "2 часа, и до конца апреля 2031", False),
+        ("Период", "Трудозатраты", "2 часа (для обслуживания)", True),
+    ],
+)
+def test_docx_distinct_heading_separates_only_unlinked_quantity(
+    period_header, other_header, value, independent
+):
+    def cell(row, col, text):
+        return Observation(text, TableCellLocator(kind="table_cell", table=1, row=row, cell=col))
+
+    readings = _periods(
+        (
+            cell(1, 1, period_header),
+            cell(1, 2, other_header),
+            cell(2, 1, "Период: 01.02.2031 — 28.02.2031"),
+            cell(2, 2, value),
+        )
+    )
+    if independent:
+        assert [(p.start, p.end) for p, _ in readings] == [("2031-02-01", "2031-02-28")]
+    else:
+        assert readings == []
+
+
+def test_empty_period_column_does_not_fall_back_to_document_date():
+    heading = Observation("Период", TableCellLocator(kind="table_cell", table=1, row=1, cell=1))
+    date = Observation(
+        "Дата документа: 15.02.2031", ParagraphLocator(kind="paragraph", paragraph=1)
+    )
+    assert _periods((heading, date)) == []
 
 
 @pytest.mark.parametrize("text", ["- 100.00 руб.", "— 1 200,50 руб.", "— услуги связи"])

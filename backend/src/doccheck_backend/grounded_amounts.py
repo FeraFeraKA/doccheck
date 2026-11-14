@@ -60,6 +60,11 @@ _MONTH_PERIOD = re.compile(rf"(?:(?:{_PERIOD_LABEL})(?:с\s+)?|\bза\s+|\bв\s+
 _MONTH_RANGE_END = re.compile(rf"\s*(?:[—–\-/]|\bпо\b|\bдо\b)\s*{_MONTH_YEAR}", re.I)
 _PERIOD_CONTINUATION = re.compile(r"^\s*(?:[—–\-/]|\bпо\b|\bдо\b)", re.I)
 _PERIOD_FIELD = re.compile(_PERIOD_TITLE, re.I)
+_PERIOD_COLUMN_HEADING = re.compile(
+    r"^(?:(?:отч[её]тный|уч[её]тный)\s+)?период"
+    r"(?:\s+(?:сверки|работ|услуг|документа|оказания\s+услуг|выполнения\s+работ))?\s*[:.]?$",
+    re.I,
+)
 _DAY = r"(?:[0-9]{2}\.[0-9]{2}\.[0-9]{4}|[0-9]{4}-[0-9]{2}-[0-9]{2})"
 _ADDITIONAL_PERIOD = re.compile(
     rf"^\s*(?:г(?:ода?)?\.?\s*)?(?:[.,;+/&]\s*)?"
@@ -79,6 +84,19 @@ _DURATION_QUANTITY = (
     r"девят\w*|девяност\w*|десят\w*|одиннадцат\w*|двенадцат\w*|тринадцат\w*|"
     r"двадцат\w*|тридцат\w*|сорок\w*|сто|ста|сот\w*|тысяч\w*|полтор\w*|"
     r"нескольк\w*|пару|пара)"
+)
+_UNLINKED_DURATION = re.compile(
+    rf"^\s*(?:{_DURATION_QUANTITY}\b|пол(?:года|месяца|суток|недели)\b)", re.I
+)
+_INDEPENDENT_TIME_HEADING = re.compile(
+    r"^(?:(?:общ\w*|суммарн\w*|фактическ\w*|объ[её]м)\s+)?"
+    r"(?:трудозатрат\w*|трудо[её]мк\w*|отработан\w*|"
+    r"(?:количество|число|кол-во)\s+(?:(?:рабоч|отработан|календарн)\w*\s+)?"
+    r"(?:час\w*|дн\w*|дней|день|смен\w*)|"
+    r"(?:рабоч\w*|затрачен\w*)\s+(?:время|времени|час\w*|дней|дн\w*)|"
+    r"(?:час\w*|время)\s+(?:работ\w*|труд\w*|исполнител\w*|специалист\w*|сотрудник\w*)|"
+    r"(?:дни|дней|дн\w*)\s+отпуск\w*)(?=$|[\s,.:;(])",
+    re.I,
 )
 _DURATION_UNIT = (
     r"(?:(?:день|дня|дней|сутки|суток|недел\w*|месяц\w*|квартал\w*|"
@@ -330,6 +348,70 @@ def _period_following(first: Observation, second: Observation) -> bool:
     )
 
 
+def _independent_duration_column(
+    first: Observation,
+    second: Observation,
+    cells: dict[tuple[int, int, int], list[Observation]],
+) -> bool:
+    """Separate an unlinked quantity only when a distinct column names its role."""
+    left, right = first.locator, second.locator
+    if not (
+        isinstance(left, TableCellLocator)
+        and isinstance(right, TableCellLocator)
+        and left.table == right.table
+        and left.row > 1
+        and right.row > 1
+        and right.cell == left.cell + first.column_span
+    ):
+        return False
+    headers = []
+    for column in range(right.cell, right.cell + second.column_span):
+        readings = cells.get((right.table, 1, column), ())
+        if not readings:
+            return False
+        headers.extend(readings)
+    addresses = {
+        (header.locator.row, header.locator.cell, header.column_span, header.row_span)
+        for header in headers
+        if isinstance(header.locator, TableCellLocator)
+    }
+    if len(addresses) != 1:
+        return False
+    row, column, width, height = next(iter(addresses))
+    if row + height > min(left.row, right.row):
+        return False
+    if column < left.cell + first.column_span and left.cell < column + width:
+        return False
+    return any(_INDEPENDENT_TIME_HEADING.match(header.raw_text.strip()) for header in headers)
+
+
+def _period_column_heading(
+    observation: Observation,
+    cells: dict[tuple[int, int, int], list[Observation]],
+) -> bool:
+    """A labelled table column is not a second unresolved period value."""
+    header = observation.locator
+    if not (
+        isinstance(header, TableCellLocator)
+        and header.row == 1
+        and _PERIOD_COLUMN_HEADING.fullmatch(observation.raw_text.strip())
+    ):
+        return False
+    for (table, row, column), readings in cells.items():
+        if (
+            table != header.table
+            or row < header.row + observation.row_span
+            or not header.cell <= column < header.cell + observation.column_span
+        ):
+            continue
+        if any(
+            _DATE_RANGE.search(item.raw_text) or _MONTH_PERIOD.search(item.raw_text)
+            for item in readings
+        ):
+            return True
+    return False
+
+
 def _additional_pipe_period(tail: str) -> bool:
     for part in tail.split("|")[1:]:
         if _BARE_MONTH_PERIOD.match(part) or _duration_continuation(part):
@@ -339,6 +421,34 @@ def _additional_pipe_period(tail: str) -> bool:
             if not rest or _PERIOD_BOUND_START.match(rest):
                 return True
     return False
+
+
+def _conjoined_period(text: str) -> bool:
+    match = re.match(r"^\s*(?:и|или|а\s+также)\s+", text, re.I)
+    if not match:
+        return False
+    rest = text[match.end() :]
+    return bool(
+        _period_continuation(rest)
+        or _ADDITIONAL_PERIOD.match(rest)
+        or _duration_continuation(rest)
+        or _additional_pipe_period(rest)
+    )
+
+
+def _unlinked_duration(text: str) -> bool:
+    if not _UNLINKED_DURATION.match(text) or not (match := _DURATION.match(text)):
+        return False
+    tail = text[match.end() :]
+    return not any(
+        _period_continuation(suffix)
+        or _additional_period_prefix(suffix)
+        or _ADDITIONAL_PERIOD.match(suffix)
+        or _additional_pipe_period(suffix)
+        or _duration_continuation(suffix)
+        or _conjoined_period(suffix)
+        for suffix in (tail, tail.lstrip(" \t,;:(["))
+    )
 
 
 def _stages(
@@ -412,6 +522,8 @@ def _period_readings(
                     cells.setdefault(key, []).append(observation)
     for i, observation in enumerate(observations):
         raw = observation.raw_text.strip()
+        if _period_column_heading(observation, cells):
+            continue
         # A second labelled field at the same address is not evidence that the
         # document total belongs to only the first one.
         if len(list(_PERIOD_FIELD.finditer(raw))) > 1:
@@ -450,10 +562,18 @@ def _period_readings(
                 if not _period_following(observation, following):
                     continue
                 next_text = following.raw_text.strip()
+                duration = _duration_continuation(next_text)
+                if (
+                    duration
+                    and _unlinked_duration(next_text)
+                    and _independent_duration_column(observation, following, cells)
+                ):
+                    duration = False
                 additional_line = bool(
                     _additional_pipe_period(next_text)
                     or _additional_period_prefix(next_text)
-                    or _duration_continuation(next_text)
+                    or _conjoined_period(next_text)
+                    or duration
                     or (
                         re.match(r"^(?:(?:и|или|а\s+также)\b|[,;+/&])", next_text, re.I)
                         and _ADDITIONAL_PERIOD.match(next_text)
@@ -473,6 +593,7 @@ def _period_readings(
                 _period_continuation(tail)
                 or _ADDITIONAL_PERIOD.match(tail)
                 or _additional_period_prefix(tail)
+                or _conjoined_period(tail)
                 or _duration_continuation(tail)
                 or _additional_pipe_period(full_tail)
             ):
@@ -494,6 +615,7 @@ def _period_readings(
             if (
                 _ADDITIONAL_PERIOD.match(tail)
                 or _additional_period_prefix(tail)
+                or _conjoined_period(tail)
                 or _duration_continuation(tail)
                 or _additional_pipe_period(full_tail)
             ):

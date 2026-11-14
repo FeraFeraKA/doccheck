@@ -813,6 +813,166 @@ def test_worker_docx_adjacent_cells_do_not_truncate_period(
 
 
 @pytest.mark.parametrize(
+    ("layout", "period_header", "other_header", "value", "reverse", "ambiguous"),
+    [
+        ("standard", "Учётный интервал", "Трудозатраты исполнителя", "2 часа", False, False),
+        (
+            "standard",
+            "Учётный интервал",
+            "Трудозатраты исполнителя",
+            "2 рабочих дня отпуска",
+            True,
+            False,
+        ),
+        ("offset", "Отчётный период", "Количество рабочих часов", "три часа", False, False),
+        ("target_merged", "Период", "Объём трудозатрат, ч", "2,5 часа", True, False),
+        ("period_bottom", "Период сверки", "Время работы", "2 часа", False, False),
+        ("vertical_target", "Период", "Дней отпуска", "2 дня", True, False),
+        ("standard", "Период", "Затрачено времени", "2 часа", False, False),
+        ("standard", "Период", "Рабочее время", "два часа", True, False),
+        ("standard", "Период", "Длительность периода", "2 месяца", False, True),
+        ("standard", "Период", "Примечание", "2 часа", True, True),
+        ("shared_header", "Период", "Трудозатраты", "2 часа", False, True),
+        ("same_body", "Период", "Трудозатраты", "2 часа", True, True),
+        ("standard", "Период", "Трудозатраты", "на два месяца", False, True),
+        ("standard", "Период", "Трудозатраты", "— два месяца", True, True),
+        ("standard", "Период", "Трудозатраты", "и с 01.04.2031 по 30.04.2031", False, True),
+        (
+            "standard",
+            "Период",
+            "Трудозатраты",
+            "2 часа и с 01.04.2031 по 30.04.2031",
+            False,
+            True,
+        ),
+        ("standard", "Период", "Трудозатраты", "2 часа — на два месяца", True, True),
+        ("standard", "Период", "Трудозатраты", "2 часа и до конца апреля 2031", False, True),
+        ("standard", "Период", "Трудозатраты", "2 часа и на два месяца", True, True),
+        (
+            "standard",
+            "Период",
+            "Трудозатраты",
+            "2 часа (и с 01.04.2031 по 30.04.2031)",
+            False,
+            True,
+        ),
+        (
+            "standard",
+            "Период",
+            "Трудозатраты",
+            "2 часа (в течение двух недель)",
+            True,
+            True,
+        ),
+        (
+            "standard",
+            "Период",
+            "Трудозатраты",
+            "2 часа\nи с 01.04.2031 по 30.04.2031",
+            True,
+            True,
+        ),
+        ("standard", "Период", "Трудозатраты", "2 услуги", False, False),
+    ],
+)
+def test_worker_respects_independent_table_quantity_headers(
+    database_url, tmp_path, layout, period_header, other_header, value, reverse, ambiguous
+):
+    report, files = write_reconciliation_case(tmp_path)
+    primary = next(path for path in files if path.name == "ADM-72.docx")
+    amount, other_amount = ("397,62", "1,50") if reverse else ("299,12", "100,00")
+    document = Document(primary)
+    document.paragraphs[2].text = ""
+    document.paragraphs[4].text = f"Итого: {amount} руб."
+    period = "Период: 01.02.2031 — 28.02.2031"
+    if layout == "offset":
+        table = document.add_table(rows=2, cols=3)
+        table.cell(0, 0).text, table.cell(1, 0).text = "Код", "SYN-1"
+        table.cell(0, 1).text, table.cell(0, 2).text = period_header, other_header
+        table.cell(1, 1).text, table.cell(1, 2).text = period, value
+    elif layout == "target_merged":
+        table = document.add_table(rows=2, cols=3)
+        table.cell(0, 0).text, table.cell(1, 0).text = period_header, period
+        table.cell(0, 1).merge(table.cell(0, 2)).text = other_header
+        table.cell(1, 1).merge(table.cell(1, 2)).text = value
+    elif layout == "shared_header":
+        table = document.add_table(rows=2, cols=2)
+        table.cell(0, 0).merge(table.cell(0, 1)).text = "Трудозатраты и период"
+        table.cell(1, 0).text, table.cell(1, 1).text = period, value
+    elif layout == "same_body":
+        table = document.add_table(rows=2, cols=2)
+        table.cell(0, 0).text, table.cell(0, 1).text = period_header, other_header
+        table.cell(1, 0).merge(table.cell(1, 1)).text = f"{period}\n{value}"
+    elif layout == "period_bottom":
+        table = document.add_table(rows=3, cols=2)
+        table.cell(0, 0).text, table.cell(0, 1).text = period_header, other_header
+        table.cell(1, 0).text, table.cell(1, 1).text = "Примечание", "1 услуга"
+        table.cell(2, 0).text, table.cell(2, 1).text = period, value
+    elif layout == "vertical_target":
+        table = document.add_table(rows=3, cols=2)
+        table.cell(0, 0).text, table.cell(0, 1).text = period_header, other_header
+        table.cell(1, 0).text, table.cell(2, 0).text = "Примечание", period
+        table.cell(1, 1).merge(table.cell(2, 1)).text = value
+    else:
+        table = document.add_table(rows=2, cols=2)
+        table.cell(0, 0).text, table.cell(0, 1).text = period_header, other_header
+        table.cell(1, 0).text, table.cell(1, 1).text = period, value
+    document.save(primary)
+
+    supporting = Document()
+    for line in (
+        "УПД № ADM-73",
+        f"Договор № {CONTRACT}",
+        f"Период: {START} — {END}",
+        "Общехозяйственные расходы.",
+        f"Итого: {other_amount} руб.",
+    ):
+        supporting.add_paragraph(line)
+    second = tmp_path / "ADM-73.docx"
+    supporting.save(second)
+    files.append(second)
+    settings = Settings(database_url, upload_root=tmp_path / "uploads")
+    with TestClient(create_app(settings)) as client:
+        run_id = _prepare_and_start(
+            client,
+            [
+                ("report", (report.name, report.read_bytes())),
+                *(
+                    ("documents", (path.name, path.read_bytes()))
+                    for path in (reversed(files) if reverse else files)
+                ),
+            ],
+        )
+        assert run_document_worker(
+            client.app.state.engine,
+            settings.upload_root,
+            V32Processor(no_model, no_model),
+            once=True,
+        )
+        response = client.get(f"/api/v0/runs/{run_id}/findings")
+        assert response.status_code == 200, client.get(f"/api/v0/runs/{run_id}").json()
+        result = response.json()
+    source = next(item for item in result["documents"] if item["name"] == primary.name)
+    row = next(item for item in result["rows"] if item["id"] == "general_admin")
+    if ambiguous:
+        assert (source["decision"]["state"], source["decision"]["reason_code"]) == (
+            "needs_review",
+            "period_ambiguous",
+        )
+        assert row["status"] == "unverified"
+        assert row["expected_value"] is None and row["delta"] is None
+        assert row["observed_evidence_sum"] == other_amount.replace(",", ".")
+    else:
+        assert source["decision"]["state"] == "include"
+        assert row["status"] == "verified"
+        assert row["expected_value"] == "399.12" and row["delta"] == "0.00"
+        assert any(
+            item["document_id"] == source["id"] and item["kind"] == "period"
+            for item in result["evidence"]
+        )
+
+
+@pytest.mark.parametrize(
     ("filename", "code"),
     [
         ("truncated.pdf", "pdf_unreadable"),
