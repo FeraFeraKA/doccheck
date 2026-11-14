@@ -763,11 +763,26 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
                 message="Среди документов есть совпадающие реквизиты. Требуется проверка.",
             )
         elif file_id in overlaps:
+            periods = {
+                _period(item.raw_text, decision_rules.parse_date)
+                for item in observations_by_id.get(file_id, ())
+                if _period_candidate(item.raw_text)
+            }
+            start, end, issue = decision_rules.document_interval(by_id[file_id]["prediction"])
+            observed_overlap = not issue and periods == {(start, end)}
             documents[file_id] = _document(
                 file,
                 state="needs_review",
-                reason_code="period_partially_overlaps_unallocatable_amount",
-                message="Период частично вне сверки. Сумму за нужные даты нельзя выделить.",
+                reason_code=(
+                    "period_partially_overlaps_unallocatable_amount"
+                    if observed_overlap
+                    else "source_period_unconfirmed"
+                ),
+                message=(
+                    "Период частично вне сверки. Сумму за нужные даты нельзя выделить."
+                    if observed_overlap
+                    else "Период, предложенный моделью, не подтверждён исходным документом."
+                ),
             )
         elif exclusion == "different_contract":
             documents[file_id] = _document(

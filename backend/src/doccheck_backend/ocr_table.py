@@ -369,6 +369,62 @@ def _money_read(
     return Decimal(re.sub(r"\s", "", text.replace(",", ".")))
 
 
+def _page_amount_candidates(
+    observations: list[Observation], frame_size: tuple[int, int]
+) -> set[Decimal]:
+    chains = []
+    for item in observations:
+        box = item.locator.bbox
+        successors = sorted(
+            (
+                other
+                for other in observations
+                if other is not item
+                and other.locator.bbox[0] >= box[2]
+                and max(box[1], other.locator.bbox[1]) < min(box[3], other.locator.bbox[3])
+                and (other.locator.bbox[0] - box[2]) * frame_size[0]
+                <= min(box[3] - box[1], other.locator.bbox[3] - other.locator.bbox[1])
+                * frame_size[1]
+                * 1.2
+            ),
+            key=lambda other: other.locator.bbox[0],
+        )
+        for right in successors:
+            chains.append((item, right))
+            for end in observations:
+                if end is item or end is right:
+                    continue
+                b = right.locator.bbox
+                c = end.locator.bbox
+                if (
+                    c[0] >= b[2]
+                    and (c[0] - b[2]) * frame_size[0]
+                    <= min(b[3] - b[1], c[3] - c[1]) * frame_size[1] * 1.2
+                    and max(box[1], b[1], c[1]) < min(box[3], b[3], c[3])
+                ):
+                    chains.append((item, right, end))
+    used = set()
+    candidates = set()
+    for chain in sorted(chains, key=len, reverse=True):
+        ids = tuple(id(item) for item in chain)
+        if ids in used:
+            continue
+        value = _money_read(chain, frame_size=frame_size)
+        if value is None:
+            continue
+        candidates.add(value)
+        # A parseable suffix is part of this same amount, not another reading.
+        used.update(
+            ids[start:end] for start in range(len(ids)) for end in range(start + 1, len(ids) + 1)
+        )
+    candidates.update(
+        value
+        for item in observations
+        if (id(item),) not in used and (value := _money_read((item,))) is not None
+    )
+    return candidates
+
+
 def read_table_amounts(
     image: Image,
     row: PageLocator,
@@ -411,24 +467,7 @@ def read_table_amounts(
             ):
                 inside.append(item)
 
-        candidates = {_money_read((item,)) for item in inside}
-        for item in inside:
-            start = item.locator.bbox
-            adjacent = sorted(
-                (
-                    other
-                    for other in inside
-                    if other is not item
-                    and other.locator.bbox[0] >= start[2]
-                    and max(start[1], other.locator.bbox[1]) < min(start[3], other.locator.bbox[3])
-                ),
-                key=lambda other: other.locator.bbox[0],
-            )
-            if adjacent:
-                combined = _money_read((item, adjacent[0]), frame_size=image.size)
-                if combined is not None:
-                    candidates.add(combined)
-        if candidates - {None, amount}:
+        if _page_amount_candidates(inside, image.size) - {amount}:
             continue
         reading = " ".join(item.raw_text for item in readings[values.index(amount)])
         # The inner crop stays within the original atomic cell.
