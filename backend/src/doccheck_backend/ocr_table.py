@@ -349,6 +349,11 @@ def _money_read(items: tuple[Observation, ...]) -> Decimal | None:
             return None
         if max(region[1] for region in regions) >= min(region[3] for region in regions):
             return None
+        for previous, following in pairwise(regions):
+            previous_height = previous[3] - previous[1]
+            following_height = following[3] - following[1]
+            if following[0] - previous[2] > min(previous_height, following_height) * 1.2:
+                return None
     text = " ".join(item.raw_text.strip() for item in items)
     text = re.sub(r"^([+−–-])\s+", r"\1", text)
     if match := _ACCOUNTING.fullmatch(text):
@@ -383,15 +388,15 @@ def read_table_amounts(
         amount = next(iter(confirmed))
         if values.count(amount) < 2:
             continue
-        # A legible, repeated whole-frame reading in the same atomic cell
-        # is corroboration or contradiction, never an observation to discard.
-        x0, y0, x1, y1 = box
+        # The full-frame reader can return a conflicting, legible number
+        # without repeat confidence. Check the full cell, including margins.
+        x0, x1 = grid.x[index], grid.x[index + 1]
+        y0, y1 = grid.row
         competing = False
         for item in page_observations:
             location = item.locator
             if (
-                not (item.repeated_read or (item.confidence is not None and item.confidence >= 0.8))
-                or not isinstance(location, PageLocator)
+                not isinstance(location, PageLocator)
                 or location.bbox is None
                 or location.page != row.page
             ):
@@ -409,7 +414,7 @@ def read_table_amounts(
         if competing:
             continue
         reading = " ".join(item.raw_text for item in readings[values.index(amount)])
-        # Whole grid cell, rather than cropped subframe coordinates, anchors preview.
+        # The inner crop stays within the original atomic cell.
         x0, y0, x1, y1 = box
         amounts[category] = Observation(
             reading,
