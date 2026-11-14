@@ -98,11 +98,11 @@ EOF
     if [[ -s "$state/nginx.pid" ]]; then
       /usr/sbin/nginx -p "$state" -c "$state/nginx.conf" -s quit
     fi
-    for service in tunnel api worker; do
+    for service in relay tunnel api worker; do
       if [[ -s "$state/$service.pid" ]]; then
         pid=$(cat "$state/$service.pid")
         if [[ -r "/proc/$pid/cmdline" ]] &&
-            tr '\0' ' ' < "/proc/$pid/cmdline" | grep -Eq 'doccheck_backend\.|cloudflared'; then
+            tr '\0' ' ' < "/proc/$pid/cmdline" | grep -Eq 'doccheck_backend\.|cloudflared|doccheck-sites-relay\.py'; then
           kill -TERM "$pid"
           for attempt in {1..20}; do
             if ! kill -0 "$pid" 2>/dev/null; then break; fi
