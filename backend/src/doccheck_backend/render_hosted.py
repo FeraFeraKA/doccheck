@@ -102,6 +102,15 @@ def _check_preview_database(
                                WHERE other.datname = :public_database
                                  AND other.datdba <> role.oid
                                  AND public_role.rolname = :public_app
+                                 AND NOT (
+                                     public_role.rolsuper OR public_role.rolcreaterole
+                                     OR public_role.rolcreatedb OR public_role.rolreplication
+                                     OR public_role.rolbypassrls
+                                 )
+                                 AND NOT EXISTS (
+                                     SELECT 1 FROM pg_auth_members
+                                     WHERE member = public_role.oid
+                                 )
                                  AND has_database_privilege(public_role.oid, other.oid, 'CONNECT')
                                  AND NOT has_database_privilege(role.oid, other.oid, 'CONNECT')
                                  AND NOT has_database_privilege(
