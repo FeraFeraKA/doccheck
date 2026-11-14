@@ -284,7 +284,15 @@
 .app-main .mobile-system-status-link { display: none; }
 
 @media (min-width: 701px) {
-  .app-sidebar { width: 64px; overflow: hidden; }
+  .app-sidebar { width: 64px; overflow: hidden; pointer-events: none; }
+  .app-sidebar::before {
+    content: '';
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 64px;
+    pointer-events: auto;
+  }
+  .app-sidebar :is(a, button) { position: relative; pointer-events: auto; }
   .app-content { margin-left: 64px; }
   .app-sidebar[data-expanded="true"] {
     width: 220px;

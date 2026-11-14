@@ -17,8 +17,10 @@ export function Sidebar() {
   const isNew = pathname === '/' || pathname === '/checks/new';
   return (
     <aside className="app-sidebar" aria-label="Меню DocCheck" data-expanded={expanded}
-      onPointerEnter={(event) => {
-        if (event.pointerType === 'mouse' && window.matchMedia('(min-width: 701px)').matches) setHovered(true);
+      onPointerMove={(event) => {
+        // A mount or a layout change can fire pointerenter under a stationary mouse.
+        if (!hovered && event.pointerType === 'mouse' &&
+          window.matchMedia('(min-width: 701px)').matches) setHovered(true);
       }}
       onPointerLeave={(event) => {
         if (event.pointerType !== 'mouse') return;

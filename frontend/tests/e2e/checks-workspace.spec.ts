@@ -142,7 +142,10 @@ test('saved run and history cursor are recovered from the URL', async ({ page })
   }));
   await page.goto('/checks');
   await expect(page.getByRole('link', { name: 'Синтетическая сверка', exact: true })).toBeVisible();
-  await page.getByRole('link', { name: 'Более ранние проверки' }).click();
+  const older = page.getByRole('link', { name: 'Более ранние проверки' });
+  await page.getByRole('complementary', { name: 'Меню DocCheck' }).hover({ position: { x: 4, y: 4 } });
+  await expect(page.getByRole('button', { name: 'Свернуть меню' })).toHaveAttribute('aria-expanded', 'true');
+  await older.click();
   await page.reload();
   await expect(page.getByRole('link', { name: 'Проверка older-run', exact: true })).toBeVisible();
   await page.getByRole('link', { name: 'К новым проверкам' }).click();

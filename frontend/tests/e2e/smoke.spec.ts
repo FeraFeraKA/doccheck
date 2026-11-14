@@ -5,6 +5,7 @@ test('system status remains reachable with the compact sidebar', async ({ page }
   await page.route('**/health', (route) => route.fulfill({ json: { status: 'ok', database: 'ok' } }));
   for (const width of [320, 700, 701, 1440]) {
     await page.setViewportSize({ width, height: 900 });
+    await page.mouse.move(1, 1);
     await page.goto('/');
     const sidebar = page.getByRole('complementary');
     const navigation = sidebar.getByRole('navigation', { name: 'Основная навигация' });
