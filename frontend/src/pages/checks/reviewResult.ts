@@ -44,10 +44,14 @@ interface PrimaryReviewIssue extends ReviewIssue {
   file_error_refs?: string[];
 }
 
+export const documentParseStatuses = ['pending', 'parsed', 'partial', 'error'] as const;
+export type DocumentParseStatus = typeof documentParseStatuses[number];
+
 interface ReviewDocument {
   id: string;
   name: string;
   format?: string | null;
+  parse_status?: DocumentParseStatus;
   role: string;
   decision: { state: string; reason_code: string; message: string; evidence_refs: string[] };
   errors: ReviewIssue[];

@@ -3,7 +3,7 @@ import { Link } from 'react-router';
 import { DocumentSourcePreview } from './DocumentSourcePreview';
 import { FileTypeIcon } from './FileTypeIcon';
 import { SourceDrawer } from './SourceDrawer';
-import type { ReviewResult } from './reviewResult';
+import type { DocumentParseStatus, ReviewResult } from './reviewResult';
 import './result-documents.css';
 
 type Document = ReviewResult['documents'][number];
@@ -19,6 +19,14 @@ const decisions = [
   ['needs_review', documentDecisionLabels.needs_review],
   ['parse_error', documentDecisionLabels.parse_error],
 ] as const;
+
+const readingFilters = [['read', 'Прочитано'], ['error', 'Ошибочные']] as const;
+const readingLabels: Record<DocumentParseStatus, string> = {
+  pending: 'Ожидает чтения',
+  parsed: 'Прочитано',
+  partial: 'Прочитано частично',
+  error: 'Не удалось прочитать',
+};
 
 interface ResultDocumentsProps {
   result: ReviewResult;
@@ -38,8 +46,14 @@ export function ResultDocuments({
   const documents = exceptions
     ? result.documents.filter(({ decision }) => decision.state !== 'include')
     : result.documents;
-  const visible = documents.filter(({ decision }) => filter === 'all' || filter === decision.state);
-  const filters = exceptions ? decisions.filter(([value]) => value !== 'include') : decisions;
+  const filters = exceptions ? decisions.filter(([value]) => value !== 'include') : readingFilters;
+  function matchesFilter(document: Document, value: string) {
+    if (value === 'all') return true;
+    if (exceptions) return document.decision.state === value;
+    return value === 'read' ? document.parse_status === 'parsed'
+      : document.parse_status === 'partial' || document.parse_status === 'error';
+  }
+  const visible = documents.filter((document) => matchesFilter(document, filter));
   const evidenceByDocument = new Map<string, Evidence[]>();
   const documentByEvidence = new Map<string, string>();
   for (const item of result.evidence) {
@@ -87,14 +101,15 @@ export function ResultDocuments({
       {([['all', 'Все'], ...filters] as const).map(([value, label]) => (
         <button type="button" key={value} aria-pressed={filter === value}
           onClick={() => setFilter(value)}>
-          {label} ({value === 'all' ? documents.length : documents.filter(({ decision }) => decision.state === value).length})
+          {label} ({documents.filter((document) => matchesFilter(document, value)).length})
         </button>
       ))}
     </div>
     <div className="result-document-scroll" role="region" aria-label="Таблица документов" tabIndex={0}>
       <table className="result-document-table">
         <thead><tr>
-          <th scope="col">Файл</th><th scope="col">Роль</th><th scope="col">Решение</th>
+          <th scope="col">Файл</th><th scope="col">Роль</th>
+          {!exceptions && <th scope="col">Чтение</th>}<th scope="col">Решение</th>
           <th scope="col">Основание</th><th scope="col">Показатели КФЗ</th>
         </tr></thead>
         <tbody>{visible.map((document) => {
@@ -108,6 +123,9 @@ export function ResultDocuments({
               <button type="button" onClick={() => setOpenId(document.id)}>{document.name}</button>
             </div></td>
             <td>{document.role === 'report' ? 'Отчёт' : 'Первичный документ'}</td>
+            {!exceptions && <td>
+              {document.parse_status === undefined ? 'Чтение не указано' : readingLabels[document.parse_status]}
+            </td>}
             <td><span className="result-document-state" data-state={document.decision.state}>
               {documentDecisionLabels[document.decision.state]}
             </span></td>
@@ -121,7 +139,7 @@ export function ResultDocuments({
             </ul> : '—'}</td>
           </tr>;
         })}
-        {visible.length === 0 && <tr><td colSpan={5}>
+        {visible.length === 0 && <tr><td colSpan={exceptions ? 5 : 6}>
           <p role="status">{filter !== 'all' ? 'Документов в этом состоянии нет.'
             : exceptions ? 'Исключений нет.' : 'Документы отсутствуют.'}</p>
         </td></tr>}
