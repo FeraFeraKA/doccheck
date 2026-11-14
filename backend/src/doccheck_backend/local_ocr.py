@@ -51,7 +51,12 @@ def _model_path(setting: str) -> str:
     if not value:
         raise ValueError(f"{setting} must point to prepared local OCR weights")
     path = Path(value)
-    if not path.is_dir() or not (path / "inference.yml").is_file():
+    if not (
+        path.is_dir()
+        and (path / "inference.yml").is_file()
+        and (path / "inference.pdiparams").is_file()
+        and ((path / "inference.json").is_file() or (path / "inference.pdmodel").is_file())
+    ):
         raise ValueError(f"{setting} does not point to a local Paddle inference model")
     return str(path.resolve())
 
