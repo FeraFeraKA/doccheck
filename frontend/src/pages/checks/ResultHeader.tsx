@@ -21,6 +21,9 @@ export function ResultHeader({ title, runPath, view, scope, syntheticLabel, docu
 }) {
   return (
     <header className="check-result-header">
+      <nav className="mb-2 text-[13px]" aria-label="Путь к проверке">
+        <Link to="/checks">Все проверки</Link>
+      </nav>
       <div>
         <h1>{title}</h1>
         <div className="result-header-meta mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px]">
