@@ -12,6 +12,8 @@ from zlib import error as DecompressionError
 from defusedxml.common import DefusedXmlException
 from docx import Document
 from docx.opc.exceptions import PackageNotFoundError
+from docx.oxml.exceptions import InvalidXmlError
+from docx.oxml.ns import qn
 from lxml.etree import XMLSyntaxError
 
 from doccheck_backend.contracts.locators import (
@@ -222,6 +224,11 @@ def _read_docx(path: Path, collected: _Collected) -> None:
         if sum(part.file_size for part in archive.infolist()) > 128 * 1024**2:
             raise ValueError("DOCX archive exceeds the native reader limit")
     document = Document(path)
+    # Check the actual main part selected by package relationships before python-docx
+    # traverses its body. DOCX parts are not required to use word/document.xml.
+    root = document.element
+    if root.tag != qn("w:document") or len(root.findall(qn("w:body"))) != 1:
+        raise ValueError("Invalid Word document structure")
     for number, paragraph in enumerate(document.paragraphs, 1):
         _observe(collected, paragraph.text, ParagraphLocator(kind="paragraph", paragraph=number))
     for table_index, table in enumerate(document.tables, 1):
@@ -261,6 +268,7 @@ def read_native_document(path: Path, file_format: str) -> NativeDocument:
         BadZipFile,
         DecompressionError,
         PackageNotFoundError,
+        InvalidXmlError,
         XMLSyntaxError,
         ParseError,
         DefusedXmlException,

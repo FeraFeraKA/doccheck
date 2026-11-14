@@ -398,6 +398,33 @@ def test_invalid_deflate_in_ooxml_returns_file_diagnostic(tmp_path, file_format)
     assert [item.code for item in result.issues] == ["native_read_error"]
 
 
+@pytest.mark.parametrize(
+    "main_xml",
+    [
+        '<foreign xmlns="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><body/></foreign>',
+        '<document xmlns="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>',
+        '<document xmlns="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><body/><body/></document>',
+        (
+            '<document xmlns="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+            "<body><tbl><tblGrid><gridCol/></tblGrid><tr><tc>"
+            "<tcPr><gridSpan/></tcPr><p/></tc></tr></tbl></body></document>"
+        ),
+    ],
+)
+def test_malformed_docx_main_part_returns_file_diagnostic(tmp_path, main_xml):
+    original = tmp_path / "original.docx"
+    Document().save(original)
+    corrupt = tmp_path / "corrupt.docx"
+    with ZipFile(original) as source, ZipFile(corrupt, "w") as target:
+        for name in source.namelist():
+            target.writestr(name, main_xml if name == "word/document.xml" else source.read(name))
+
+    assert read_native_document(original, "docx").issues[0].code == "no_native_text"
+    result = read_native_document(corrupt, "docx")
+    assert result.observations == ()
+    assert [issue.code for issue in result.issues] == ["native_read_error"]
+
+
 @pytest.mark.parametrize("file_format", ["pdf", "png"])
 def test_unimplemented_native_format_has_explicit_diagnostic(tmp_path, file_format):
     result = read_native_document(tmp_path / "original", file_format)
