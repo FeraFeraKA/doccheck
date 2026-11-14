@@ -1368,7 +1368,7 @@ def test_unresolved_scan_can_retry_existing_files_with_the_correct_stage(databas
 @pytest.mark.parametrize(
     ("first_issuer", "second_issuer", "second_kind", "expected"),
     [
-        ("ООО Альфа", "ООО Бета", "Акт", "399.12"),
+        ("ООО Альфа", "ООО Бета", "Акт", None),
         ("ООО Альфа", "ООО Альфа", "Акт", None),
         ("ООО Альфа", "ООО Альфа.", "Акт", None),
         ("ООО Альфа", "ООО «Альфа» (ИНН 7700000000)", "Акт", None),
@@ -1380,7 +1380,10 @@ def test_unresolved_scan_can_retry_existing_files_with_the_correct_stage(databas
             "Акт",
             None,
         ),
-        ("ООО Альфа (ИНН 7700000000)", "ООО Альфа (ИНН 7800000000)", "Акт", "399.12"),
+        # The original two synthetic INNs fail checksum and cannot distinguish issuers.
+        ("ООО Альфа (ИНН 7700000000)", "ООО Альфа (ИНН 7800000000)", "Акт", None),
+        # Distinct checksum-valid source-labelled INNs retain the positive control.
+        ("ООО Альфа (ИНН 0135792463)", "ООО Альфа (ИНН 0101010020)", "Акт", "399.12"),
     ],
 )
 def test_equal_primary_numbers_require_compatible_issuer_and_kind(
@@ -1416,11 +1419,30 @@ def test_equal_primary_numbers_require_compatible_issuer_and_kind(
         )
         findings = client.get(f"/api/v0/runs/{run_id}/findings")
         assert findings.status_code == 200
-        row = next(row for row in findings.json()["rows"] if row["id"] == "general_admin")
+        result = findings.json()
+        row = next(row for row in result["rows"] if row["id"] == "general_admin")
         assert row["expected_value"] == expected
         if expected is not None:
             assert row["status"] == "verified"
             assert len(row["calculation"]["components"]) == 2
+            if "0135792463" in first_issuer:
+                for i, inn in enumerate(("0135792463", "0101010020")):
+                    doc = next(
+                        item
+                        for item in result["documents"]
+                        if item["name"] == f"synthetic-{i}.docx"
+                    )
+                    preview = client.get(f"/api/v0/runs/{run_id}/documents/{doc['id']}/preview")
+                    assert preview.status_code == 200
+                    issuer = next(
+                        item for item in preview.json()["blocks"] if item.get("paragraph") == 2
+                    )
+                    assert issuer["text"].startswith("Исполнитель:") and inn in issuer["text"]
+                    assert all(
+                        item["normalized_value"] != inn
+                        for item in result["evidence"]
+                        if item["document_id"] == doc["id"] and item["kind"] == "document_identity"
+                    )
         else:
             assert row["status"] == "unverified"
             assert row["calculation"]["components"] == []

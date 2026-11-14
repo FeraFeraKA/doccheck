@@ -6,11 +6,15 @@ no category/filename inference, tail matching, transliteration or OCR repair.
 from copy import deepcopy
 import hashlib
 import re
+import unicodedata
 
 VERSION = "native-own-number-v2"
 TITLE = re.compile(r"^(?:сч[её]т[- ]акт|сч[её]т[- ]фактура|сч[её]т\s+на\s+оплату|акт|справка|расч[её]тная\s+ведомость|ведомость|расч[её]т\s+страховых\s+взносов|служебная\s+записка|универсальный\s+передаточный\s+документ|упд)\b", re.I)
 BARE_TITLE = re.compile(r"^(?:сч[её]т[- ]акт|акт|служебная\s+записка|универсальный\s+передаточный\s+документ|упд)\s+", re.I)
 OWN_HEADER = re.compile(r"(?:сч[её]т[- ]акт|сч[её]т[- ]фактура|сч[её]т\s+на\s+оплату|акт(?:\s+(?:оказанных\s+услуг|выполненных\s+работ|при[её]ма[- ]передачи))?|справка(?:\s+расч[её]т(?:\s+страховых\s+взносов)?)?|расч[её]тная\s+ведомость(?:\s+по\s+оплате\s+труда)?|ведомость|расч[её]т\s+страховых\s+взносов|служебная\s+записка|универсальный\s+передаточный\s+документ|упд)\s*", re.I)
+ACT_QUALIFIER = r"(?:\s+(?:оказанных\s+услуг|выполненных\s+работ|при[её]ма[- ]передачи))?"
+ACT_HEADER = re.compile(r"акт" + ACT_QUALIFIER + r"\s*", re.I)
+COPY_ACT_HEADER = re.compile(r"(?:копия\s+акта|копия\s*:\s*акт)" + ACT_QUALIFIER + r"\s*", re.I)
 OWN_LABEL = re.compile(r"^(?:(?:номер|№)\s+(?:настоящего\s+)?документа\b\s*[:№]?|документ\b\s*№|собственный\s+номер\s+документа\b\s*[:№]?)\s*", re.I)
 MARKER = re.compile(r"(?:№|\bномер\b)\s*[:]?\s*", re.I)
 REFERENCE = re.compile(r"\b(?:договор\w*|контракт\w*|основани\w*|согласно|приложени\w*|цитируем\w*|банк\w*|расч[её]тн\w*\s+сч[её]т|корреспондент\w*|сч[её]т\s+организации)\b|\b(?:к|по|из)\s+акту\b", re.I)
@@ -23,7 +27,90 @@ DATE_TOKEN = re.compile(r"(?:\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{4}[./-]\d{1,2}[.
 ABSENT = re.compile(r"^(?:б\s*/\s*н|без\s+номера|не\s+присвоен\w*|отсутствует|[-–—])\s*[.]?$", re.I)
 ABSENCE_MARKER = r"(?:б\s*[/\\-]\s*н|без\s+номера|не\s+присвоен(?:а|о)?|отсутствует|[_—–-]+)"
 DATE_TAIL = r"от\s+(?:\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{4}[./-]\d{1,2}[./-]\d{1,2})\s*(?:г\.)?"
+COPY_TAG = r"\(\s*копия\s*\)"
 ABSENCE_VALUE = re.compile(r"(?P<marker>" + ABSENCE_MARKER + r")\s*[.]?(?:\s+" + DATE_TAIL + r")?\s*", re.I)
+_ISSUER_INN_LABEL = re.compile(r"\bинн\b", re.I)
+_ISSUER_INN_TOKEN = re.compile(r"\bинн\b\s*(?:[:№]\s*)?([0-9]+)(?![\w-])", re.I)
+_OTHER_ROLE = re.compile(
+    r"\b(?:заказчик|заказчиц|покупател|получател|плательщик|клиент|контрагент|"
+    r"грузополучател|грузоотправител|поставщик|исполнител|продавец|продавц|подрядчик|"
+    r"доверител|представител|арендатор|арендодател|собственник|владелец|владельц|"
+    r"субподрядчик|учредител|руководител|директор|банк)[а-яё]*\b",
+    re.I,
+)
+_AMBIGUOUS_FIELD = re.compile(
+    r"\b(?:реквизит(?:ы|ов|ам|ами|ах)?|данн(?:ые|ых|ым|ыми)|"
+    r"сведени(?:я|й|ям|ями|ях)|информаци(?:я|и|ю|ей))\b", re.I
+)
+_ISSUER_QUOTED = re.compile(r'«[^»]*»|“[^”]*”|„[^“]*“|"[^"]*"')
+_ISSUER_QUOTED_NAME_PREFIX = re.compile(
+    r"(?:ооо|пао|ао|ип|общество\s+с\s+ограниченной\s+ответственностью|"
+    r"публичное\s+акционерное\s+общество|акционерное\s+общество|"
+    r"индивидуальный\s+предприниматель)\s*", re.I
+)
+
+
+def normalize_issuer_spelling(value: object) -> str | None:
+    """Normalize typography only for a possible collision, never for deduplication."""
+    if not isinstance(value, str) or "\ufffd" in value:
+        return None
+    text = unicodedata.normalize("NFC", value).casefold().replace("ё", "е")
+    text = text.translate(str.maketrans({"–": "-", "—": "-", "−": "-", "‑": "-", "‐": "-", "‒": "-"}))
+    text = text.translate(str.maketrans("", "", '«»“”„"'))
+    text = re.sub(r"\s*-\s*", "-", text)
+    return re.sub(r"\s+", " ", text).strip() or None
+
+
+def explicit_issuer_inn(value: object) -> str | None:
+    """Select only an INN directly attached to an unambiguous issuer field.
+
+    The caller must independently establish the field's issuer role and check
+    the number's format. A later role or another labelled field is not proof.
+    """
+    if not isinstance(value, str) or "\ufffd" in value:
+        return None
+    labels = list(_ISSUER_INN_LABEL.finditer(value))
+    tokens = list(_ISSUER_INN_TOKEN.finditer(value))
+    if len(labels) != 1 or len(tokens) != 1 or labels[0].start() != tokens[0].start():
+        return None
+    quoted = list(_ISSUER_QUOTED.finditer(value))
+    if any(item.start() <= tokens[0].start() < item.end() for item in quoted):
+        return None
+    if any(
+        item.end() > tokens[0].start()
+        or not _ISSUER_QUOTED_NAME_PREFIX.fullmatch(value[:item.start()].strip())
+        for item in quoted
+    ):
+        return None
+    masked = list(value)
+    for item in quoted:
+        masked[item.start():item.end()] = " " * (item.end() - item.start())
+    outside = "".join(masked)
+    if any(mark in outside for mark in '«»“”„"') or _OTHER_ROLE.search(outside):
+        return None
+    prefix = value[:tokens[0].start()]
+    outside_prefix = outside[:tokens[0].start()]
+    if not prefix.strip(" \t.,«»\"'()") or re.search(r"[:;|\r\n]", outside_prefix):
+        return None
+    # A parenthesized INN must start immediately after the opening bracket and
+    # end before its closing bracket. Other bracketed text cannot establish role.
+    suffix = outside[tokens[0].end():]
+    if re.search(r"[\[\]{}]", outside):
+        return None
+    if "(" in outside_prefix or ")" in outside_prefix:
+        if not re.fullmatch(r"[^()]*\(\s*", outside_prefix):
+            return None
+        closing = suffix.find(")")
+        if closing < 0 or suffix[:closing].strip() or re.search(r"[()]", suffix[closing + 1:]):
+            return None
+    elif re.search(r"[()]", suffix):
+        return None
+    if _AMBIGUOUS_FIELD.search(outside_prefix):
+        return None
+    last_field = outside_prefix.rsplit(",", 1)[-1].strip()
+    if "," in outside_prefix and last_field and not last_field.endswith("("):
+        return None
+    return tokens[0].group(1)
 
 
 def absence_proof(cell, start, end, basis, label, reason):
@@ -97,7 +184,12 @@ def parse_value(cell, value_start, basis, label):
                  "line": cell["line"], "basis": basis, "label": label,
                  "context_start": cell["start"], "context_end": cell["end"], "context": cell["text"]}
     # A date after "от" is a separate requisite, never part of the ID.
-    if tail and not re.fullmatch(DATE_TAIL, tail, re.I):
+    marker = MARKER.search(label) if basis == "own_document_header" else None
+    marked_act = marker and ACT_HEADER.fullmatch(label[:marker.start()])
+    copy_tail = marked_act and re.fullmatch(
+        rf"(?:{COPY_TAG}(?:\s+{DATE_TAIL})?|{DATE_TAIL}\s+{COPY_TAG})", tail, re.I
+    )
+    if tail and not (re.fullmatch(DATE_TAIL, tail, re.I) or copy_tail):
         return [candidate], [{"reason": "multiple_or_unparsed_own_values", "line": cell["line"], "text": cell["text"]}], []
     return [candidate], [], []
 
@@ -121,6 +213,9 @@ def resolve_own_number(text, *, _bounded=True):
         value = cell["text"]
         own = OWN_LABEL.match(value)
         title = TITLE.match(value)
+        copy_marker = MARKER.search(value)
+        if copy_marker and not COPY_ACT_HEADER.fullmatch(value[:copy_marker.start()]):
+            copy_marker = None
         # Labels naming another document or an organisation's account are not
         # own labels, even when their number resembles the model answer.
         if REFERENCE.search(value) and not own:
@@ -129,6 +224,10 @@ def resolve_own_number(text, *, _bounded=True):
         basis, value_start, label = None, None, None
         if own:
             basis, value_start, label = "explicit_own_label", own.end(), own.group()
+        elif copy_marker:
+            # A marked copy names the act whose identity needs review; it does
+            # not prove that differently hashed files are duplicate operations.
+            basis, value_start, label = "own_copy_header", copy_marker.end(), value[:copy_marker.end()]
         elif title:
             marker = MARKER.search(value, title.end())
             if marker and OWN_HEADER.fullmatch(value[:marker.start()]):
@@ -195,7 +294,9 @@ def source_identity_context(text):
         bare = BARE_TITLE.match(value)
         if not OWN_HEADER.fullmatch(prefix) and bare and TOKEN.fullmatch(value[bare.end():]):
             prefix = bare.group()
-        if OWN_HEADER.fullmatch(prefix):
+        if marker and COPY_ACT_HEADER.fullmatch(prefix):
+            kinds.append({"kind": "act", "start": cell["start"], "end": cell["start"] + len(prefix), "text": prefix})
+        elif OWN_HEADER.fullmatch(prefix):
             lowered = prefix.casefold().replace("ё", "е").strip()
             kind = next((kind for stem, kind in (
                 ("счет-акт", "invoice_act"), ("счет акт", "invoice_act"), ("счет-фактура", "tax_invoice"),

@@ -13,10 +13,90 @@ from decimal import Decimal, InvalidOperation
 import hashlib
 import re
 import unicodedata
-from .document_identity import literal_id, validate_number_evidence
+from .document_identity import ISSUER_LABEL, explicit_issuer_inn, literal_id, normalize_issuer_spelling, validate_number_evidence
 
 
 CATEGORIES = {"production_overhead", "general_admin", "payroll", "insurance", "other"}
+
+_ISSUER_FORMS = {
+    "общество с ограниченной ответственностью": "ооо",
+    "публичное акционерное общество": "пао",
+    "акционерное общество": "ао",
+    "индивидуальный предприниматель": "ип",
+}
+_ISSUER_REQUISITES = re.compile(r"\s*[,;(]?\s*(?:инн|кпп|огрн(?:ип)?)\s*(?:[:№]\s*)?[0-9].*$", re.I)
+
+
+def _inn_checksum_valid(value):
+    """Check a literal INN token; this does not establish its owner."""
+    def digit(prefix, weights):
+        return str(sum(int(n) * w for n, w in zip(prefix, weights)) % 11 % 10)
+
+    org = (2, 4, 10, 3, 5, 9, 4, 6, 8)
+    if len(value) == 10:
+        return digit(value[:9], org) == value[9]
+    if len(value) == 12:
+        first = (7, *org)
+        return digit(value[:10], first) == value[10] and digit(value[:11], (3, *first)) == value[11]
+    return False
+
+
+def _issuer_comparison_key(value, native_text, issuer_evidence):
+    """Return bounded issuer context only when source requisites are unambiguous.
+
+    The issuer field must be directly labelled in native text. An INN in a
+    separate party field cannot be used as the issuer's number.
+    """
+    if not isinstance(value, str) or not isinstance(native_text, str) or "\ufffd" in value:
+        return None
+    if not isinstance(issuer_evidence, list) or len(issuer_evidence) != 1:
+        return None
+    candidate = issuer_evidence[0]
+    if not isinstance(candidate, dict):
+        return None
+    start, end, raw = candidate.get("start"), candidate.get("end"), candidate.get("text")
+    if (not isinstance(start, int) or not isinstance(end, int) or not isinstance(raw, str)
+            or not 0 <= start < end <= len(native_text) or native_text[start:end] != raw):
+        return None
+    line_start = native_text.rfind("\n", 0, start) + 1
+    cell_start = max(line_start, native_text.rfind("|", line_start, start) + 1,
+                     native_text.rfind(";", line_start, start) + 1)
+    prefix = re.sub(r"^\s*(?:[A-Z]+\d+:\s*)?", "", native_text[cell_start:start], flags=re.I)
+    if not ISSUER_LABEL.fullmatch(prefix):
+        return None
+    tax_id = explicit_issuer_inn(raw)
+    if tax_id is None or not _inn_checksum_valid(tax_id):
+        return None
+    value = unicodedata.normalize("NFC", value).casefold().translate(str.maketrans("", "", '«»“”„"'))
+    value = re.sub(r"\s+", " ", value).strip()
+    issuer = _ISSUER_REQUISITES.sub("", value).strip(" .,:;«»\"'()")
+    for full, short in _ISSUER_FORMS.items():
+        if issuer.startswith(full + " "):
+            issuer = short + issuer[len(full):]
+            break
+    match = re.fullmatch(r"(ооо|пао|ао|ип)\s+(.+)", issuer)
+    if not match and not issuer:
+        return None
+    form, raw_name = (match.group(1), match.group(2)) if match else (None, issuer)
+    name = normalize_issuer_spelling(raw_name)
+    return (form, name, tax_id) if name else None
+
+
+def _distinct_issuers(left, right):
+    """Different source-attributed valid INNs can veto a possible collision."""
+    if not left or not right:
+        return False
+    _, _, left_inn = left
+    _, _, right_inn = right
+    return bool(left_inn and right_inn and left_inn != right_inn)
+
+
+def _contradictory_issuers(left, right):
+    if not left or not right:
+        return False
+    _, left_name, left_inn = left
+    _, right_name, right_inn = right
+    return bool(left_inn and right_inn and left_inn == right_inn and left_name != right_name)
 
 
 def normalize_identifier(value):
@@ -131,10 +211,9 @@ def reconcile(documents, report_rows, contract_number, period_start, period_end,
     """Return source-backed category totals/statuses, with conservative abstention.
 
     ``documents``: list of {id, prediction:{...}, source_hash?}; duplicate id/hash
-    occurrences are skipped. A business duplicate uses contract + document number
-    + covered period/date + optional counterparty. Conflicting duplicate values
-    make both affected categories unverified. The caller must not supply labels
-    or the answer key as extracted facts.
+    occurrences are skipped. Matching document numbers and context mark a possible
+    collision for review, not a proven duplicate. The caller must not supply
+    labels or the answer key as extracted facts.
     """
     target = normalize_identifier(contract_number)
     window_start, window_end = parse_date(period_start), parse_date(period_end)
@@ -145,9 +224,10 @@ def reconcile(documents, report_rows, contract_number, period_start, period_end,
     uncertain = defaultdict(list)
     global_uncertain = []
     exclusions, duplicates = [], []
-    seen_sources, seen_business = {}, {}
+    seen_sources, seen_business = {}, defaultdict(list)
     identity_contexts = defaultdict(list)
     identity_warnings = []
+    identity_review = set()
 
     def abstain(doc_id, category, reason, candidates=None):
         item = {"id": doc_id, "reason": reason}
@@ -224,34 +304,50 @@ def reconcile(documents, report_rows, contract_number, period_start, period_end,
             abstain(doc_id, category, "amount_missing_or_invalid")
             continue
         identity = validate_number_evidence(document)
+        if identity["status"] == "invalid":
+            # A broken source gate cannot establish that this amount belongs to
+            # a distinct operation, even when the model supplied no raw number.
+            abstain(doc_id, category, "business_identity_invalid")
+            identity_review.add(doc_id)
         number = identity["number"] if identity["identity_usable"] else None
         raw_number = literal_id(document.get("raw_prediction", facts).get("doc_number"))
         possible_ids = {number} if number else set(identity["candidates"])
         if not number and raw_number and identity.get("raw_alias_allowed", True) and (raw_number in possible_ids or raw_number not in identity["non_own_candidates"]):
             possible_ids.add(raw_number)
+        issuer_evidence = (document.get("number_evidence") or {}).get("issuer_evidence") if identity["valid"] else None
         item = {"id": doc_id, "amount": amount, "category": category,
                 "period_start": start.isoformat(), "period_end": end.isoformat(),
-                "document_kind": identity.get("document_kind"), "issuer_key": identity.get("issuer_key")}
-        context = (contract, start, end, normalize_identifier(facts.get("counterparty")))
+                "document_kind": identity.get("document_kind"), "issuer_key": identity.get("issuer_key"),
+                "issuer_comparison": _issuer_comparison_key(identity.get("issuer_key"), document.get("source_native_text"), issuer_evidence)}
+        # A model-only counterparty spelling cannot prove separate operations.
+        context = (contract, start, end)
         if number:
             # A full literal native ID is not normalized across scripts, case,
             # punctuation or prefixes. Both sides of this map are verified.
             key = (*context, number)
-            previous = seen_business.get(key)
-            if previous:
-                context_conflict = [field for field in ("document_kind", "issuer_key")
-                    if item[field] is not None and previous[field] is not None and item[field] != previous[field]]
+            # Compare with every previously seen document. A later incompatible
+            # issuer must not hide an earlier matching candidate.
+            for previous in seen_business[key]:
+                context_conflict = []
+                if (item["document_kind"] and previous["document_kind"]
+                        and item["document_kind"] != previous["document_kind"]
+                        and not _contradictory_issuers(item["issuer_comparison"], previous["issuer_comparison"])):
+                    context_conflict.append("document_kind")
+                if _distinct_issuers(item["issuer_comparison"], previous["issuer_comparison"]):
+                    context_conflict.append("issuer_key")
                 if context_conflict:
-                    abstain(doc_id, category, "explicit_identity_context_conflict")
-                    abstain(previous["id"], previous["category"], "explicit_identity_context_conflict")
+                    # Different kinds or source-attributed INNs can identify
+                    # incompatible candidates; names alone cannot do that.
                     identity_warnings.append({"id": doc_id, "related_id": previous["id"],
                         "reason": "explicit_identity_context_conflict", "conflicting_fields": context_conflict})
                 else:
-                    duplicates.append({"id": doc_id, "duplicate_of": previous["id"], "basis": "business_identity"})
-                    if previous["amount"] != amount or previous["category"] != category:
-                        abstain(doc_id, category, "conflicting_duplicate")
-                        abstain(previous["id"], previous["category"], "conflicting_duplicate")
-                    continue
+                    # Equal numbers and context are only a collision candidate.
+                    # Different source hashes must not be merged as one operation.
+                    reason = "unresolved_document_identity_collision"
+                    abstain(doc_id, category, reason)
+                    abstain(previous["id"], previous["category"], reason)
+                    identity_review.update((doc_id, previous["id"]))
+                    identity_warnings.append({"id": doc_id, "related_id": previous["id"], "reason": reason})
         else:
             # Unresolved identity alone does not invalidate a known amount.
             # It supplies neither merge authority nor a verified uniqueness
@@ -274,9 +370,10 @@ def reconcile(documents, report_rows, contract_number, period_start, period_end,
             if reason:
                 abstain(doc_id, category, reason)
                 abstain(previous["item"]["id"], previous["item"]["category"], reason)
+                identity_review.update((doc_id, previous["item"]["id"]))
                 identity_warnings.append({"id": doc_id, "related_id": previous["item"]["id"], "reason": reason})
         if number:
-            seen_business[key] = item
+            seen_business[key].append(item)
         identity_contexts[context].append({"item": item, "number": number, "possible_ids": possible_ids})
         known[category].append(item)
 
@@ -284,7 +381,7 @@ def reconcile(documents, report_rows, contract_number, period_start, period_end,
     for report_row in report_rows:
         category = normalize_category(report_row.get("category", report_row.get("article")))
         reported = parse_amount(report_row.get("reported_amount", report_row.get("amount")))
-        supporting = known.get(category, [])
+        supporting = [item for item in known.get(category, []) if item["id"] not in identity_review]
         partial = sum((item["amount"] for item in supporting), Decimal("0"))
         reasons = list(global_uncertain) + list(uncertain.get(category, []))
         completeness_reason = completeness_issue(completeness, category)
@@ -315,7 +412,7 @@ def reconcile(documents, report_rows, contract_number, period_start, period_end,
         "completeness": completeness,
         "limitations": [
             "Completeness is an explicit user/profile declaration, not inferred or independently proven from an available partial sum.",
-            "Business duplicate merging requires a source-verified full own number on both records plus matching contract, date/period and optional counterparty.",
+            "Matching source-verified document numbers and context are review candidates, not proof that differently hashed files are duplicates.",
             "Unresolved identity alone is a warning; a contextual collision is reviewed without merging. Bare-tail suspicion never authorizes identity equivalence.",
         ],
     }

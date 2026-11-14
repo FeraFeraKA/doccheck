@@ -2,7 +2,7 @@
 
 import os
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from decimal import Decimal
 from hashlib import file_digest, sha256
 from itertools import combinations
@@ -502,7 +502,17 @@ def _reported_cells(native, scanned):
         yield category, item.raw, format_rubles(item.amount), item.locator, "ocr"
 
 
-def _identity_collisions(grounds: dict[str, GroundedDocument]) -> set[str]:
+def _identity_collisions(
+    grounds: dict[str, GroundedDocument], bound: Sequence[Evidence] = ()
+) -> set[str]:
+    addressed = {
+        item.document_id
+        for item in bound
+        if item.kind == "document_identity"
+        and (source := grounds.get(item.document_id)) is not None
+        and item.normalized_value == source.identity
+        and item.locator == source.identity_locator
+    }
     identities = {}
     for document_id, source in grounds.items():
         if source.identity:
@@ -523,10 +533,18 @@ def _identity_collisions(grounds: dict[str, GroundedDocument]) -> set[str]:
                 and left.document_kind != right.document_kind
             ):
                 continue
-            if left.issuer_tax_id and right.issuer_tax_id:
-                if left.issuer_tax_id != right.issuer_tax_id:
-                    continue
-            elif left.issuer_key and right.issuer_key and left.issuer_key != right.issuer_key:
+            # Names alone do not distinguish issuers. Only different valid INN
+            # readings directly attributed to native issuer fields can do so;
+            # neither the checksum nor the source label proves legal ownership.
+            if (
+                left_id in addressed
+                and right_id in addressed
+                and left.issuer_locator is not None
+                and right.issuer_locator is not None
+                and left.issuer_tax_id
+                and right.issuer_tax_id
+                and left.issuer_tax_id != right.issuer_tax_id
+            ):
                 continue
             collisions.update((left_id, right_id))
     return collisions
@@ -553,7 +571,7 @@ def _amount_components(scope, documents, grounds, bound, *, stage: str | None = 
         and not source.stage_uncertain
     }
     collisions = _identity_collisions(
-        {key: source for key, source in grounds.items() if key not in outside_stage}
+        {key: source for key, source in grounds.items() if key not in outside_stage}, bound
     )
     components = {}
     unresolved = {}
