@@ -254,6 +254,27 @@ def _bare_date(text: str) -> date | None:
     return None
 
 
+def _bare_date_fragments(observations: tuple[Observation, ...], location: Observation):
+    """Read consecutive, aligned fragments lying inside one selected date box."""
+    relevant = [
+        item
+        for item in _row_neighbors(location, observations)
+        if _same_region(location, item)
+        and _box(location)[0] <= _center(item, 0) <= _box(location)[2]
+    ]
+    # At most day, month, year, year suffix, and one separated punctuation token.
+    for start in range(len(relevant)):
+        parts = []
+        for item in relevant[start : start + 5]:
+            if parts and _box(item)[0] < _box(parts[-1])[2] - 0.002:
+                break
+            parts.append(item)
+            if len(parts) > 1:
+                value = _bare_date(" ".join(part.raw_text for part in parts))
+                if value is not None:
+                    yield value
+
+
 def select_scan_contract(
     positioned: tuple[Observation, ...],
     visible: tuple[Observation, ...] | None = None,
@@ -361,5 +382,12 @@ def parse_scan_report(observations: tuple[Observation, ...]) -> ScanScope | None
             for location in locations
         ):
             return None
+    if any(
+        alternative != selected
+        for selected, locations in adjudicated.values()
+        for location in locations
+        for alternative in _bare_date_fragments(positioned, location)
+    ):
+        return None
     assert isinstance(row.locator, PageLocator)
     return ScanScope(contract, start, last, row.locator, contract_source, cutoff_source)

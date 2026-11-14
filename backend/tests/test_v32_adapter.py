@@ -689,18 +689,24 @@ def test_xlsx_primary_formula_cache_conflict_requires_review(uploaded_files, tmp
     assert decision.reason_code == "formula_cache_mismatch"
 
 
+@pytest.mark.parametrize(("crop", "blank_cover"), [(False, False), (True, False), (False, True)])
 def test_scan_reports_inferred_period_and_marks_missing_amounts(
-    uploaded_files, tmp_path, monkeypatch
+    uploaded_files, tmp_path, monkeypatch, crop, blank_cover
 ):
+    from dataclasses import replace
+
     from test_local_ocr import _box
     from test_native_pdf import _write_pdf
 
-    from doccheck_backend.native_observations import NativeDocument
+    from doccheck_backend.native_observations import NativeDocument, NativeIssue
 
     calls = _stub_ollama(monkeypatch, "1172.70")
     report = uploaded_files[0]
     path = tmp_path / report["id"]
-    _write_pdf(path, [b"0 0 10 10 re f"])
+    pages = [b"0 0 10 10 re f"]
+    if blank_cover:
+        pages.insert(0, b"")
+    _write_pdf(path, pages, attrs=b"/CropBox [15 15 250 180]" if crop else b"")
     report.update(format="pdf", name="report.pdf", sha256=sha256(path.read_bytes()).hexdigest())
 
     observations = (
@@ -714,8 +720,15 @@ def test_scan_reports_inferred_period_and_marks_missing_amounts(
         _box("2 этап, 2027 г.:", 0.04, 0.53, 0.16),
         _box("1 250,50", 0.75, 0.53, 0.79),
     )
+    if blank_cover:
+        observations = tuple(
+            replace(item, locator=item.locator.model_copy(update={"page": 2}))
+            for item in observations
+        )
+    scan_issues = (NativeIssue("ocr_no_text", page=1),) if blank_cover else ()
     monkeypatch.setattr(
-        "doccheck_backend.v32_adapter.read_scan", lambda *_: NativeDocument(observations)
+        "doccheck_backend.v32_adapter.read_scan",
+        lambda *_: NativeDocument(observations, scan_issues),
     )
     job = process(StoredRun(uuid4(), None, uploaded_files), tmp_path)
 
@@ -724,6 +737,7 @@ def test_scan_reports_inferred_period_and_marks_missing_amounts(
     assert job.result.scope.period_start == "2027-01-01"
     assert job.result.scope.period_end == "2027-03-17"
     assert job.result.scope.report_row_locator.bbox[:2] == (0.04, 0.53)
+    assert job.result.scope.report_row_locator.page == (2 if blank_cover else 1)
     rows = {row.id: row for row in job.result.rows}
     assert rows["general_admin"].reported_value is None
     assert rows["general_admin"].observed_evidence_sum == "1172.70"

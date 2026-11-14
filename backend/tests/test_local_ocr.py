@@ -403,3 +403,22 @@ def test_bare_cutoff_alternative_survives_different_position_with_precise_read(
 
     assert parse_scan_report(case) is not None
     assert parse_scan_report((*case, disputed)) is None
+
+
+def test_split_bare_cutoff_contradiction_requires_contiguous_date(scanned_stage):
+    from dataclasses import replace
+
+    broad = _box("Окончание 7 этапа 17 апреля 2028 г.", 0.06, 0.15, 0.36)
+    date = _box("17 апреля 2028", 0.18, 0.15, 0.36)
+    precise = replace(
+        broad,
+        text_boxes=((broad.raw_text.index("17"), broad.raw_text.index(" г."), date.locator),),
+    )
+    day = _box("18", 0.18, 0.15, 0.20, confidence=0.71)
+    month = _box("апреля", 0.25, 0.15, 0.29, confidence=0.71)
+    year = _box("2028 г.", 0.30, 0.15, 0.36, confidence=0.71)
+    intervening = _box("архив", 0.21, 0.15, 0.24, confidence=0.50)
+    case = (*scanned_stage[:3], precise, *scanned_stage[5:])
+
+    assert parse_scan_report((*case, day, month, year)) is None
+    assert parse_scan_report((*case, day, intervening, month, year)) is not None
