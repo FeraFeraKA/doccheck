@@ -155,3 +155,32 @@ class EvaluationTests(unittest.TestCase):
             expectation_path.write_text("[]", encoding="utf-8")
             passed = subprocess.run(command, capture_output=True, text=True, check=True)
             self.assertEqual(json.loads(passed.stdout)["target_rows"], 0)
+
+    def test_cli_argument_errors_do_not_echo_paths_or_identifiers(self):
+        script = Path(__file__).resolve().parents[1] / "evaluate.py"
+        expected = "directory/synthetic-expected-metadata.json"
+        observed = "directory/synthetic-observed-metadata.json"
+        arguments = ["--expectations", expected, "--observations", observed]
+        inputs = {
+            "extra": [
+                *arguments,
+                "--split",
+                "holdout",
+                "directory/synthetic-extra.json",
+            ],
+            "missing": arguments,
+            "invalid split": [*arguments, "--split", "synthetic-origin-id"],
+        }
+        for case, argv in inputs.items():
+            with self.subTest(case=case):
+                failed = subprocess.run(
+                    [sys.executable, str(script), *argv],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(failed.returncode, 2)
+                self.assertEqual(failed.stdout, "")
+                self.assertEqual(
+                    failed.stderr, "Invalid command-line arguments. Use --help.\n"
+                )

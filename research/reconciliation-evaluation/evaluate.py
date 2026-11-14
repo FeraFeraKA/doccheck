@@ -158,8 +158,14 @@ def _read_json(path: Path) -> object:
         raise InputError("Unable to read an input as UTF-8 JSON") from None
 
 
+class EvaluationArgumentParser(argparse.ArgumentParser):
+    def error(self, message: str) -> None:
+        # argparse includes raw arguments in some errors.
+        self.exit(2, "Invalid command-line arguments. Use --help.\n")
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = EvaluationArgumentParser(prog="evaluate.py", description=__doc__)
     parser.add_argument("--expectations", type=Path, required=True)
     parser.add_argument("--observations", type=Path, required=True)
     parser.add_argument("--split", choices=SPLITS, required=True)
