@@ -129,6 +129,32 @@ def _parse_prediction(raw: object, finish_reason: object) -> dict[str, str | Non
     return result
 
 
+def _cuda_grammar_builder(mx, build, processor_type, np):
+    """Apply the LLGuidance mask on CUDA using portable MLX operations."""
+
+    class CudaLogitsProcessor(processor_type):
+        def clone(self):
+            return type(self)(self.grammar, self.llg_tokenizer)
+
+        def _apply_bitmask(self, logits):
+            self._fill_next_token_mask()
+            # The CPU matcher writes alternating reusable buffers. Unpack into
+            # a fresh array before handing the mask to lazy MLX operations.
+            packed = self.bitmask.astype("<i4", copy=False).view(np.uint8)
+            allowed = np.unpackbits(packed, axis=-1, bitorder="little")
+            vocab_size = logits.shape[-1]
+            if allowed.shape[-1] < vocab_size:
+                allowed = np.pad(allowed, ((0, 0), (0, vocab_size - allowed.shape[-1])))
+            mask = mx.array(allowed[:, :vocab_size].astype(bool))
+            return mx.where(mask, logits, mx.array(-mx.inf, dtype=logits.dtype))
+
+    def build_cuda_grammar(tokenizer, schema):
+        upstream = build(tokenizer, schema)
+        return CudaLogitsProcessor(upstream.grammar, upstream.llg_tokenizer)
+
+    return build_cuda_grammar
+
+
 def _runtime() -> SimpleNamespace:
     try:
         versions = {name: metadata.version(name) for name in RUNTIME_VERSIONS}
@@ -152,9 +178,16 @@ def _runtime() -> SimpleNamespace:
         from PIL import Image
     except (ImportError, OSError):
         raise QwenUnavailableError("The pinned local MLX runtime cannot be imported") from None
+    grammar = build_json_schema_logits_processor
+    if mx.cuda.is_available():
+        import numpy as np
+        from mlx_vlm.structured import LLGuidanceLogitsProcessor
+
+        mx.set_default_device(mx.gpu)
+        grammar = _cuda_grammar_builder(mx, grammar, LLGuidanceLogitsProcessor, np)
     return SimpleNamespace(
         mx=mx, flatten=tree_flatten, load=load, generate=generate,
-        template=apply_chat_template, grammar=build_json_schema_logits_processor,
+        template=apply_chat_template, grammar=grammar,
         restore=prepare_model_for_training, image=Image,
     )
 
@@ -240,6 +273,15 @@ class QwenReader:
         self._loaded = runtime, model, processor, provenance
         return self._loaded
 
+    def release(self) -> None:
+        """Release the model before a different local worker uses the GPU."""
+        if self._loaded is None:
+            return
+        runtime = self._loaded[0]
+        runtime.mx.synchronize()
+        self._loaded = None
+        runtime.mx.clear_cache()
+
     def read(self, image_path: Path) -> dict[str, object]:
         """Return a proposed reading and hashes; errors raise typed exceptions.
 
@@ -261,23 +303,72 @@ class QwenReader:
             raise
         except Exception:
             raise QwenInputError("The crop is not a readable PNG or JPEG image") from None
-        started = time.perf_counter()
-        try:
-            runtime.mx.random.seed(POLICY["seed"])
-            prompt = runtime.template(
-                processor, model.config, PROMPT, num_images=1, enable_thinking=False,
-            )
-            grammar = runtime.grammar(processor.tokenizer, SCHEMA)
-            output = runtime.generate(
-                model, processor, prompt=prompt, image=[str(image)],
-                max_tokens=POLICY["max_tokens"], temperature=0.0, top_p=1.0,
-                top_k=0, repetition_penalty=1.0, logits_processors=[grammar], verbose=False,
-            )
-        except Exception:
-            raise QwenPredictionError("Local model inference failed") from None
+        output, latency = self._generate(runtime, model, processor, PROMPT, SCHEMA, [image],
+                                         POLICY["max_tokens"])
         prediction = _parse_prediction(output.text, getattr(output, "finish_reason", None))
         return {
             **deepcopy(provenance), "prediction": prediction, "error": None,
-            "crop_sha256": crop_sha, "latency_s": time.perf_counter() - started,
+            "crop_sha256": crop_sha, "latency_s": latency,
             "request_sha256": _hash_json({**provenance, "crop_sha256": crop_sha}),
         }
+
+    def read_document(
+        self, prompt: str, schema: dict[str, object], images: list[Path], *,
+        max_tokens: int, document_text: str | None = None
+    ) -> dict[str, object]:
+        """Read prepared local inputs using a trusted caller's schema and the loaded LoRA."""
+        runtime, model, processor, provenance = self._load()
+        input_prompt = prompt + (
+            "\nТекст документа с сохранённой структурой:\n" + document_text
+            if document_text is not None else "\nПрочитай приложенные страницы документа."
+        )
+        output, latency = self._generate(
+            runtime, model, processor, input_prompt, schema, images, max_tokens,
+        )
+        try:
+            if getattr(output, "finish_reason", None) == "length":
+                raise ValueError
+            prediction = json.loads(output.text)
+            if not isinstance(prediction, dict):
+                raise ValueError
+            if set(prediction) != set(schema["required"]) or any(
+                value is not None and not isinstance(value, str)
+                for value in prediction.values()
+            ):
+                raise ValueError
+            for name, value in prediction.items():
+                choices = schema["properties"][name].get("enum")
+                if choices is not None and value not in choices:
+                    raise ValueError
+        except (KeyError, TypeError, ValueError):
+            raise QwenPredictionError("Invalid structured document prediction") from None
+        return {
+            **deepcopy(provenance),
+            "policy_sha256": _hash_json({
+                "prompt": prompt,
+                "schema": schema,
+                "max_tokens": max_tokens,
+                "reader_policy": provenance["policy_sha256"],
+            }),
+            "prediction": prediction,
+            "latency_s": latency,
+        }
+
+    @staticmethod
+    def _generate(runtime, model, processor, prompt, schema, images, max_tokens):
+        started = time.perf_counter()
+        try:
+            runtime.mx.random.seed(POLICY["seed"])
+            formatted = runtime.template(
+                processor, model.config, prompt, num_images=len(images), enable_thinking=False,
+            )
+            grammar = runtime.grammar(processor.tokenizer, schema)
+            output = runtime.generate(
+                model, processor, prompt=formatted,
+                image=[str(image) for image in images] or None,
+                max_tokens=max_tokens, temperature=0.0, top_p=1.0, top_k=0,
+                repetition_penalty=1.0, logits_processors=[grammar], verbose=False,
+            )
+        except Exception:
+            raise QwenPredictionError("Local model inference failed") from None
+        return output, time.perf_counter() - started

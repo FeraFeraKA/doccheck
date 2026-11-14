@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { Link, MemoryRouter, Route, Routes, useParams } from 'react-router';
 import { afterEach, expect, it, vi } from 'vitest';
-import { NewCheck } from '../../src/pages/checks';
+import { CheckDetail, NewCheck } from '../../src/pages/checks';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -60,6 +60,8 @@ it('отправляет только два поля, блокирует дво
 
   renderWizard();
   selectPacket();
+  expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+  expect(screen.queryByRole('group', { name: 'Строка КФЗ' })).not.toBeInTheDocument();
   const submit = screen.getByRole('button', { name: 'Запустить проверку' });
   fireEvent.click(submit);
   fireEvent.click(submit);
@@ -110,6 +112,61 @@ it('повторяет тот же ключ после потери ответа
   expect(attempts[0]).toMatch(/^[a-f0-9-]{36}$/);
   expect(attempts[1]).toBe(attempts[0]);
   expect(attempts[2]).not.toBe(attempts[0]);
+});
+
+it('предлагает ручной выбор после неоднозначного скана и возвращается к обычной загрузке', async () => {
+  const fetchMock = vi.fn<typeof fetch>().mockImplementation(async (url, init) => {
+    if (init?.method === 'POST') return accept('retry-run');
+    if (String(url) === '/api/v0/runs/ambiguous-scan') {
+      return Response.json({
+        run_id: 'ambiguous-scan',
+        status: 'failed',
+        created_at: '2031-02-01T00:00:00Z',
+        progress: null,
+        error: { code: 'scan_scope_required', message: 'Не удалось выбрать строку.' },
+      });
+    }
+    return Response.json({ items: [], next_cursor: null });
+  });
+  vi.stubGlobal('fetch', fetchMock);
+  render(<MemoryRouter initialEntries={['/checks/ambiguous-scan']}>
+    <Routes>
+      <Route path="/checks/:id" element={<CheckDetail view="table" />} />
+      <Route path="/checks/new" element={<NewCheck />} />
+    </Routes>
+  </MemoryRouter>);
+
+  fireEvent.click(await screen.findByRole('link', { name: 'Выбрать строку КФЗ вручную' }));
+  selectPacket();
+  const fields = screen.getByRole('group', { name: 'Строка КФЗ' });
+  const submit = screen.getByRole('button', { name: 'Запустить проверку' });
+  expect(submit).toBeDisabled();
+  for (const [label, value] of [
+    ['Номер договора', 'СИНТ-31'],
+    ['Начало периода', '2031-02-01'],
+    ['Конец периода', '2031-02-28'],
+    ['Этап', '2'],
+    ['Страница', '3'],
+  ]) {
+    fireEvent.change(within(fields).getByLabelText(label), { target: { value } });
+  }
+  expect(submit).toBeEnabled();
+  fireEvent.click(submit);
+  expect(await screen.findByRole('link', { name: 'Проверка КФЗ №retry-run' })).toBeVisible();
+  const submission = fetchMock.mock.calls.find(([, init]) => init?.method === 'POST')?.[1];
+  const form = submission?.body;
+  if (!(form instanceof FormData)) throw new Error('Ожидался multipart');
+  expect(form.get('contract_number')).toBe('СИНТ-31');
+  expect(form.get('period_start')).toBe('2031-02-01');
+  expect(form.get('period_end')).toBe('2031-02-28');
+  expect(JSON.parse(String(form.get('report_row_locator')))).toEqual({
+    kind: 'page',
+    page: 3,
+    fragment_id: 'kfz-stage-2-2031',
+  });
+  expect(form.has('complete_package')).toBe(false);
+  selectPacket();
+  expect(screen.queryByRole('group', { name: 'Строка КФЗ' })).not.toBeInTheDocument();
 });
 
 it('отменяет запрос при уходе из мастера', async () => {

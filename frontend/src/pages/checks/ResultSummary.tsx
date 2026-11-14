@@ -129,6 +129,10 @@ export function ResultConclusion({ result, exportRunId }: { result: ReviewResult
     </div>
     <div className="mt-2 max-w-[930px] space-y-1 text-sm leading-relaxed tabular-nums">
       <p>{conclusion}</p>
+      {result.rows.some(({ completeness }) => completeness.basis === 'uploaded_package') &&
+        <p>Сверка выполнена по загруженному комплекту.</p>}
+      {result.rows.some(({ completeness }) => completeness.basis === 'user_declaration') &&
+        <p>Полноту первичных документов за выбранные договор и период подтвердил пользователь.</p>}
       {discrepancies.length > 0 && <>
         <p>{discrepancyForm === 'one' ? 'Обнаружено' : 'Обнаружены'} {discrepancies.length}
           {' '}{discrepancyForm === 'one' ? 'расхождение' : discrepancyForm === 'few' ? 'расхождения' : 'расхождений'}.</p>

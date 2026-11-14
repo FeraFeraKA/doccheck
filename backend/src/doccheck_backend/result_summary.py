@@ -22,6 +22,7 @@ _BASIS_LABELS = {
     "manifest": "манифест документов",
     "user_declaration": "заявление пользователя",
     "dataset_fixture": "профиль синтетического набора",
+    "uploaded_package": "загруженный комплект",
     "none": "основание не установлено",
 }
 _COVERAGE_LABELS = {

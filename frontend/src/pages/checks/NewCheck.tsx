@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router';
+import { Link, useNavigate, useSearchParams } from 'react-router';
 import { classes } from '../../shared/lib/classes';
 import { Button } from '../../shared/ui/Button';
 import { UploadFileList } from './UploadFiles';
 import { WorkspaceIcon } from './WorkspaceIcon';
 import { prepareRunUpload, RunUploadHttpError } from './createRun';
+import type { ScanScope } from './createRun';
 import type { CheckHistory } from './checkData';
 import { RunQueue } from './RunQueue';
 import type { QueueReceipt, DemoTransfer } from './RunQueue';
@@ -18,6 +19,9 @@ const mib = 1024 ** 2;
 const maxFileSize = 50 * mib;
 const maxPackageSize = 250 * mib;
 const maxDocuments = 100;
+const initialScanScope: ScanScope = {
+  contractNumber: '', periodStart: '', periodEnd: '', page: NaN, stage: NaN,
+};
 
 interface SelectedFile {
   id: number;
@@ -47,6 +51,9 @@ function uploadErrorMessage(error: unknown): string {
 const publicDemo = import.meta.env.VITE_DOCCHECK_PUBLIC_DEMO === '1';
 
 export function NewCheck() {
+  const navigate = useNavigate();
+  const [params] = useSearchParams();
+  const manualScope = params.get('scope') === 'manual';
   const submitButton = useRef<HTMLButtonElement>(null);
   const chooseReport = useRef<HTMLButtonElement>(null);
   const restoreUploadFocus = useRef(false);
@@ -68,17 +75,37 @@ export function NewCheck() {
   const [submitError, setSubmitError] = useState('');
   const [isSending, setIsSending] = useState(false);
   const busyDemo = isSending && demoTransfer !== undefined;
-  const canStart = report.length === 1 && documents.length > 0;
+  const [scanScope, setScanScope] = useState(initialScanScope);
+  const requireScanScope = manualScope && /\.(pdf|png)$/i.test(report[0]?.file.name ?? '');
+  const validScanScope = scanScope.contractNumber.trim().length > 0
+    && /^\d{4}-\d{2}-\d{2}$/.test(scanScope.periodStart)
+    && /^\d{4}-\d{2}-\d{2}$/.test(scanScope.periodEnd)
+    && scanScope.periodStart <= scanScope.periodEnd
+    && scanScope.periodStart.slice(0, 4) === scanScope.periodEnd.slice(0, 4)
+    && Number.isInteger(scanScope.page) && scanScope.page >= 1 && scanScope.page <= 12
+    && Number.isSafeInteger(scanScope.stage) && scanScope.stage >= 1;
+  const canStart = report.length === 1 && documents.length > 0
+    && (!requireScanScope || validScanScope);
 
   useEffect(() => () => active.current?.abort(), []);
 
+  useEffect(() => {
+    attempt.current = null;
+  }, [manualScope]);
 
   function changeFiles(group: FileGroup, next: SelectedFile[]) {
     attempt.current = null;
     const setFiles = group === 'report' ? setReport : setDocuments;
     setFiles(next);
+    if (group === 'report') setScanScope(initialScanScope);
     setErrors((previous) => ({ ...previous, [group]: '' }));
     setSubmitError('');
+  }
+
+  function updateScope(values: Partial<ScanScope>) {
+    attempt.current = null;
+    setSubmitError('');
+    setScanScope((previous) => ({ ...previous, ...values }));
   }
 
   function removeFile(group: FileGroup, id: number) {
@@ -141,6 +168,9 @@ export function NewCheck() {
       attempt.current ??= prepareRunUpload({
         report: report[0].file,
         documents: documents.map(({ file }) => file),
+        scanScope: requireScanScope
+          ? { ...scanScope, contractNumber: scanScope.contractNumber.trim() }
+          : undefined,
       }, newIdempotencyKey());
       const accepted = await attempt.current(controller.signal);
       if (controller.signal.aborted) return;
@@ -148,6 +178,8 @@ export function NewCheck() {
       setAnnounceAccepted(true);
       restoreUploadFocus.current = submitHadFocus;
       setReport([]);
+      setScanScope(initialScanScope);
+      if (manualScope) void navigate('/checks/new', { replace: true });
       setDocuments([]);
       setErrors({ report: '', documents: '' });
       attempt.current = null;
@@ -210,6 +242,32 @@ export function NewCheck() {
             onFiles={takeFiles} onRemove={(id) => removeFile('documents', id)} />
         </div>
       )}
+      {!publicDemo && requireScanScope && <fieldset className="upload-card mt-6" disabled={isSending}>
+        <legend className="px-2">Строка КФЗ</legend>
+        <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          <label className="grid gap-1">Номер договора
+            <input className="rounded border p-2" value={scanScope.contractNumber}
+              onChange={(event) => updateScope({ contractNumber: event.currentTarget.value })} />
+          </label>
+          <label className="grid gap-1">Начало периода
+            <input className="rounded border p-2" type="date" value={scanScope.periodStart}
+              onChange={(event) => updateScope({ periodStart: event.currentTarget.value })} />
+          </label>
+          <label className="grid gap-1">Конец периода
+            <input className="rounded border p-2" type="date" value={scanScope.periodEnd}
+              onChange={(event) => updateScope({ periodEnd: event.currentTarget.value })} />
+          </label>
+          <label className="grid gap-1">Этап
+            <input className="rounded border p-2" type="number" min={1} value={scanScope.stage || ''}
+              onChange={(event) => updateScope({ stage: event.currentTarget.valueAsNumber })} />
+          </label>
+          <label className="grid gap-1">Страница
+            <input className="rounded border p-2" type="number" min={1} max={12}
+              value={scanScope.page || ''}
+              onChange={(event) => updateScope({ page: event.currentTarget.valueAsNumber })} />
+          </label>
+        </div>
+      </fieldset>}
       <div className="upload-navigation mt-5 flex flex-wrap items-center gap-3">
         {!publicDemo && <Button ref={submitButton} disabled={isSending || !canStart} onClick={() => { void submit(); }}>
           Запустить проверку <WorkspaceIcon name="arrow" size={17} />

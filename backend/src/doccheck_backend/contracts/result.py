@@ -312,7 +312,7 @@ class Completeness(ContractModel):
     )
 
     state: Literal["complete", "incomplete", "unknown"]
-    basis: Literal["manifest", "user_declaration", "dataset_fixture", "none"]
+    basis: Literal["manifest", "user_declaration", "dataset_fixture", "uploaded_package", "none"]
     reason: Text
     evidence_refs: list[Text]
 
@@ -348,7 +348,12 @@ class Calculation(ContractModel):
         amounts = [component.amount for component in self.components]
         _check_amount_unit(unit, amounts)
         if not amounts:
-            return None, None
+            zero_for_missing = (
+                unit == "RUB"
+                and completeness.state == "complete"
+                and completeness.basis == "uploaded_package"
+            )
+            return None, "0.00" if zero_for_missing else None
         observed = format(_sum_exact_amounts(amounts), "f")
         return observed, observed if completeness.state == "complete" else None
 
@@ -434,12 +439,28 @@ class ResultRow(ContractModel):
                         "properties": {
                             "calculation": {
                                 "required": ["operation"],
-                                "properties": {
-                                    "operation": {"const": "sum"},
-                                    "components": {"minItems": 1},
-                                },
+                                "properties": {"operation": {"const": "sum"}},
                             },
-                        }
+                        },
+                        "anyOf": [
+                            {
+                                "properties": {
+                                    "calculation": {"properties": {"components": {"minItems": 1}}}
+                                }
+                            },
+                            {
+                                "properties": {
+                                    "unit": {"const": "RUB"},
+                                    "expected_value": {"const": "0.00"},
+                                    "completeness": {
+                                        "properties": {
+                                            "basis": {"const": "uploaded_package"},
+                                        }
+                                    },
+                                    "calculation": {"properties": {"components": {"maxItems": 0}}},
+                                }
+                            },
+                        ],
                     },
                 },
                 {
@@ -489,9 +510,14 @@ class ResultRow(ContractModel):
         if self.expected_value is not None:
             if self.completeness.state != "complete":
                 raise ValueError("an expected value requires complete coverage")
-            if self.calculation.operation != "sum" or self.observed_evidence_sum is None:
+            if self.calculation.operation != "sum":
                 raise ValueError("an expected value requires a supported calculation with evidence")
-            if Decimal(self.expected_value) != Decimal(self.observed_evidence_sum):
+            _, expected = self.calculation.admitted_sum(
+                unit=self.unit, completeness=self.completeness
+            )
+            if expected is None:
+                raise ValueError("an expected value requires a supported calculation with evidence")
+            if Decimal(self.expected_value) != Decimal(expected):
                 raise ValueError("an expected sum must equal the sum of admitted components")
         if self.derived_mismatch and (self.status != "discrepancy" or self.root_issue_id is None):
             raise ValueError("a derived mismatch requires a discrepancy and a root issue")

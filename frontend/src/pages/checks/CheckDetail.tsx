@@ -91,6 +91,10 @@ function PendingRun({ run }: { run: RunDetails }) {
     </nav>
     <div className="result-header"><h1>{run.title}</h1></div>
     <RunState run={run} />
+    {run.status === 'failed' && run.errorCode === 'scan_scope_required' &&
+      <Link className="workspace-button workspace-button-outline mt-3" to="/checks/new?scope=manual">
+        Выбрать строку КФЗ вручную
+      </Link>}
   </>;
 }
 

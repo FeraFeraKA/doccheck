@@ -43,6 +43,7 @@ export interface RunDetails {
   progress?: { processed: number; total: number };
   archivedAt?: string;
   error?: string;
+  errorCode?: string;
   result: ReviewResult | null;
 }
 
@@ -96,6 +97,7 @@ function toRunDetails(run: RunState): RunDetails {
       total: run.progress.total_documents,
     },
     error: run.error?.message,
+    errorCode: run.error?.code,
     archivedAt: run.archived_at,
     result: null,
   };
