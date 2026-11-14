@@ -243,3 +243,68 @@ def test_separate_local_rule_within_edge_window_stays_ambiguous(table):
     result = read_table_amounts(image, row, headings, _default_cell_read)
     assert "payroll" not in result
     assert result["production_overhead"].amount == Decimal("1234.67")
+
+
+def test_gray_local_row_rule_blocks_only_affected_money_column(table):
+    image, row, headings = table
+    ImageDraw.Draw(image).line((246, 381, 372, 381), width=2, fill=175)
+
+    result = read_table_amounts(image, row, headings, _default_cell_read)
+
+    assert "payroll" not in result
+    assert result["production_overhead"].amount == Decimal("1234.67")
+
+
+def test_confirmed_numerical_read_in_original_cell_can_contradict_crops(table):
+    image, row, headings = table
+    conflicting = _source("5678,90", 539, 370, 661, 380)
+
+    result = read_table_amounts(image, row, (*headings, conflicting), _default_cell_read)
+
+    assert "production_overhead" not in result
+    assert result["payroll"].amount == Decimal("1234.67")
+
+
+def test_separate_numeric_lines_cannot_be_concatenated_in_crop(table):
+    image, row, headings = table
+
+    def read(box, scale):
+        if box[1] > _ROW[0] and box[0] > 525:
+            return (_source("123", 10, 10, 30, 24), _source("456,78", 32, 26, 65, 43))
+        return _default_cell_read(box, scale)
+
+    result = read_table_amounts(image, row, headings, read)
+
+    assert "production_overhead" not in result
+    assert result["payroll"].amount == Decimal("1234.67")
+
+
+def test_third_read_with_other_article_role_rejects_same_article_code(table):
+    image, row, headings = table
+
+    def read(box, scale):
+        if box[1] < 145 and box[0] > 525 and scale == 4:
+            return (_source("Общехозяйственные затраты (0800)", 10, 10, 36, 36),)
+        return _default_cell_read(box, scale)
+
+    result = read_table_amounts(image, row, headings, read)
+
+    assert "production_overhead" not in result
+    assert result["payroll"].amount == Decimal("1234.67")
+
+
+def test_header_lines_with_seven_pixel_gap_fail_without_exception(table):
+    _, row, headings = table
+    image = Image.new("L", (800, 550), 255)
+    draw = ImageDraw.Draw(image)
+    for y in (280, _ROW[0] - 7, *_ROW):
+        draw.line((_COORDINATES[0], y, _COORDINATES[-1], y), width=2, fill=0)
+    for x in _COORDINATES:
+        draw.line((x, 280, x, _ROW[-1]), width=2, fill=0)
+    moved_heading = _source("Общепроизводственные затраты (0800)", 526, 320, 670, 345)
+
+    def read(box, _scale):
+        text = "Общепроизводственные затраты (0800)" if box[1] < 360 else "1234,67"
+        return (_source(text, 10, 10, 36, 36),)
+
+    assert read_table_amounts(image, row, (*headings, moved_heading), read) == {}
