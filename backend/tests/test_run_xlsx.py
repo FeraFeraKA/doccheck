@@ -138,7 +138,7 @@ def assert_document_decision_links(workbook) -> None:
         "Ошибки файла",
         "ID исходного документа",
         "Код причины решения",
-        "ID источников решения (JSON)",
+        "Ключ оснований решения",
     ]
     period = rows["other-period"]
     assert [cell.value for cell in period[:9]] == [
@@ -152,18 +152,12 @@ def assert_document_decision_links(workbook) -> None:
         None,
         "outside_period",
     ]
-    period_refs = json.loads(period[9].value)
-    assert period_refs == ["late-period", "ambig\x01"]
+    period_key = period[9].value
     contract = rows["other-contract"]
     assert contract[4].value == "exclude"
     assert contract[5].value == "Документ относится к другому договору"
     assert contract[8].value == "different_contract"
-    contract_refs = json.loads(contract[9].value)
-    assert contract_refs == [
-        '=HYPERLINK("https://example.test/")',
-        "contract\nsecond",
-        r"ambig\x01",
-    ]
+    contract_key = contract[9].value
     assert rows["unresolved"][8].value == "needs_check"
     assert rows["unresolved"][9].value is None
 
@@ -174,28 +168,42 @@ def assert_document_decision_links(workbook) -> None:
         "Документ",
         "Адрес",
         "Тип свидетельства",
-        "ID источника (JSON)",
+        "Ключ источника в книге",
     ]
     source_rows = list(source_sheet.iter_rows(min_row=2))
-    sources = {json.loads(row[5].value): row for row in source_rows}
+    sources = {row[5].value: row for row in source_rows}
     assert len(sources) == len(source_rows)
-    assert sources["late-period"][5].value == '"late-period"'
-    assert [sources[ref][1].value for ref in period_refs] == ["other-period"] * 2
-    assert sources["late-period"][3].value == "Страница 1; строка 3"
-    assert [sources[ref][1].value for ref in contract_refs] == ["other-contract"] * 3
-    assert [sources[ref][3].value for ref in contract_refs] == [
+    link_sheet = workbook["Основания решений"]
+    assert [cell.value for cell in link_sheet[1]] == [
+        "Ключ оснований решения",
+        "Ключ источника в книге",
+    ]
+    links = [(row[0].value, row[1].value) for row in link_sheet.iter_rows(min_row=2)]
+    period_sources = [sources[source] for group, source in links if group == period_key]
+    contract_sources = [sources[source] for group, source in links if group == contract_key]
+    assert [row[1].value for row in period_sources] == ["other-period"] * 2
+    assert [row[3].value for row in period_sources] == [
+        "Страница 1; строка 3",
+        "Страница 1; строка 7",
+    ]
+    assert [row[1].value for row in contract_sources] == ["other-contract"] * 3
+    assert [row[3].value for row in contract_sources] == [
         "Страница 1; строка 4",
         "Страница 1; строка 5",
         "Страница 1; строка 8",
     ]
-    assert sources["unlinked-source"][1].value == "unresolved"
-    assert sources["ambig\x01"][0].value == sources[r"ambig\x01"][0].value == r"ambig\x01"
-    assert sources["ambig\x01"][5].value != sources[r"ambig\x01"][5].value
-    assert sources["ambig\x01"][3].value == "Страница 1; строка 7"
+    assert period_sources[0][0].value == "late-period"
+    assert contract_sources[0][0].value == '=HYPERLINK("https://example.test/")'
+    assert contract_sources[1][0].value == "contract\nsecond"
+    assert period_sources[1][0].value == contract_sources[2][0].value == r"ambig\x01"
+    assert period_sources[1][5].value != contract_sources[2][5].value
+    assert any(
+        row[0].value == "unlinked-source" and row[1].value == "unresolved" for row in source_rows
+    )
     for cell in (
         contract[8],
         contract[9],
-        *(sources[ref][column] for ref in contract_refs for column in (0, 5)),
+        *(row[column] for row in contract_sources for column in (0, 5)),
     ):
         assert cell.data_type == "s" and cell.hyperlink is None
 
@@ -221,22 +229,11 @@ def test_document_decision_code_is_literal_and_not_truncated():
         export_check_result(CheckResult.model_validate(payload))
 
 
-def test_serialized_source_id_respects_excel_cell_limit():
-    payload = fixture_payload()["result"]
-    source = deepcopy(next(item for item in payload["evidence"] if item["id"] == "contract"))
-    source["id"] = "x" * 32_765
-    payload["evidence"].append(source)
-    workbook = load_workbook(BytesIO(export_check_result(CheckResult.model_validate(payload))))
-    exported = next(
-        row for row in workbook["Источники"].iter_rows(min_row=2) if row[0].value == source["id"]
-    )
-    assert json.loads(exported[5].value) == source["id"]
-    assert len(exported[5].value) == 32_767
-
-    # The old ID cell would fit; JSON's two quotes exceed the XLSX cell limit.
-    source["id"] = "x" * 32_766
-    with pytest.raises(XlsxReportLimitError, match="cell text exceeds Excel limit"):
-        export_check_result(CheckResult.model_validate(payload))
+def test_too_many_document_decision_sources_fails_before_writing():
+    result = CheckResult.model_validate(decision_result())
+    result.documents[-1].decision.evidence_refs = ["late-period"] * 1_048_576
+    with pytest.raises(XlsxReportLimitError, match="too many worksheet rows"):
+        export_check_result(result)
 
 
 def test_workbook_preserves_amounts_and_keeps_all_untrusted_cells_literal():
@@ -262,6 +259,7 @@ def test_workbook_preserves_amounts_and_keeps_all_untrusted_cells_literal():
         "Источники",
         "Документы",
         "Первичные замечания",
+        "Основания решений",
     ]
     reconciliation = workbook["Сверка"]
     rows = {row[0].value: row for row in reconciliation if row[0].value in ("row-a", "row-b")}
@@ -392,6 +390,41 @@ def test_export_saved_result_via_http(database_url, tmp_path, status):
     assert workbook["Сверка"]["B1"].value == run_id
     assert workbook["Сверка"]["B2"].value == "Синтетические"
     assert_document_decision_links(workbook)
+
+
+def test_download_long_id_and_many_decision_sources(database_url, tmp_path):
+    result = decision_result()
+    document = next(item for item in result["documents"] if item["id"] == "other-period")
+    template = next(item for item in result["evidence"] if item["id"] == "late-period")
+    evidence_ids = ["x" * 32_766, *(f"many-{number}" for number in range(5_000))]
+    for number, evidence_id in enumerate(evidence_ids, 100):
+        source = deepcopy(template)
+        source["id"] = evidence_id
+        source["locator"]["line"] = number
+        result["evidence"].append(source)
+    document["decision"]["evidence_refs"].extend(evidence_ids)
+
+    with TestClient(create_app(Settings(database_url, upload_root=tmp_path))) as client:
+        run_id = submit(client, uuid4()).json()["run_id"]
+        set_saved_result(client, run_id, status="completed", result=result)
+        response = client.get(f"/api/v0/runs/{run_id}/exports/xlsx")
+
+    assert response.status_code == 200
+    workbook = load_workbook(BytesIO(response.content))
+    file_row = next(
+        row for row in workbook["Документы"].iter_rows(min_row=2) if row[0].value == "other-period"
+    )
+    key = file_row[9].value
+    linked = [
+        row[1].value
+        for row in workbook["Основания решений"].iter_rows(min_row=2)
+        if row[0].value == key
+    ]
+    sources = {row[5].value: row for row in workbook["Источники"].iter_rows(min_row=2)}
+    assert len(linked) == len(evidence_ids) + 2
+    assert len(set(linked)) == len(linked)
+    assert [sources[source_key][0].value for source_key in linked[2:]] == evidence_ids
+    assert sources[linked[2]][3].value == "Страница 1; строка 100"
 
 
 def test_export_rejects_saved_result_with_missing_decision_evidence(database_url, tmp_path):
