@@ -67,27 +67,27 @@ export function ResultTable({
           </tr></thead>
           <tbody>{rows.map((row) => {
             const selected = row.id === selectedId;
+            const sourceActive = row.id === activeSourceRowId;
             const isExpanded = expanded.has(row.id);
             const detailsId = `details-${row.id}`;
             const components = row.calculation?.components ?? [];
             const issue = row.root_issue_id !== null ? issuesById.get(row.root_issue_id) : undefined;
-            const messages = new Set([
-              rowExplanation(row), ...row.reasons.map(({ message }) => message), row.completeness.reason,
-            ]);
+            const explanation = rowExplanation(row);
+            const reportSources = [...new Set(row.reported_evidence_refs)];
+            const issueSources = [...new Set(issue?.evidence_refs)];
+            const matchingReason = issue ? row.reasons.findIndex(({ message }) => message === issue.message) : -1;
+            const issueIsCompleteness = issue !== undefined && matchingReason < 0 && issue.message === row.completeness.reason;
+            const separateIssue = issue !== undefined && matchingReason < 0 && !issueIsCompleteness;
+            const completenessSources = [...new Set([
+              ...row.completeness.evidence_refs, ...(issueIsCompleteness ? issueSources : []),
+            ])];
+            const showCompleteness = issueIsCompleteness || completenessSources.length > 0 ||
+              (!row.reasons.some(({ message }) => message === row.completeness.reason) &&
+                (row.reasons.length > 0 || explanation !== row.completeness.reason));
             const reportSource = row.reported_evidence_refs.find((id) => {
               const item = evidenceById.get(id);
               return item && documentsById.has(item.document_id);
             });
-            const shownSources = new Set(
-              components.flatMap((component) => evidenceFields.flatMap(([field]) => component[field] ?? [])),
-            );
-            if (reportSource && row.reported_value !== null) shownSources.add(reportSource);
-            const otherSources = [...new Set([
-              ...(issue?.evidence_refs ?? []),
-              ...row.reasons.flatMap(({ evidence_refs }) => evidence_refs),
-              ...row.completeness.evidence_refs,
-              ...row.reported_evidence_refs,
-            ])].filter((id) => !shownSources.has(id));
             const sourceDocuments = new Set(components.flatMap((component) =>
               component.amount_refs.flatMap((id) => {
                 const item = evidenceById.get(id);
@@ -134,33 +134,52 @@ export function ResultTable({
                     <span className="indicator-status-label" aria-hidden="true">{statusLabels[row.status]}</span>
                   </span></td>
                   <td className="indicator-explanation">
-                    <p>{rowExplanation(row)}</p>
+                    <p>{explanation}</p>
                   </td>
                 </tr>
                 {isExpanded && <tr className="source-subrow"><td colSpan={6}>
                   <div id={detailsId} role="region" aria-label={`Подробности: ${row.label}`} className="indicator-details">
                     {row.calculation?.formula && <p>{row.calculation.formula}</p>}
                     <p><strong>{statusLabels[row.status]}.</strong>{' '}
-                      {[...messages].join(' ')}
+                      {row.reasons.length === 0 && issue?.message !== explanation && explanation}
                     </p>
-                    {(otherSources.length > 0 || (issue && !messages.has(issue.message))) && (
+                    {row.reasons.map((reason, index) => {
+                      const sources = [...new Set([
+                        ...reason.evidence_refs, ...(index === matchingReason ? issueSources : []),
+                      ])];
+                      return <div className="indicator-issue" key={`${reason.code}:${index}`}>
+                        <p>{reason.message}</p>
+                        {sources.length > 0 && <SourceReferences
+                          ids={sources} label={`Источники причины: ${reason.message}`} prefix="Источник"
+                          rowId={row.id} selected={sourceActive} selectedEvidenceId={selectedEvidenceId}
+                          evidenceById={evidenceById} documentsById={documentsById}
+                          formatAddress={formatAddress} onSelectSource={onSelectSource} />}
+                      </div>;
+                    })}
+                    {showCompleteness && <div className="indicator-issue">
+                      <p>Полнота: {row.completeness.reason}</p>
+                      {completenessSources.length > 0 && <SourceReferences
+                        ids={completenessSources} label="Источники основания полноты" prefix="Источник"
+                        rowId={row.id} selected={sourceActive} selectedEvidenceId={selectedEvidenceId}
+                        evidenceById={evidenceById} documentsById={documentsById}
+                        formatAddress={formatAddress} onSelectSource={onSelectSource} />}
+                    </div>}
+                    {row.reported_value === null && reportSources.length === 0 &&
+                      <p>Источник значения КФЗ не указан.</p>}
+                    {reportSources.length > 0 && <SourceReferences
+                      ids={reportSources} label="Источники значения КФЗ" prefix="КФЗ"
+                      unverified={row.status === 'unverified' && row.reported_value === null}
+                      rowId={row.id} selected={sourceActive} selectedEvidenceId={selectedEvidenceId}
+                      evidenceById={evidenceById} documentsById={documentsById}
+                      formatAddress={formatAddress} onSelectSource={onSelectSource} />}
+                    {separateIssue && issue && (
                       <div className="indicator-issue">
-                        {issue && !messages.has(issue.message) && <p>{issue.message}</p>}
-                        {otherSources.length > 0 && (
-                          <ul className="indicator-addresses" aria-label="Источники проверки">
-                            {otherSources.map((id) => {
-                              const item = evidenceById.get(id);
-                              const document = item && documentsById.get(item.document_id);
-                              return <li key={id}>{item && document ? (
-                                <button type="button" aria-pressed={selected && selectedEvidenceId === id}
-                                  onClick={(event) => onSelectSource(row.id, id, event.currentTarget)}>
-                                  <span>{document.name} · {formatAddress(item.locator)}</span>
-                                  <span aria-hidden="true">›</span>
-                                </button>
-                              ) : <span>Адрес источника недоступен.</span>}</li>;
-                            })}
-                          </ul>
-                        )}
+                        <p>{issue.message}</p>
+                        {issueSources.length > 0 && <SourceReferences
+                          ids={issueSources} label="Источники замечания"
+                          rowId={row.id} selected={sourceActive} selectedEvidenceId={selectedEvidenceId}
+                          evidenceById={evidenceById} documentsById={documentsById}
+                          formatAddress={formatAddress} onSelectSource={onSelectSource} />}
                       </div>
                     )}
                     {components.length === 0 ? <p>Нет подтверждённых слагаемых.</p> :
@@ -183,7 +202,7 @@ export function ResultTable({
                                 const document = item && documentsById.get(item.document_id);
                                 return <li key={`${field}:${id}`}>
                                   {item && document ? <button
-                                    type="button" aria-pressed={selected && selectedEvidenceId === id}
+                                    type="button" aria-pressed={sourceActive && selectedEvidenceId === id}
                                     onClick={(event) => onSelectSource(row.id, id, event.currentTarget)}
                                   >
                                     <span>{role} · {document.name} · {formatAddress(item.locator)}</span>
@@ -209,6 +228,40 @@ export function ResultTable({
       <p className="sr-only">Показателей: {rows.length} из {total}. Прочерк означает, что значение отсутствует.</p>
     </section>
   );
+}
+
+interface SourceReferencesProps {
+  ids: readonly string[];
+  label: string;
+  prefix?: string;
+  unverified?: boolean;
+  rowId: string;
+  selected: boolean;
+  selectedEvidenceId?: string;
+  evidenceById: ReadonlyMap<string, Evidence>;
+  documentsById: ReadonlyMap<string, Document>;
+  formatAddress: ResultTableProps['formatAddress'];
+  onSelectSource: ResultTableProps['onSelectSource'];
+}
+
+function SourceReferences({
+  ids, label, prefix, unverified, rowId, selected, selectedEvidenceId, evidenceById, documentsById,
+  formatAddress, onSelectSource,
+}: SourceReferencesProps) {
+  return <ul className="indicator-addresses" aria-label={label}>
+    {ids.map((id, index) => {
+      const item = evidenceById.get(id);
+      const document = item && documentsById.get(item.document_id);
+      const name = unverified ? 'Непроверенное чтение' : prefix;
+      const kind = name ? `${name}${ids.length > 1 ? ` ${index + 1}` : ''} · ` : '';
+      return <li key={id}>{item && document ? <button type="button"
+        aria-pressed={selected && selectedEvidenceId === id}
+        onClick={(event) => onSelectSource(rowId, id, event.currentTarget)}>
+        <span>{kind}{document.name} · {formatAddress(item.locator)}{unverified && ` · ${item.raw_value}`}</span>
+        <span aria-hidden="true">›</span>
+      </button> : <span>{kind}Адрес источника недоступен.</span>}</li>;
+    })}
+  </ul>;
 }
 
 function Measure({ value, unit }: { value: string | null; unit: string }) {
