@@ -25,3 +25,13 @@ input {
 button { width: fit-content; cursor: pointer; }
 
 li { margin-bottom: 0.75rem; overflow-wrap: anywhere; }
+
+.preview-sources {
+  display: grid;
+  gap: 0.4rem;
+  margin-top: 0.75rem;
+}
+
+.preview-sources p { white-space: pre-wrap; }
+
+.preview-sources button[aria-pressed='true'] { border-color: #243147; }
