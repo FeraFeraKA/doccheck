@@ -1,37 +1,24 @@
 import { useId, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { classes } from '../../shared/lib/classes';
-import { formatDecimal, statusLabels } from './reviewResult';
 import type { ReviewResult } from './reviewResult';
 import './source-context.css';
 
 const tabs = [['source', 'Источник'], ['rule', 'Правило проверки']] as const;
 type Panel = (typeof tabs)[number][0];
 
-export function SourceContext({ row, children, compact = false }: {
+export function SourceContext({ row, children }: {
   row: ReviewResult['rows'][number];
-  compact?: boolean;
   children: (active: boolean) => ReactNode;
 }) {
   const [panel, setPanel] = useState<Panel>('source');
   const id = useId();
   const tablist = useRef<HTMLDivElement>(null);
-  const reasons = [...new Set(row.reasons.map(({ message }) => message.trim()))]
-    .filter((message) => message && message !== row.completeness.reason.trim());
+  const formula = row.calculation.formula.trim();
+  const notes = [...new Set([
+    row.completeness.reason.trim(), ...row.reasons.map(({ message }) => message.trim()),
+  ])].filter((message) => message && message !== formula);
 
-  const heading = <header className="source-context-header">
-      <div><h3>{row.label}</h3><span className="checks-status" data-status={row.status}>{statusLabels[row.status]}</span></div>
-      <dl>{([
-        ['В КФЗ', row.reported_value], ['По документам', row.expected_value], ['Разница', row.delta],
-      ] as const).map(([label, amount]) => <div key={label}>
-        <dt>{label} · {row.unit}</dt><dd>{formatDecimal(amount)}</dd>
-      </div>)}</dl>
-      {row.expected_value === null && row.observed_evidence_sum != null &&
-        <p>Частичная сумма: {formatDecimal(row.observed_evidence_sum)} {row.unit}</p>}
-  </header>;
-
-  return <section className={classes('source-context', panel === 'rule' && 'source-context-show-rule')}>
-    {!compact && heading}
+  return <section className="source-context">
     <div ref={tablist} role="tablist" aria-label="Сведения об источнике" className="source-context-tabs"
       onKeyDown={(event) => {
         if (event.altKey || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
@@ -51,15 +38,10 @@ export function SourceContext({ row, children, compact = false }: {
     </div>
     <div className="source-context-rule" role="tabpanel" id={id + '-rule'} tabIndex={0}
       aria-labelledby={id + '-rule-tab'} hidden={panel !== 'rule'}>
-      {compact && heading}
-      <h3>Основание результата</h3>
-      <dl>
-        <dt>Правило</dt><dd>{row.calculation.policy_id}</dd>
-        <dt>Формула</dt><dd>{row.calculation.formula}</dd>
-        <dt>Основание полноты</dt><dd>{row.completeness.reason}</dd>
-      </dl>
-      {reasons.length > 0 && <ul>
-        {reasons.map((message) => <li key={message}>{message}</li>)}
+      <h3>{row.label}</h3>
+      {formula && <p className="source-rule-formula">{formula}</p>}
+      {notes.length > 0 && <ul>
+        {notes.map((message) => <li key={message}>{message}</li>)}
       </ul>}
     </div>
   </section>;

@@ -10,12 +10,12 @@ const tabs = [
 
 export type CheckView = 'table' | 'documents' | 'exceptions' | 'conclusion' | 'log';
 
-export function ResultHeader({ title, runPath, view, scope, syntheticLabel, documentFilters, editPackPath }: {
+export function ResultHeader({ title, runPath, view, scope, testData, documentFilters, editPackPath }: {
   title: string;
   runPath: string;
   view: CheckView;
   scope: ReviewResult['scope'];
-  syntheticLabel?: string;
+  testData?: string;
   documentFilters?: ReactNode;
   editPackPath?: string;
 }) {
@@ -28,7 +28,7 @@ export function ResultHeader({ title, runPath, view, scope, syntheticLabel, docu
         <h1>{title}</h1>
         <div className="result-header-meta mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px]">
           <span className="tabular-nums">Договор {scope.contract_number} · Период {formatDate(scope.period_start)}–{formatDate(scope.period_end)}</span>
-          {syntheticLabel && <span className="result-synthetic-label">{syntheticLabel}</span>}
+          {testData && <span className="result-test-label">{testData}</span>}
         </div>
       </div>
       <div className="check-header-controls mt-6 flex flex-wrap items-end justify-between gap-x-4 gap-y-2 border-b">

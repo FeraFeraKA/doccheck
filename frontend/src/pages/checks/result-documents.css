@@ -27,23 +27,6 @@
   background: #e5f0ed;
 }
 
-.result-document-anchor {
-  display: inline-block;
-  margin-block: .125rem .625rem;
-  font-size: 13px;
-}
-
-.result-exceptions {
-  scroll-margin-top: 1rem;
-}
-.result-exceptions-heading {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: .375rem .75rem;
-  margin-block-end: .5rem;
-}
-.checks-content .result-exceptions-heading h2 { font: 500 18px/1.4 var(--font-sans); }
 .result-document-actions {
   display: flex;
   align-items: center;
@@ -60,8 +43,6 @@
   margin: 0;
   font-size: 13px;
 }
-.result-exceptions .result-document-table { min-width: 650px; }
-
 .checks-content .result-document-table th {
   height: 54px;
   padding: 16px 12px;
@@ -88,19 +69,24 @@
 
 .result-document-file { gap: 10px; }
 .result-documents .result-document-table tbody tr { cursor: pointer; }
-.document-reading-status { display: flex; align-items: center; gap: 7px; }
+.document-reading-status { display: inline-flex; align-items: center; gap: 7px; }
 .document-read-icon {
   display: grid;
   width: 18px;
   height: 18px;
+  flex-shrink: 0;
   place-items: center;
   border-radius: 4px;
   background: var(--ui-lime);
   color: var(--ui-ink);
 }
-.document-decision-details { font-size: 12px; color: var(--ui-secondary); }
-.document-decision-details summary { cursor: pointer; }
-.document-reading-status + .result-document-state { margin-top: 4px; }
+.document-status-cell { min-width: 135px; max-width: 270px; }
+.document-status-message {
+  display: block;
+  margin-top: .25rem;
+  color: var(--ui-secondary);
+  font-size: 12px;
+}
 .result-document-file .file-type-icon {
   flex: 0 0 32px;
   width: 32px;
@@ -144,4 +130,13 @@
   margin: 0;
   list-style: none;
   overflow-wrap: anywhere;
+}
+.result-document-messages.document-status-message { margin-top: .25rem; }
+.document-status-sources { margin-top: .25rem; }
+.checks-content .document-status-sources button {
+  border: 0;
+  padding: 0;
+  text-align: start;
+  text-decoration: underline;
+  color: var(--ui-primary);
 }

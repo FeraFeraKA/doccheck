@@ -44,6 +44,7 @@ from doccheck_backend.grounded_amounts import GroundedDocument, format_rubles, g
 from doccheck_backend.native_pdf import read_pdf
 from doccheck_backend.normalization import normalize_contract_number, normalize_document_period
 from doccheck_backend.page_ocr import OcrError, render_pages
+from doccheck_backend.report_identity import report_number
 from doccheck_backend.result_summary import build_summary
 from doccheck_backend.run_reads import RunReadError, open_run_original
 from doccheck_backend.run_worker import StoredRun
@@ -133,30 +134,46 @@ def load_reader() -> "QwenReader":
     adapter = os.environ.get("DOCCHECK_QWEN_ADAPTER_PATH")
     if not model or not adapter:
         raise ValueError("Set DOCCHECK_QWEN_MODEL_DIR and DOCCHECK_QWEN_ADAPTER_PATH")
-    adapter_path = Path(adapter).expanduser().resolve(strict=True)
+    adapter_path = Path(adapter).expanduser().resolve()
     if not adapter_path.is_file() or adapter_path.suffix != ".safetensors":
         raise ValueError("DOCCHECK_QWEN_ADAPTER_PATH must be an explicit .safetensors file")
     if not adapter_path.with_name("adapter_config.json").is_file():
         raise ValueError("adapter_config.json must be next to the LoRA checkpoint")
-    model_path = Path(model).expanduser().resolve(strict=True)
+    model_path = Path(model).expanduser().resolve()
     if not model_path.is_dir() or not (model_path / "model.safetensors").is_file():
         raise ValueError("DOCCHECK_QWEN_MODEL_DIR must contain the local model weights")
     return QwenReader(QwenConfig(model_path, adapter_path))
 
 
-def create_processor() -> Callable[[StoredRun, Path], CheckJob]:
+def create_processor(*, require_cuda: bool = False) -> Callable[[StoredRun, Path], CheckJob]:
     """Build the queue processor, checking local configuration before claiming jobs."""
+    from doccheck_ml.qwen import QwenUnavailableError
+
     reader = load_reader()
     # These dependencies are optional for the HTTP API and the other worker modes.
     from importlib import import_module
 
     import_module("bench.e2e_v32_20261114.runtime")
     import_module("pypdf")
+    if require_cuda:
+        reader.prepare_cuda()
 
     processor = V32Processor(reader.read_document, reader.read)
+
+    def process_package(run: StoredRun, directory: Path) -> CheckJob:
+        try:
+            return processor(run, directory)
+        except QwenUnavailableError:
+            return CheckJob(
+                run_id=str(run.id),
+                status="failed",
+                result=None,
+                error=Issue(code="v32_model_unavailable", message="Локальная Qwen недоступна."),
+            )
+
     lock_path = os.environ.get("DOCCHECK_GPU_LOCK")
     if not lock_path or lock_path == "off":
-        return processor
+        return process_package
 
     from fcntl import LOCK_EX, flock
 
@@ -164,7 +181,7 @@ def create_processor() -> Callable[[StoredRun, Path], CheckJob]:
         with Path(lock_path).open("a") as lock:
             flock(lock, LOCK_EX)
             try:
-                return processor(run, directory)
+                return process_package(run, directory)
             finally:
                 reader.release()
 
@@ -1182,10 +1199,14 @@ class V32Processor:
                 )
             ]
         )
+        number = report_number(native.get("header_text", [])) if native else None
+        if scanned is not None:
+            number = scanned.number
         result = CheckResult(
             schema_version=RESULT_SCHEMA_VERSION,
             run_id=run_id,
             synthetic=os.environ.get("DOCCHECK_TRIAL_MODE") == "1",
+            report_number=number,
             scope=scope,
             documents=documents,
             evidence=evidence,

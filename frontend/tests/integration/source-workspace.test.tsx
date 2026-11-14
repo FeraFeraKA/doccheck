@@ -75,7 +75,8 @@ describe('shared compact source workspace', () => {
     expect(within(panel).queryByRole('combobox', { name: 'Доказательство' })).not.toBeInTheDocument();
     expect(screen.getByText('Активная строка: row-a')).toBeVisible();
     fireEvent.click(within(panel).getByRole('tab', { name: 'Правило проверки' }));
-    expect(within(panel).getByText(result.rows[0].calculation.policy_id)).toBeVisible();
+    expect(within(panel).getByText(row.calculation.formula)).toBeVisible();
+    expect(within(panel).queryByText(row.calculation.policy_id)).not.toBeInTheDocument();
     expect(within(panel).getAllByText(row.completeness.reason, { exact: true })).toHaveLength(1);
     fireEvent.keyDown(within(panel).getByRole('tab', { name: 'Правило проверки' }), { key: 'Escape' });
     expect(screen.queryByRole('region', { name: 'Источник документа' })).toBeNull();

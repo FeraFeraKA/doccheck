@@ -89,7 +89,7 @@ export function useRunUploadFiles(initialPack?: InitialRunPack) {
     }
   }
 
-  function takeFiles(incoming: FileList, group: FileGroup) {
+  function takeFiles(incoming: FileList, group: FileGroup, replaceId?: string) {
     if (incoming.length === 0) return false;
     const selected = Array.from(incoming);
     const isReport = group === 'report';
@@ -98,14 +98,23 @@ export function useRunUploadFiles(initialPack?: InitialRunPack) {
       setError('Выберите один файл КФЗ.');
       return false;
     }
-    if (!selected.every((file) => file.size > 0 && formats.some(
+    if (replaceId && !groups.documents.some(({ id }) => id === replaceId)) return false;
+    const valid = selected.filter((file) => file.size > 0 && formats.some(
       (extension) => file.name.toLowerCase().endsWith(extension),
-    ))) {
+    ));
+    if (valid.length === 0 || (!replaceId && valid.length !== selected.length)) {
       setError('Добавьте непустые PDF, DOCX, XLSX или PNG.');
       return false;
     }
-    const items = selected.map((file) => ({ id: `local-${nextFileId.current++}`, file, state: 'reading' as const }));
-    const prospective = { ...groups, [group]: isReport ? items : [...groups.documents, ...items] };
+    const files = replaceId ? valid.slice(0, 1) : valid;
+    const items = files.map((file) => ({ id: `local-${nextFileId.current++}`, file, state: 'reading' as const }));
+    function updatedGroup(previous: FileGroups) {
+      if (isReport) return items;
+      return replaceId
+        ? previous.documents.map((item) => item.id === replaceId ? items[0] : item)
+        : [...previous.documents, ...items];
+    }
+    const prospective = { ...groups, [group]: updatedGroup(groups) };
     const limit = checkLimits(prospective, group);
     if (limit) {
       setErrors((previous) => ({ ...previous, [limit.group]: limit.message }));
@@ -113,7 +122,8 @@ export function useRunUploadFiles(initialPack?: InitialRunPack) {
     }
 
     if (isReport) for (const item of groups.report) abortReading(item.id);
-    setGroups((previous) => ({ ...previous, [group]: isReport ? items : [...previous.documents, ...items] }));
+    if (replaceId) abortReading(replaceId);
+    setGroups((previous) => ({ ...previous, [group]: updatedGroup(previous) }));
     setError('');
     for (const item of items) readFile(group, item.id, item.file);
     return true;

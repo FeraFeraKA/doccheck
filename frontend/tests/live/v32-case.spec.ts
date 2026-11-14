@@ -124,11 +124,12 @@ for (const missingPayroll of [false, true]) {
       await expect(row.getByText(reasonPattern).first()).toBeVisible();
     }
 
+    await page.getByRole('navigation', { name: 'Разделы проверки' }).getByRole('link', { name: 'Результат' }).click();
     const [workbook, download] = await Promise.all([
       page.waitForResponse((response) =>
         new URL(response.url()).pathname === `/api/v0/runs/${id}/exports/xlsx`),
       page.waitForEvent('download'),
-      page.getByRole('button', { name: 'Скачать XLSX' }).click(),
+      page.getByRole('button', { name: 'Принять и скачать заключение' }).click(),
     ]);
     expect(workbook.status()).toBe(200);
     expect((await workbook.body()).subarray(0, 4)).toEqual(Buffer.from([0x50, 0x4b, 3, 4]));

@@ -37,6 +37,7 @@ from doccheck_backend.contracts.result import (
 )
 from doccheck_backend.native_observations import Observation
 from doccheck_backend.native_reader import read_native_document
+from doccheck_backend.report_identity import report_number as read_report_number
 from doccheck_backend.run_worker import StoredRun
 from doccheck_backend.v32_report_model import read_report_with_model, uncovered_pdf_observations
 
@@ -206,6 +207,17 @@ def _report_evidence(file: InputFile, category: str, entry: dict) -> Evidence:
         method="v32_native_xlsx",
         locator=SheetLocator(kind="sheet", sheet=sheet, range=cell),
     )
+
+
+def _pdf_report_headers(observations: tuple[Observation, ...]) -> list[str]:
+    return [
+        item.raw_text
+        for item in observations
+        if isinstance(item.locator, PageLocator)
+        and item.locator.page == 1
+        and item.locator.bbox is not None
+        and item.locator.bbox[1] < 0.35
+    ]
 
 
 def _read_pdf_report(
@@ -465,11 +477,13 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
         report_path = Path(report_entry["path"])
         copyfile(source_path, report_path)
         has_unconfirmed_raster = False
+        report_number = None
         if report.format == "xlsx":
             extracted_report = v32.extract_report(report_entry)
             if extracted_report.get("error"):
                 return _failure(run, "v32_report_unreadable", "Не удалось прочитать КФЗ.")
             prediction = extracted_report["prediction"]
+            report_number = read_report_number(prediction.get("header_text", []))
             inferred = Scope(
                 report_document_id=report.id,
                 contract_number=prediction["contract_number"],
@@ -525,6 +539,7 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
                     "Не удалось однозначно определить договор, период и суммы в PDF КФЗ.",
                 )
             inferred, report_evidence = parsed
+            report_number = read_report_number(_pdf_report_headers(native_report.observations))
             if reading.raster_pages:
                 try:
                     observations = uncovered_pdf_observations(
@@ -539,8 +554,11 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
                         for category, item in report_evidence.items()
                         if unobstructed[1].get(category) == item
                     }
+                    if read_report_number(_pdf_report_headers(observations)) != report_number:
+                        report_number = None
                 else:
                     report_evidence = {}
+                    report_number = None
                 if not report_evidence:
                     return _failure(
                         run,
@@ -768,6 +786,7 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
                     reasons=reasons,
                     root_issue_id=None,
                     derived_mismatch=False,
+                    is_aggregate=False if code is not None else None,
                 )
             )
 
@@ -806,6 +825,7 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
         schema_version=RESULT_SCHEMA_VERSION,
         run_id=str(run.id),
         synthetic=False,
+        report_number=report_number,
         scope=scope,
         versions=Versions(
             code_revision=_VERSION,
