@@ -11,8 +11,6 @@
 !backend/src/doccheck_backend/hosted_demo_inputs/act.docx
 !backend/migrations/env.py
 !backend/migrations/versions/*.py
-!bench/
-!bench/e2e_v32_20261114/
 !bench/__init__.py
 !bench/e2e_v32_20261114/__init__.py
 !bench/e2e_v32_20261114/classification.py
