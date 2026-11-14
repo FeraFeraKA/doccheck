@@ -179,6 +179,15 @@ def _overlap(left: PageLocator, right: PageLocator) -> float:
     return area / union if union else 0
 
 
+def _intersects_same_text_region(left: PageLocator, right: PageLocator) -> bool:
+    if left.page != right.page or left.bbox is None or right.bbox is None:
+        return False
+    x0, y0, x1, y1 = left.bbox
+    u0, v0, u1, v1 = right.bbox
+    area = max(0, min(x1, u1) - max(x0, u0)) * max(0, min(y1, v1) - max(y0, v0))
+    return area >= 0.55 * min((x1 - x0) * (y1 - y0), (u1 - u0) * (v1 - v0))
+
+
 def _windows_frame(
     path: Path, page: int, helper: Path, executable: Path
 ) -> tuple[Observation, ...]:
@@ -409,12 +418,17 @@ def _repeated_full_frame_read(
 ) -> bool:
     text = _position_text(source.raw_text)
     for frame in (original, verification):
-        nearby = {
-            _position_text(candidate.raw_text)
+        if not any(
+            _position_text(candidate.raw_text) == text
+            and _overlap(source.locator, candidate.locator) >= 0.55
             for candidate in frame
-            if _overlap(source.locator, candidate.locator) >= 0.55
-        }
-        if nearby != {text}:
+        ):
+            return False
+        if any(
+            _position_text(candidate.raw_text) != text
+            and _intersects_same_text_region(source.locator, candidate.locator)
+            for candidate in frame
+        ):
             return False
     return True
 
@@ -434,7 +448,18 @@ def _read_windows_page(
         contexts = _context_windows_crops(
             image, readings, first.with_name("context.png"), page, helper, executable
         )
-    return (*readings, *contexts)
+    # A crop can confirm one reading, but it cannot erase alternatives that
+    # were recognized at the same source location in the verification frame.
+    alternatives = tuple(
+        item
+        for item in verification
+        if not any(
+            _position_text(item.raw_text) == _position_text(other.raw_text)
+            and _overlap(item.locator, other.locator) >= 0.55
+            for other in readings
+        )
+    )
+    return (*readings, *alternatives, *contexts)
 
 
 def read_scan_amounts(

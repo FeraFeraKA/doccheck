@@ -219,3 +219,38 @@ def test_broad_row_box_cannot_join_two_disjoint_narrow_boxes(scanned_stage):
     narrow_right = _box(selected.raw_text, 0.115, 0.53, 0.16)
 
     assert parse_scan_report((*scanned_stage, narrow_left, narrow_right)) is None
+
+
+def test_contained_compact_alternative_is_not_lost_to_iou():
+    from doccheck_backend.local_ocr import _repeated_full_frame_read
+
+    broad = _box("Договор № SYN-R/11", 0.06, 0.09, 0.36)
+    compact = _box("SYN-R/99", 0.29, 0.09, 0.34)
+
+    assert not _repeated_full_frame_read(broad, (broad,), (broad, compact))
+
+
+def test_crop_cannot_erase_conflict_from_verification_frame(scanned_stage, tmp_path, monkeypatch):
+    from PIL import Image
+
+    from doccheck_backend.local_ocr import _read_windows_page
+
+    first, second = tmp_path / "first.png", tmp_path / "second.png"
+    Image.new("RGB", (40, 40)).save(first)
+    original = scanned_stage[0]
+    alternate = _box("SYN-R/99", 0.23, 0.09, 0.30, confidence=0.74)
+    monkeypatch.setattr(
+        "doccheck_backend.local_ocr._windows_frame",
+        lambda path, *_: scanned_stage if path == first else (*scanned_stage, alternate),
+    )
+    monkeypatch.setattr("doccheck_backend.local_ocr._context_windows_crops", lambda *_: (original,))
+    merged = _read_windows_page(first, second, 1, None, None)
+
+    assert any(item.raw_text == alternate.raw_text for item in merged)
+    assert parse_scan_report(merged) is None
+
+
+def test_date_parser_cannot_skip_intervening_low_quality_fragment(scanned_stage):
+    fragment = _box("архивный", 0.147, 0.15, 0.172, confidence=0.54)
+
+    assert parse_scan_report((*scanned_stage, fragment)) is None

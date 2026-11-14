@@ -9,6 +9,7 @@ from doccheck_backend.contracts.locators import PageLocator
 from doccheck_backend.native_observations import Observation
 
 _CONTRACT = re.compile(r"\b(?:контракт|договор)\s*(?:№\s*)?([\w./-]*\d[\w./-]*)", re.IGNORECASE)
+_CONTRACT_TOKEN = re.compile(r"^(?=[\w./-]*\d)(?=[\w./-]*[/-])[\w./-]+$")
 _STAGE_DATE = re.compile(
     r'\b(начало|окончание)\s+([\dз]+)\s+этапа\s*:?\s*[«"“”]?\s*'
     r'(\d{1,2})\s*[»"”“]?\s+([а-яё]+)\s+(\d{4})\s*г?[.,]?',
@@ -91,7 +92,25 @@ def _reading_source(parts: list[Observation], family: str) -> Observation:
     )
 
 
-def _row_readings(positioned: tuple[Observation, ...], pattern: re.Pattern[str], family: str):
+def _has_intervening_text(
+    left: Observation, right: Observation, intervening: list[Observation]
+) -> bool:
+    left_end = _box(left)[2]
+    right_start = _box(right)[0]
+    return any(
+        left_end <= _center(item, 0) <= right_start
+        and not (_same_region(left, item) or _same_region(right, item))
+        for item in intervening
+    )
+
+
+def _row_readings(
+    positioned: tuple[Observation, ...],
+    pattern: re.Pattern[str],
+    family: str,
+    *,
+    context: tuple[Observation, ...] | None = None,
+):
     """Yield a match and truthful location, preferring the uncombined fragment."""
     for item in positioned:
         text = item.raw_text.casefold() if family == "stage" else item.raw_text
@@ -110,6 +129,12 @@ def _row_readings(positioned: tuple[Observation, ...], pattern: re.Pattern[str],
                     if len(seq) >= 5 or _box(part)[0] < _box(seq[-1])[2] - 0.002:
                         continue
                     if _box(part)[0] - _box(seq[-1])[2] > 0.18:
+                        continue
+                    if _has_intervening_text(
+                        seq[-1],
+                        part,
+                        _row_neighbors(seq[-1], context) if context is not None else pieces,
+                    ):
                         continue
                     next_seq = [*seq, part]
                     sequences.append(next_seq)
@@ -130,8 +155,8 @@ def _row_readings(positioned: tuple[Observation, ...], pattern: re.Pattern[str],
                     break
 
 
-def _date_readings(items: tuple[Observation, ...]):
-    for reading, source in _row_readings(items, _STAGE_DATE, "stage"):
+def _date_readings(items: tuple[Observation, ...], context: tuple[Observation, ...] | None = None):
+    for reading, source in _row_readings(items, _STAGE_DATE, "stage", context=context):
         label, stage, day, month, year = reading.groups()
         if month not in _MONTHS:
             continue
@@ -143,10 +168,10 @@ def _date_readings(items: tuple[Observation, ...]):
 
 
 def _dated_stages(
-    items: tuple[Observation, ...],
+    items: tuple[Observation, ...], context: tuple[Observation, ...]
 ) -> dict[int, dict[str, dict[date, Observation]]]:
     stages: dict[int, dict[str, dict[date, Observation]]] = {}
-    for stage, label, value, source in _date_readings(items):
+    for stage, label, value, source in _date_readings(items, context):
         labels = stages.setdefault(stage, {})
         labels.setdefault(label, {}).setdefault(value, source)
     return stages
@@ -164,12 +189,12 @@ def parse_scan_report(observations: tuple[Observation, ...]) -> ScanScope | None
         if item.repeated_read or (item.confidence is not None and item.confidence >= _MIN_SCORE)
     )
     contracts = {}
-    for reading, source in _row_readings(visible, _CONTRACT, "contract"):
+    for reading, source in _row_readings(visible, _CONTRACT, "contract", context=positioned):
         contracts.setdefault(reading[1], source)
     if len(contracts) != 1:
         return None
     contract, contract_source = next(iter(contracts.items()))
-    stages = _dated_stages(visible)
+    stages = _dated_stages(visible, positioned)
     if len(stages) != 1:
         return None
     stage, dates = next(iter(stages.items()))
@@ -212,5 +237,12 @@ def parse_scan_report(observations: tuple[Observation, ...]) -> ScanScope | None
     for reading, location in _row_readings(positioned, _CONTRACT, "contract"):
         if reading[1] != contract and _same_region(contract_source, location):
             return None
+    if any(
+        _CONTRACT_TOKEN.fullmatch(item.raw_text.strip())
+        and item.raw_text.strip() != contract
+        and _same_region(contract_source, item)
+        for item in positioned
+    ):
+        return None
     assert isinstance(row.locator, PageLocator)
     return ScanScope(contract, start, last, row.locator, contract_source, cutoff_source)
