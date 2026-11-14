@@ -64,6 +64,8 @@ Copy-Item .env.example .env
 
 ## Запуск каркаса через Docker Compose
 
+Для документной сверки используйте [запуск с NVIDIA GPU, Qwen и LoRA](docs/docker.md).
+
 Из корня репозитория:
 
 ```sh
