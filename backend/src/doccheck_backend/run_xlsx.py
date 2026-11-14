@@ -1,5 +1,6 @@
 """Write the saved reconciliation result as an Excel report."""
 
+import json
 import re
 from io import BytesIO
 
@@ -213,6 +214,8 @@ def export_check_result(result: CheckResult) -> bytes:
         "Основание",
         "Ошибки файла",
         "ID исходного документа",
+        "Код причины решения",
+        "ID источников решения (JSON)",
     )
     for document in result.documents:
         _append(
@@ -226,8 +229,13 @@ def export_check_result(result: CheckResult) -> bytes:
             "\n".join(f"{error.id} · {error.code}: {error.message}" for error in document.errors)
             or None,
             document.duplicate_of,
+            document.decision.reason_code,
+            # JSON preserves individual IDs even when an ID contains a line break.
+            json.dumps(document.decision.evidence_refs, ensure_ascii=False)
+            if document.decision.evidence_refs
+            else None,
         )
-    _finish(files, 1, (32, 42, 16, 17, 17, 45, 45, 32))
+    _finish(files, 1, (32, 42, 16, 17, 17, 45, 45, 32, 28, 45))
 
     issues = workbook.create_sheet("Первичные замечания")
     _append(issues, "ID замечания", "Код", "Описание", "ID источников", "ID ошибок файлов")
