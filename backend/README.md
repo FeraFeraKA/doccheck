@@ -10,7 +10,7 @@ Backend включает FastAPI, PostgreSQL и **отдельные Python work
 
 ## Docker Compose
 
-[Команды запуска](../README.md#запуск-каркаса-через-docker-compose) выполняются
+[Команды запуска](../README.md#запуск-doccheck-с-моделью-через-docker-compose) выполняются
 из корня репозитория. Compose собирает один образ Python для API, worker и
 одноразовой миграции. После проверки PostgreSQL сервис `migrate` выполняет
 `alembic upgrade head`. API и worker стартуют после успешной миграции, а

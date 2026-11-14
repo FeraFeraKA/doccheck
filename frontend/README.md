@@ -37,7 +37,7 @@ $env:DOCCHECK_API_TARGET = 'http://127.0.0.1:8010'
 pnpm dev
 ```
 
-Для [запуска через Compose](../README.md#запуск-каркаса-через-docker-compose)
+Для [запуска через Compose](../README.md#запуск-doccheck-с-моделью-через-docker-compose)
 frontend собирается по `pnpm-lock.yaml`. nginx отдаёт собранные файлы и
 проксирует `/health` и `/api/` на внутренний сервис `api` с того же origin.
 Порт хоста по умолчанию 8080, доступ только через loopback. Для Compose
