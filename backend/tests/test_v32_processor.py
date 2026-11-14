@@ -27,6 +27,7 @@ def test_v32_worker_preserves_number_when_document_prediction_fails(database_url
     book = Workbook()
     sheet = book.active
     sheet.title = "КФЗ"
+    sheet["A1"] = "Карточка учета фактических затрат № 28/6"
     sheet["A3"] = "Договор № TEST-26"
     sheet["A4"] = "Период: 2026-01-01 — 2026-01-31. Этап 1."
     sheet["B6"], sheet["C6"] = "Статья затрат", "Отчетная сумма, руб."
@@ -76,6 +77,7 @@ def test_v32_worker_preserves_number_when_document_prediction_fails(database_url
         engine.dispose()
 
     assert len(seen) == 1 and not seen[0].exists()
+    assert state["report_number"] == result["report_number"] == "28/6"
     assert "test detail" not in response.text
     assert result["versions"]["model_revision"] == f"{'b' * 64}+lora:{'a' * 64}"
     assert sum(document["duplicate_of"] is not None for document in result["documents"]) == 1
@@ -85,6 +87,20 @@ def test_v32_worker_preserves_number_when_document_prediction_fails(database_url
     )
     assert result["rows"][0]["reported_value"] == "1250.00"
     assert result["rows"][0]["status"] == "unverified"
+
+
+@pytest.mark.parametrize(
+    ("ocr", "expected"),
+    [("Карточка учёта фактических затрат № 54/8", "54/8"), ("КФЗ № 54/9", None)],
+)
+def test_scanned_report_number_requires_a_matching_crop(monkeypatch, ocr, expected):
+    img = Image.new("RGB", (500, 800), "white")
+    titles = [
+        OcrLine("Карточка учёта фактических затрат № 54/8", (10, 20, 400, 48), 82),
+        OcrLine("Договор № 12/6", (10, 55, 250, 72), 92),
+    ]
+    monkeypatch.setattr(scanned_report, "recognize_crop", lambda *_: ocr)
+    assert scanned_report._scan_report_number(img, titles) == expected
 
 
 def test_rubles_tolerate_only_xlsx_representation_noise():

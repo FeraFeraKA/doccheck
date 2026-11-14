@@ -1,8 +1,10 @@
 import asyncio
+import json
 import os
 import subprocess
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
+from pathlib import Path
 from urllib.parse import quote
 from uuid import UUID, uuid4
 
@@ -218,7 +220,14 @@ def test_history_cursor_orders_ties_and_survives_inserts(client):
     assert first.status_code == 200
     page = first.json()
     assert [item["run_id"] for item in page["items"]] == ordered[:2]
-    assert set(page["items"][0]) == {"run_id", "status", "created_at", "error", "document_count"}
+    assert set(page["items"][0]) == {
+        "run_id",
+        "status",
+        "created_at",
+        "error",
+        "document_count",
+        "report_name",
+    }
     assert page["next_cursor"]
     newest = _create(client)
     _update_run(client, newest, created_at=identical_date + timedelta(seconds=1))
@@ -599,3 +608,44 @@ def test_history_finding_filters_use_saved_counts_before_pagination(client):
     history = client.get(RUNS).json()["items"]
     assert {item["run_id"] for item in history} == {mixed, complete, empty, pending}
     assert "counts" not in next(item for item in history if item["run_id"] == pending)
+
+
+def test_history_coverage_matches_findings_and_uses_report_manifest(client):
+    run_id = _create(client)
+    run = _manifest(client, run_id)
+    report, support = run.documents
+    report["synthetic"] = True
+    _update_run(client, run_id, documents=[support, report])
+    state = client.get(f"{RUNS}/{run_id}").json()
+    assert state["report_name"] == report["name"]
+    assert state["report_number"] is None
+    assert state["synthetic"] is True
+    pending = client.get(RUNS).json()["items"][0]
+    assert pending["report_name"] == report["name"]
+    assert pending["synthetic"] is True
+    assert "rub_coverage" not in pending
+
+    fixture = Path(__file__).resolve().parents[2] / "contracts/check-result.v1.synthetic.json"
+    result = json.loads(fixture.read_text(encoding="utf-8"))["result"]
+    result["run_id"] = run_id
+    result["report_number"] = "3/7"
+    # The result is valid with either a missing or a stale derived summary.
+    # The same canonical calculation must back both read endpoints.
+    stale_coverage = {
+        "total": "0.00",
+        "verified": "0.00",
+        "discrepancy": None,
+        "unverified": None,
+        "shares": None,
+    }
+    for coverage in (stale_coverage, None):
+        result["summary"]["rub_coverage"] = coverage
+        _update_run(client, run_id, status="completed", result=result)
+        history = client.get(RUNS).json()["items"][0]
+        assert history["report_name"] == report["name"]
+        assert history["report_number"] == "3/7"
+        assert client.get(f"{RUNS}/{run_id}").json()["report_number"] == "3/7"
+        findings = client.get(f"{RUNS}/{run_id}/findings").json()
+        assert history["rub_coverage"] == findings["summary"]["rub_coverage"]
+        assert history["rub_coverage"]["unverified"] == "0.00"
+        assert history["rub_coverage"]["verified"] is None

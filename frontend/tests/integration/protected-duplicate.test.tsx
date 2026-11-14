@@ -53,10 +53,10 @@ it('показывает ошибку чтения исключённой защ
   if (!row) throw new Error('Строка защищённой копии отсутствует');
   expect(within(row).getByText('Не удалось прочитать')).toBeVisible();
   expect(within(row).getByText('Исключён')).toBeVisible();
-  fireEvent.click(within(row).getByText('Основание'));
   expect(within(row).getByText(message)).toBeVisible();
+  expect(within(row).queryByText('Основание')).not.toBeInTheDocument();
 
-  fireEvent.click(screen.getByRole('button', { name: /^Ошибочные \(/ }));
+  fireEvent.click(screen.getByRole('button', { name: /^Исключены \(/ }));
   expect(within(table).getByRole('button', { name: 'protected-b.pdf' })).toBeVisible();
   expect(fetchMock).toHaveBeenCalledWith(`/api/v0/runs/${runId}/findings`, expect.anything());
 });

@@ -25,6 +25,7 @@ def uploaded_files(tmp_path):
     book = Workbook()
     sheet = book.active
     sheet.title = "КФЗ"
+    sheet["A1"] = "Карточка учета фактических затрат № 12/8"
     sheet["A3"] = "Договор № E2E-31"
     sheet["A4"] = "Период: 2027-02-01 — 2027-03-31. Этап 2."
     sheet["B6"] = "Статья затрат"
@@ -128,9 +129,11 @@ def test_worker_adapter_infers_scope_and_anchors_partial_sum(uploaded_files, tmp
     result = job.result
     assert result.run_id == str(run.id)
     assert result.synthetic is False
+    assert result.report_number == "12/8"
     assert result.scope.contract_number == "E2E-31"
     assert result.scope.period_end == "2027-03-31"
     (row,) = result.rows
+    assert row.is_aggregate is False
     assert (row.status, row.reported_value, row.observed_evidence_sum) == (
         "unverified",
         "1250.50",
@@ -145,6 +148,24 @@ def test_worker_adapter_infers_scope_and_anchors_partial_sum(uploaded_files, tmp
     assert evidence["article"].locator.paragraph == 2
     assert evidence["reported_value"].locator.range == "C7"
     assert all((tmp_path / f["id"]).is_file() for f in uploaded_files)
+
+
+def test_conflicting_report_numbers_do_not_replace_the_saved_reference(
+    uploaded_files, tmp_path, monkeypatch
+):
+    _stub_ollama(monkeypatch, "1172.70")
+    report = uploaded_files[0]
+    path = tmp_path / report["id"]
+    with path.open("rb") as uploaded:
+        book = load_workbook(uploaded)
+    book["КФЗ"]["A2"] = "КФЗ № 31"
+    book.save(path)
+    report["sha256"] = sha256(path.read_bytes()).hexdigest()
+
+    result = process(StoredRun(uuid4(), None, uploaded_files), tmp_path).result
+
+    assert result.report_number is None
+    assert result.scope.contract_number == "E2E-31"
 
 
 def test_unsupported_model_amount_stays_unknown(uploaded_files, tmp_path, monkeypatch):
@@ -568,6 +589,7 @@ def test_native_pdf_kfz_binds_report_and_retains_docx_primary(
     _write_text_pdf(
         path,
         [
+            "Карточка учёта фактических затрат № 68/4",
             "Договор № E2E-31.",
             "Период: 2027-02-01 — 2027-03-31.",
             "Общехозяйственные расходы: 1 250,50 руб.",
@@ -585,6 +607,7 @@ def test_native_pdf_kfz_binds_report_and_retains_docx_primary(
     assert "images" not in message
     assert job.status == "completed"
     assert job.result.scope.period_end == "2027-03-31"
+    assert job.result.report_number == "68/4"
     assert job.result.summary.primary_issues == []
     (row,) = job.result.rows
     assert (row.reported_value, row.observed_evidence_sum) == ("1250.50", "1172.70")

@@ -124,8 +124,8 @@ it('берёт файлы после чтения, ждёт подтвержде
   expect(screen.getByRole('status')).toHaveTextContent('Запуск проверки');
   pendingStart.resolve(accepted('saved-run'));
   const queue = screen.getByRole('region', { name: 'Последние проверки' });
-  expect(await within(queue).findByRole('heading', { name: 'Проверка КФЗ №saved-run' })).toBeVisible();
-  expect(within(queue).queryByRole('link', { name: 'Проверка КФЗ №saved-run' })).not.toBeInTheDocument();
+  expect(await within(queue).findByRole('heading', { name: /Проверка КФЗ|КФЗ · report\.pdf/ })).toBeVisible();
+  expect(within(queue).queryByRole('link', { name: /Проверка КФЗ|КФЗ · report\.pdf/ })).not.toBeInTheDocument();
   expect(screen.queryByText('report.pdf')).not.toBeInTheDocument();
   expect(discard).not.toHaveBeenCalled();
 });
@@ -164,7 +164,7 @@ it('загружает пакет с явным выбором строки то
   const fields = await screen.findByRole('group', { name: 'Строка КФЗ' });
   expect(screen.getByText('КФЗ.pdf')).toBeVisible();
   expect(screen.getByText('Акт.docx')).toBeVisible();
-  const submit = screen.getByRole('button', { name: 'Запустить проверку' });
+  const submit = screen.getByRole('button', { name: 'Запустить повторную проверку' });
   expect(submit).toBeDisabled();
   for (const [label, value] of [
     ['Номер договора', ' СИНТ-31 '],
@@ -255,7 +255,7 @@ it('повторяет запуск с тем же сохранённым пак
   fireEvent.click(submit);
   expect(await screen.findByRole('alert')).toHaveTextContent('Не удалось подтвердить запуск');
   fireEvent.click(submit);
-  expect(await screen.findByRole('heading', { name: 'Проверка КФЗ №saved-run' })).toBeVisible();
+  expect(await screen.findByRole('heading', { name: /Проверка КФЗ|КФЗ · / })).toBeVisible();
   expect(startRun.mock.calls.map(([id]) => id)).toEqual(['uploaded', 'uploaded']);
   expect(prepareTransfer).toHaveBeenCalledTimes(1);
   expect(discard).not.toHaveBeenCalled();
@@ -275,7 +275,7 @@ it('перезагружает выбранные файлы после исте
   expect(prepareTransfer.mock.calls[1][1]).not.toBe(prepareTransfer.mock.calls[0][1]);
   await waitFor(() => expect(submit).toBeEnabled());
   fireEvent.click(submit);
-  expect(await screen.findByRole('heading', { name: 'Проверка КФЗ №saved-run' })).toBeVisible();
+  expect(await screen.findByRole('heading', { name: /Проверка КФЗ|КФЗ · / })).toBeVisible();
   expect(startRun.mock.calls.map(([id]) => id)).toEqual(['expired', 'renewed']);
 });
 
@@ -291,11 +291,37 @@ it('переиспользует выбранные серверные доку�
     ],
   });
 
-  expect(screen.getByRole('heading', { name: 'Изменить комплект' })).toBeVisible();
+  expect(screen.getByRole('heading', { name: 'Изменение комплекта · КФЗ.pdf' })).toBeVisible();
   expect(screen.getByRole('link', { name: 'К результату' })).toHaveAttribute('href', '/checks/saved-run');
-  const submit = screen.getByRole('button', { name: 'Запустить проверку' });
+  expect(screen.queryByRole('region', { name: 'Последние проверки' })).not.toBeInTheDocument();
+  const submit = screen.getByRole('button', { name: 'Запустить повторную проверку' });
+  expect(submit).toBeDisabled();
+  expect(prepareTransfer).not.toHaveBeenCalled();
+
+  const pending = defer<{ upload_id: string }>();
+  prepareTransfer.mockReturnValueOnce(vi.fn().mockReturnValue(pending.promise));
+  const replace = screen.getByRole('button', { name: 'Заменить Акт.xlsx' });
+  fireEvent.click(replace);
+  pick('Выберите замену первичного документа', [new File(['invalid selection'], 'bad.txt')]);
+  expect(screen.getByText('Акт.xlsx')).toBeVisible();
+  expect(screen.getByRole('alert')).toHaveTextContent('Добавьте непустые PDF, DOCX, XLSX или PNG.');
+  expect(prepareTransfer).not.toHaveBeenCalled();
+
+  const replacement = new File(['new synthetic workbook'], 'Акт-замена.xlsx');
+  fireEvent.click(replace);
+  pick('Выберите замену первичного документа', [replacement]);
+  expect(screen.queryByText('Акт.xlsx')).not.toBeInTheDocument();
+  expect(screen.getByText('Акт.docx')).toBeVisible();
+  expect(screen.getByText('Акт-замена.xlsx')).toBeVisible();
+  await waitFor(() => expect(prepareTransfer).toHaveBeenCalledTimes(1));
+  expect(prepareTransfer.mock.calls[0][0]).toEqual({
+    report: undefined, documents: [replacement], sourceRunId: 'saved-run', retainedDocumentIds: ['report', 'existing-two'],
+  });
+  expect(submit).toBeDisabled();
+  pending.resolve({ upload_id: 'uploaded-edit' });
   await waitFor(() => expect(submit).toBeEnabled());
-  fireEvent.click(screen.getByRole('button', { name: 'Удалить Акт.xlsx' }));
+
+  fireEvent.click(screen.getByRole('button', { name: 'Удалить Акт-замена.xlsx' }));
   await waitFor(() => expect(prepareTransfer).toHaveBeenCalledTimes(2));
   expect(prepareTransfer.mock.calls[1][0]).toEqual({
     report: undefined, documents: [], sourceRunId: 'saved-run', retainedDocumentIds: ['report', 'existing-two'],

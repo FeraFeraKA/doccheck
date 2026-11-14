@@ -145,6 +145,7 @@ def read_native_report(path):
         raise ValueError("Missing report rows or total")
     row_sum = sum((parse_amount(row["reported_amount"]) for row in rows), Decimal("0"))
     return {"contract_number": contract.group(1), "period_start": period.group(1), "period_end": period.group(2),
+            "header_text": [text("A1"), text("A2")],
             "stage": str(int(period.group(3))),
             "rows": rows, "total": total, "total_agrees_with_rows": row_sum == parse_amount(total["amount"]),
             "source": {"path": str(path), "sha256": hashlib.sha256(raw).hexdigest(), "sheet": "КФЗ",

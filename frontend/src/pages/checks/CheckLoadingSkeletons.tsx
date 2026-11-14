@@ -80,7 +80,6 @@ function SkeletonTable({ documents = false }: { documents?: boolean }) {
 
 export function RunPackSkeleton() {
   return <>
-    <p className="upload-intro">Добавьте КФЗ и первичные документы.</p>
     <p role="status" className="sr-only">Загружаем список документов…</p>
     <section aria-label="Комплект документов" aria-busy="true">
       <div aria-hidden="true">

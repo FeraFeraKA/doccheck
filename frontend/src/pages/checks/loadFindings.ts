@@ -189,6 +189,7 @@ function row(value: unknown): Row {
   return {
     id: text(item.id),
     label: text(item.label),
+    indicator_code: item.indicator_code == null ? null : text(item.indicator_code),
     unit,
     status: choice(item.status, ['verified', 'discrepancy', 'unverified']),
     reported_value: nullableDecimal(item.reported_value, unit),

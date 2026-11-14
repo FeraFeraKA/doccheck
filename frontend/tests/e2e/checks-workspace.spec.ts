@@ -44,12 +44,12 @@ test('the accountant opens the synthetic reconciliation and sees discrepancies a
   await expect(row.getByRole('button', { name: 'Синтетическая статья B' })).toHaveAttribute('aria-expanded', 'true');
 
   await page.getByRole('link', { name: 'Исключения' }).click();
-  await expect(page).toHaveURL(/\/documents#exceptions$/);
-  const exceptions = page.getByRole('region', { name: 'Исключения', exact: true });
-  await expect(page.getByText('Действия бухгалтера недоступны в синтетическом режиме.')).toBeVisible();
+  await expect(page).toHaveURL(/\/documents\?filter=excluded$/);
+  const exceptions = page.getByRole('region', { name: 'Таблица документов', exact: true });
+  await expect(page.getByText('Тестовые данные', { exact: true })).toBeVisible();
   await expect(exceptions.getByText('Ошибка чтения', { exact: true })).toBeVisible();
   await page.reload();
-  await expect(page.getByText('Действия бухгалтера недоступны в синтетическом режиме.')).toBeVisible();
+  await expect(page.getByRole('button', { name: /^Исключены/ })).toHaveAttribute('aria-pressed', 'true');
   await expect(exceptions.getByText('Ошибка чтения', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Просмотреть источник' })).toHaveCount(0);
   expect(apiRequests).toEqual([]);
@@ -99,7 +99,7 @@ test('the upload wizard selects files without secure-context APIs', async ({ pag
     name: 'support.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4 synthetic support'),
   });
   await page.getByRole('button', { name: 'Запустить проверку' }).click();
-  await expect(page.getByRole('heading', { name: 'Проверка КФЗ №secure-fallback' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Проверка КФЗ|КФЗ · example\.pdf/ })).toBeVisible();
   await expect(page).toHaveURL(/\/checks\/new$/);
 });
 
@@ -130,7 +130,7 @@ test('the accountant distinguishes missing files, invalid selection and unknown 
   await page.goto('/checks/unknown/conclusion');
   await expect(page.getByRole('heading', { name: 'Проверка не найдена' })).toBeVisible();
   await page.getByRole('link', { name: 'Все проверки' }).click();
-  await expect(page.getByRole('link', { name: 'Проверка КФЗ №saved-run' }))
+  await expect(page.getByRole('link', { name: 'Проверка КФЗ', exact: true }))
     .toHaveAttribute('href', '/checks/new?run=saved-run#queue');
   await page.getByRole('searchbox', { name: 'Поиск на странице' }).fill('нет совпадений');
   await expect(page.getByText('Проверки не найдены.')).toBeVisible();
@@ -140,13 +140,14 @@ test('saved run and history cursor are recovered from the URL', async ({ page })
   await page.setViewportSize({ width: 1280, height: 720 });
   const summary = {
     run_id: 'saved-run', status: 'completed', error: null, created_at: '2026-11-13T12:00:00Z',
+    report_name: 'saved.xlsx',
   };
   const cursor = 'older-page';
   await page.route('**/api/v0/runs*', (route) => {
     const url = new URL(route.request().url());
     if (url.pathname !== '/api/v0/runs') return route.fallback();
     return route.fulfill({ json: url.searchParams.get('cursor') === cursor
-      ? { items: [{ ...summary, run_id: 'older-run' }], next_cursor: null }
+      ? { items: [{ ...summary, run_id: 'older-run', report_number: '3/7' }], next_cursor: null }
       : { items: [summary], next_cursor: cursor } });
   });
   await page.route('**/api/v0/runs/saved-run', (route) => route.fulfill({ json: {
@@ -157,7 +158,7 @@ test('saved run and history cursor are recovered from the URL', async ({ page })
     json: { code: 'result_pending', message: 'Результат пока недоступен' },
   }));
   await page.goto('/checks');
-  await expect(page.getByRole('link', { name: 'Проверка КФЗ №saved-run' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'КФЗ · saved.xlsx' })).toBeVisible();
   const search = page.getByRole('searchbox', { name: 'Поиск на странице' });
   await page.getByRole('button', { name: 'Есть расхождения' }).click();
   await search.focus();
@@ -169,11 +170,11 @@ test('saved run and history cursor are recovered from the URL', async ({ page })
   const older = page.getByRole('link', { name: 'Более ранние проверки' });
   await older.click();
   await page.reload();
-  await expect(page.getByRole('link', { name: 'Проверка КФЗ №older-run', exact: true })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'КФЗ №3/7', exact: true })).toBeVisible();
   await page.getByRole('link', { name: 'К новым проверкам' }).click();
-  await page.getByRole('link', { name: 'Проверка КФЗ №saved-run', exact: true }).click();
+  await page.getByRole('link', { name: 'КФЗ · saved.xlsx', exact: true }).click();
   await page.reload();
-  await expect(page.getByRole('heading', { name: 'Проверка КФЗ №saved-run' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'КФЗ · saved.xlsx' })).toBeVisible();
   await expect(page.getByText('Результат проверки недоступен.')).toBeVisible();
 });
 
@@ -187,7 +188,7 @@ test('an older active check stays observable in the queue until its result is re
   } }));
   await page.route(`**/api/v0/runs/${id}`, (route) => route.fulfill({ json: {
     run_id: id, status: finished ? 'completed' : 'processing', error: null, created_at: created,
-    synthetic: true,
+    synthetic: true, report_name: 'older-active.xlsx',
     progress: finished ? { processed_documents: 2, total_documents: 2 } : null,
   } }));
   await page.route(`**/api/v0/runs/${id}/findings`, (route) => route.fulfill({
@@ -197,15 +198,15 @@ test('an older active check stays observable in the queue until its result is re
   await page.goto(`/checks/${id}`);
   await expect(page).toHaveURL(/\/checks\/new\?run=older-active-run#queue$/);
   const queue = page.getByRole('region', { name: 'Последние проверки' });
-  const bar = queue.getByRole('progressbar', { name: 'Синтетическая сверка' });
+  const bar = queue.getByRole('progressbar', { name: 'КФЗ · older-active.xlsx' });
   await expect(bar).toHaveAttribute('aria-valuetext', 'Обработка документов');
   await expect(bar).not.toHaveAttribute('aria-valuenow');
   await page.reload();
   await expect(bar).toBeVisible();
-  await expect(queue.getByText('Синтетика', { exact: true })).toBeVisible();
+  await expect(queue.getByText('Тестовые данные', { exact: true })).toBeVisible();
 
   finished = true;
-  await queue.getByRole('link', { name: 'Синтетическая сверка' }).click();
+  await queue.getByRole('link', { name: 'КФЗ · older-active.xlsx' }).click();
   await expect(page).toHaveURL(`/checks/${id}`);
   await expect(page.getByRole('table', { name: 'Показатели КФЗ' })).toBeVisible();
 });
@@ -219,22 +220,24 @@ test('the synthetic result and its document routes have no XLSX action', async (
   for (const suffix of ['', '/documents', '/exceptions', '/conclusion']) {
     await page.goto(runPath + suffix);
     await expect(page.getByRole('navigation', { name: 'Разделы проверки' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Скачать XLSX' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Принять и скачать заключение' })).toHaveCount(0);
   }
   expect(exportCalls).toEqual([]);
 });
 
-test('documents and the direct stored conclusion download XLSX for the same run', async ({ page }) => {
+test('accepting a saved check archives it and downloads its conclusion', async ({ page }) => {
   const runId = 'saved-xlsx';
   const path = `/api/v0/runs/${runId}`;
+  let archivedAt: string | null = null;
   await page.route(`**${path}`, (route) => route.fulfill({ json: {
     run_id: runId, status: 'completed_with_issues', created_at: '2026-11-13T12:00:00Z', error: null,
-    progress: { processed_documents: 4, total_documents: 4 },
+    progress: { processed_documents: 4, total_documents: 4 }, archived_at: archivedAt,
   } }));
   await page.route(`**${path}/findings`, (route) => route.fulfill({
     json: { ...example.result, run_id: runId },
   }));
   let exportCalls = 0;
+  let archiveCalls = 0;
   await page.route(`**${path}/exports/xlsx`, (route) => {
     exportCalls += 1;
     if (exportCalls === 1) return route.fulfill({ status: 503, json: { code: 'service_unavailable' } });
@@ -243,26 +246,40 @@ test('documents and the direct stored conclusion download XLSX for the same run'
       contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     });
   });
+  await page.route(`**${path}/archive`, (route) => {
+    archiveCalls += 1;
+    archivedAt = route.request().method() === 'PUT' ? '2026-11-14T17:00:00Z' : null;
+    return route.fulfill({ json: { archived_at: archivedAt } });
+  });
 
   await page.goto(`/checks/${runId}`);
   await expect(page.getByRole('region', { name: 'Заключение по проверке' })).toBeVisible();
-  const button = page.getByRole('button', { name: 'Скачать XLSX' });
-  await expect(button).toHaveCount(0);
+  const accept = page.getByRole('button', { name: 'Принять и скачать заключение' });
+  await expect(accept).toBeVisible();
   await page.getByRole('navigation', { name: 'Разделы проверки' }).getByRole('link', { name: 'Документы' }).click();
   await expect(page).toHaveURL(`/checks/${runId}/documents`);
-  await expect(page.getByRole('button', { name: 'Скачать XLSX' })).toBeVisible();
-  await button.click();
+  await expect(accept).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Скачать XLSX' })).toHaveCount(0);
+  await page.goto(`/checks/${runId}`);
+  await accept.click();
   await expect(page.getByRole('alert')).toHaveText('Не удалось скачать XLSX. Повторите попытку.');
+  expect(archiveCalls).toBe(0);
+  const acceptedDownload = page.waitForEvent('download');
+  await accept.click();
+  expect((await acceptedDownload).suggestedFilename()).toBe(`doccheck-${runId}.xlsx`);
+  const accepted = page.getByRole('status').filter({ hasText: /Принят ·/ });
+  await expect(accepted).toBeVisible();
+  expect(archiveCalls).toBe(1);
 
-  for (const suffix of ['/documents', '/conclusion']) {
-    await page.goto(`/checks/${runId}${suffix}`);
-    const downloaded = page.waitForEvent('download');
-    await button.click();
-    const file = await downloaded;
-    expect(file.suggestedFilename()).toBe(`doccheck-${runId}.xlsx`);
-    expect(await file.failure()).toBeNull();
-    await expect(page).toHaveURL(`/checks/${runId}${suffix}`);
-  }
+  await page.goto(`/checks/${runId}/conclusion`);
+  await expect(accepted).toBeVisible();
+  const repeatedDownload = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Скачать XLSX' }).click();
+  expect((await repeatedDownload).suggestedFilename()).toBe(`doccheck-${runId}.xlsx`);
+  expect(archiveCalls).toBe(1);
+  await page.getByRole('button', { name: 'Вернуть из архива' }).click();
+  await expect(accept).toBeVisible();
+  expect(archiveCalls).toBe(2);
   expect(exportCalls).toBe(3);
 });
 
@@ -316,7 +333,7 @@ test('the finished check loads stored findings and can retry without repeating s
   await expect(page.getByText('Состояние проверки · Готово с замечаниями')).toBeVisible();
   await page.getByRole('button', { name: 'Повторить загрузку результата' }).click();
 
-  await expect(page.getByText('Синтетика · сохранённая проверка')).toBeVisible();
+  await expect(page.getByText('Тестовые данные', { exact: true })).toBeVisible();
   const partial = page.getByRole('row').filter({ hasText: 'Синтетическая статья A' });
   await expect(partial.getByText('Частичная сумма: 60,25 ₽')).toBeVisible();
   await expect(page.getByRole('region', { name: 'Недостаточно подтверждений' }))
@@ -332,9 +349,10 @@ test('the finished check loads stored findings and can retry without repeating s
   await zero.getByRole('button', { name: 'Синтетическая статья B', exact: true }).click();
   const reconciliation = page.getByRole('region', { name: 'Рабочее место сверки' });
   await expect(reconciliation.getByRole('region', { name: 'Подробности: Синтетическая статья B' }))
-    .toContainText('Источник ожидаемого значения не прочитан');
+    .toContainText('Нет подтверждённых слагаемых.');
+  await expect(reconciliation.getByRole('cell', { name: 'Источник ожидаемого значения не прочитан' })).toBeVisible();
   await page.getByRole('link', { name: 'Исключения' }).click();
-  await expect(page.getByRole('region', { name: 'Исключения', exact: true })
+  await expect(page.getByRole('region', { name: 'Таблица документов', exact: true })
     .getByText('Ошибка чтения', { exact: true })).toBeVisible();
   expect(statusCalls).toBe(1);
   expect(findingsCalls).toBe(2);
@@ -388,7 +406,7 @@ test('a non-synthetic saved result with no rows has an explicit empty state', as
   await page.goto('/checks/empty-run');
   const results = page.getByRole('region', { name: 'Заключение по проверке' });
   await expect(results.getByText('Показатели отсутствуют.', { exact: true })).toBeVisible();
-  await expect(page.getByText('Синтетика · сохранённая проверка')).toHaveCount(0);
+  await expect(page.getByText('Тестовые данные', { exact: true })).toHaveCount(0);
   await expect(page.getByRole('table', { name: 'Показатели КФЗ' })).toHaveCount(0);
 });
 
@@ -506,7 +524,7 @@ test('the compact wizard keeps the upload blocks and start button in view', asyn
 });
 
 test('API mock: two uploads stay on the form and history is restored on reload', async ({ page }) => {
-  const items: { run_id: string; status: string; created_at: string; error: null }[] = [];
+  const items: { run_id: string; status: string; report_name: string; created_at: string; error: null }[] = [];
   const keys = new Set<string>();
   await page.route(/\/api\/v0\/runs(?:\?.*)?$/, (route) => route.fulfill({ json: { items, next_cursor: null } }));
   await page.route('**/api/v0/runs/uploads', (route) => {
@@ -515,7 +533,10 @@ test('API mock: two uploads stay on the form and history is restored on reload',
   });
   await page.route('**/api/v0/runs/uploads/*/start', (route) => {
     const id = 'queued-' + (items.length + 1);
-    items.unshift({ run_id: id, status: 'queued', created_at: '2026-11-14T10:00:00Z', error: null });
+    items.unshift({
+      run_id: id, status: 'queued', report_name: 'report-' + (items.length + 1) + '.pdf',
+      created_at: '2026-11-14T10:00:00Z', error: null,
+    });
     return route.fulfill({
       status: 202, headers: { Location: '/api/v0/runs/' + id },
       json: { run_id: id, status: 'queued' },
@@ -534,15 +555,15 @@ test('API mock: two uploads stay on the form and history is restored on reload',
     const submit = page.getByRole('button', { name: 'Запустить проверку' });
     await expect(submit).toBeEnabled();
     await submit.click();
-    await expect(recent.getByRole('heading', { name: 'Проверка КФЗ №queued-' + number })).toBeVisible();
-    await expect(recent.getByRole('link', { name: 'Проверка КФЗ №queued-' + number })).toHaveCount(0);
+    await expect(recent.getByRole('heading', { name: `КФЗ · report-${number}.pdf` })).toBeVisible();
+    await expect(recent.getByRole('link', { name: `КФЗ · report-${number}.pdf` })).toHaveCount(0);
     await expect(submit).toBeDisabled();
     await expect(page.getByRole('button', { name: 'Выбрать файл', exact: true })).toBeFocused();
     await expect(page).toHaveURL(/\/checks\/new$/);
   }
   expect(keys.size).toBe(2);
   items[0].status = 'processing';
-  const processing = recent.getByRole('progressbar', { name: 'Проверка КФЗ №queued-2' });
+  const processing = recent.getByRole('progressbar', { name: 'КФЗ · report-2.pdf' });
   await expect(processing).toHaveAttribute('aria-valuetext', 'Обработка документов');
   await expect(processing).not.toHaveAttribute('aria-valuenow');
   await page.reload();
@@ -550,8 +571,8 @@ test('API mock: two uploads stay on the form and history is restored on reload',
   await expect(recent.getByText('В очереди', { exact: true })).toBeVisible();
   await page.getByRole('navigation', { name: 'Основная навигация' }).getByRole('link', { name: 'Проверки', exact: true }).click();
   const history = page.getByRole('region', { name: 'История запусков' });
-  await expect(history.getByText('Проверка КФЗ №queued-1', { exact: true })).toBeVisible();
-  await expect(history.getByText('Проверка КФЗ №queued-2', { exact: true })).toBeVisible();
+  await expect(history.getByText('КФЗ · report-1.pdf', { exact: true })).toBeVisible();
+  await expect(history.getByText('КФЗ · report-2.pdf', { exact: true })).toBeVisible();
 });
 
 test('the queue confirms a submitted run and the next failed start has its own feedback', async ({ page }) => {
@@ -584,8 +605,8 @@ test('the queue confirms a submitted run and the next failed start has its own f
   await expect(submit).toBeEnabled();
   await submit.press('Enter');
   await expect(page.getByRole('status').filter({ hasText: /^Проверка поставлена в очередь\.$/ })).toHaveCount(1);
-  const receipt = page.getByRole('heading', { name: 'Проверка КФЗ №' + id });
-  const status = page.getByRole('progressbar', { name: 'Проверка КФЗ №' + id });
+  const receipt = page.getByRole('heading', { name: /Проверка КФЗ|КФЗ · report\.pdf/ });
+  const status = page.getByRole('progressbar', { name: /Проверка КФЗ|КФЗ · report\.pdf/ });
   await expect(receipt).toBeVisible();
   await expect(status).toHaveAttribute('aria-valuetext', 'В очереди');
   resolveHistory();
@@ -605,7 +626,7 @@ test('the queue confirms a submitted run and the next failed start has its own f
 
 test('the uploaded files wait for a separate start and the queue opens only a finished result', async ({ page }) => {
   const id = 'uploaded-check';
-  const title = 'Проверка КФЗ №' + id;
+  const title = 'КФЗ · report.xlsx';
   let accepted = false;
   let done = false;
   let requestCount = 0;
@@ -628,7 +649,7 @@ test('the uploaded files wait for a separate start and the queue opens only a fi
     });
   });
   await page.route(/\/api\/v0\/runs(?:\?.*)?$/, (route) => route.fulfill({ json: { items: accepted ? [{
-    run_id: id, status: done ? 'completed' : 'processing', document_count: 2,
+    run_id: id, status: done ? 'completed' : 'processing', document_count: 2, report_name: 'report.xlsx',
     created_at: '2026-11-14T10:00:00Z', error: null,
   }] : [], next_cursor: null } }));
   await page.route('**/api/v0/runs/' + id, (route) => route.fulfill({ json: {

@@ -10,6 +10,25 @@
 }
 
 .upload-file-row .upload-file-status { margin-inline-end: 26px; }
+.upload-file-row[data-replaceable="true"] .upload-file-status { margin-inline-end: 0; }
+.checks-content .upload-file-row[data-replaceable="true"] button {
+  position: static;
+  display: grid;
+  place-items: center;
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  color: var(--ui-secondary);
+  opacity: 1;
+}
+.checks-content .upload-file-row[data-replaceable="true"] button:hover {
+  background: var(--ui-soft);
+  color: var(--ui-ink);
+}
+.checks-content .upload-file-row[data-replaceable="true"] button:disabled { opacity: .48; }
 .upload-file-info > .upload-file-error { color: #8a3f2b; }
 
 .upload-transfer {
