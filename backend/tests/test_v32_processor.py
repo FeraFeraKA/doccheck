@@ -125,7 +125,7 @@ def test_scanned_table_requires_matching_year_and_identifies_missing_columns(mon
         lambda *_: [
             OcrLine("Договор № EX-26", (10, 10, 200, 50), 99),
             OcrLine("Отчетный период: 01.01.2026 — 31.05.2026", (10, 60, 600, 85), 99),
-            OcrLine("руб.", (700, 100, 800, 130), 99),
+            OcrLine("Суммы КФЗ: руб.", (700, 100, 800, 130), 99),
         ],
     )
     monkeypatch.setattr(

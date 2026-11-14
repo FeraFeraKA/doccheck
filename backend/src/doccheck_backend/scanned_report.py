@@ -3,7 +3,7 @@
 import re
 from calendar import monthrange
 from collections.abc import Iterator, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
 from statistics import median
@@ -37,17 +37,22 @@ _MONEY = re.compile(r"-?(?:[0-9]+|[0-9]{1,4}(?: [0-9]{3})+)[,.][0-9]{2}")
 _QUANTITY = re.compile(r"-?[0-9]+(?:[,.][0-9]+)?")
 _RUBLE_UNIT = re.compile(r"(?<!\w)(?:руб(?:л(?:ей|я|ь|ях|и)?)?\.?|RUB|RUR|₽)(?!\w)", re.I)
 _OTHER_CURRENCY = re.compile(
-    r"(?<![A-Za-z0-9/-])(?:USD|EUR|CNY|GBP|JPY|KZT|BYN|CHF|TRY|AZN|AMD|UZS|UAH)"
+    r"(?<![A-Za-z0-9/-])(?:USD|EUR|CNY|GBP|JPY|KZT|BYN|CHF|TRY|AZN|AMD|UZS|UAH|CAD|INR)"
     r"(?![A-Za-z0-9/-])|(?<!\w)(?:доллар\w*|евро|юан\w*)(?!\w)|[$€£¥]",
     re.I,
 )
 _UNKNOWN_UNIT_CODE = re.compile(
-    r"\b(?:валют\w*|единиц\w*(?:\s+измерени\w*)?|ед\.?\s*изм\w*|сумм\w*)"
-    r"\s*[:=]\s*(?:в\s+)?(?!(?:RUB|RUR)\b)[A-Za-z]{3}\b",
+    r"(?:[:=]|\()\s*(?:в\s+)?(?!(?:RUB|RUR)\b)[A-Za-z]{3}\b",
     re.I,
 )
+_UNKNOWN_UNIT_WORD = re.compile(
+    r"[:=]\s*(?:в\s+)?(?!(?:руб(?:л(?:ей|я|ь|ях|и)?)?|RUB|RUR)(?!\w))"
+    r"[^\W\d_]{2,}(?!\w)",
+    re.I,
+)
+_UPPERCASE_UNIT_CODE = re.compile(r"(?<![A-Za-z0-9])(?!(?:RUB|RUR)\b)[A-Z]{3}(?![A-Za-z0-9])")
 _OTHER_SCALE = re.compile(
-    r"(?<!\w)(?:тыс(?:яч\w*)?|млн|миллион\w*|млрд|миллиард\w*|коп(?:еек|ейки|ейка)?)\.?(?!\w)",
+    r"(?<!\w)(?:ты[сc](?:яч\w*)?|млн|миллион\w*|млрд|миллиард\w*|коп(?:еек|ейки|ейка)?)\.?(?!\w)",
     re.I,
 )
 _UNIT_MULTIPLIER = re.compile(r"(?<!\d)(?:1000|1[ \u00a0]000)(?![\d.,])")
@@ -57,7 +62,12 @@ _UNIT_CONTEXT = re.compile(
     r"единиц\w*|валют\w*|денежн\w*|итог\w*|показател\w*|ед\.?\s*изм\w*)\b",
     re.I,
 )
-_CONTRACT_CONTEXT = re.compile(r"\b(?:договор\w*|контракт\w*)\b", re.I)
+_GLOBAL_RUBLE_DECLARATION = re.compile(
+    r"^\s*(?:суммы|денежные\s+показатели|показатели|единица(?:\s+измерения)?|"
+    r"ед\.?\s*изм\.?)\s+(?:таблицы|отч[её]та|КФЗ)\s*[:=,]?\s*(?:в\s+)?"
+    r"(?:руб(?:л(?:ей|я|ь|ях|и)?)?\.?|RUB|RUR|₽)\s*\.?\s*$",
+    re.I,
+)
 _LABOR_UNITS = {
     "чел.-мес.": re.compile(r"(?:человеко|чел\.?)[\s-]*мес"),
     "чел.-ч.": re.compile(r"(?:человеко|чел\.?)[\s-]*(?:час|ч\b)"),
@@ -87,6 +97,8 @@ class ReportCell:
     locator: PageLocator
     raw: str | None
     amount: Decimal | None
+    unit_unverified: bool = field(default=False, kw_only=True)
+    unverified_amount: Decimal | None = field(default=None, kw_only=True)
 
 
 @dataclass(frozen=True)
@@ -187,6 +199,8 @@ def _unit_declaration(line: OcrLine) -> bool:
             _RUBLE_UNIT,
             _OTHER_CURRENCY,
             _UNKNOWN_UNIT_CODE,
+            _UNKNOWN_UNIT_WORD,
+            _UPPERCASE_UNIT_CODE,
             _OTHER_SCALE,
             _UNIT_MULTIPLIER,
         )
@@ -198,17 +212,20 @@ def _unit_declaration(line: OcrLine) -> bool:
     standalone = not any(character.isalnum() for character in remainder)
     return (
         standalone
+        or bool(_UNKNOWN_UNIT_CODE.search(text))
         or bool(_UNIT_CONTEXT.search(text))
         or bool(_RUBLE_UNIT.search(text) and _UNIT_MULTIPLIER.search(text))
     )
 
 
 def _confirmed_rubles(header: Sequence[OcrLine], table_header: Sequence[OcrLine] = ()) -> bool:
-    """Require a page-level ruble declaration and reject conflicting scales or currencies."""
+    """Require an explicit unit for report values and veto conflicting markers."""
     declarations = [line for line in (*header, *table_header) if _unit_declaration(line)]
     if any(
         _OTHER_CURRENCY.search(line.text)
         or _UNKNOWN_UNIT_CODE.search(line.text)
+        or (_UNIT_CONTEXT.search(line.text) and _UNKNOWN_UNIT_WORD.search(line.text))
+        or (_UNIT_CONTEXT.search(line.text) and _UPPERCASE_UNIT_CODE.search(line.text))
         or _OTHER_SCALE.search(line.text)
         or _UNIT_MULTIPLIER.search(line.text)
         or _RUBLE_RATE.search(line.text)
@@ -216,11 +233,7 @@ def _confirmed_rubles(header: Sequence[OcrLine], table_header: Sequence[OcrLine]
     ):
         return False
     return any(
-        line.confidence >= 50
-        and _unit_declaration(line)
-        and not _CONTRACT_CONTEXT.search(line.text)
-        and _RUBLE_UNIT.search(line.text)
-        for line in header
+        line.confidence >= 50 and _GLOBAL_RUBLE_DECLARATION.fullmatch(line.text) for line in header
     )
 
 
@@ -278,16 +291,22 @@ def _simple_table(
         if len(candidates) != 1:
             continue
         line = candidates[0]
-        if not rubles:
-            result.append(ReportCell(code, page_locator(page, image, line.box), None, None))
-            continue
         raw = _SIMPLE_LINE.fullmatch(line.text)[2]
         checked = recognize_crop(image, line.box, mode=7)
         confirmed = _SIMPLE_LINE.fullmatch(" ".join(checked.split()))
         amount = _parse_money(raw)
         if confirmed is None or _parse_money(confirmed[2]) != amount:
             raw, amount = None, None
-        result.append(ReportCell(code, page_locator(page, image, line.box), raw, amount))
+        result.append(
+            ReportCell(
+                code,
+                page_locator(page, image, line.box),
+                raw,
+                amount if rubles else None,
+                unit_unverified=not rubles,
+                unverified_amount=amount if not rubles else None,
+            )
+        )
     return ReportReading(
         result,
         rubles
@@ -656,8 +675,17 @@ def read_report_row(
     cells = []
     for code, group in groups.items():
         box = (xs[group.start], top, xs[group.start + 1], bottom)
-        raw, amount = _read_amount(image, box) if rubles else (None, None)
-        cells.append(ReportCell(code, page_locator(page, image, box), raw, amount))
+        raw, amount = _read_amount(image, box)
+        cells.append(
+            ReportCell(
+                code,
+                page_locator(page, image, box),
+                raw,
+                amount if rubles else None,
+                unit_unverified=not rubles,
+                unverified_amount=amount if not rubles else None,
+            )
+        )
     details = []
     if labor := _labor_column(image, ink, xs, header_edges, groups):
         col, unit = labor
@@ -680,16 +708,18 @@ def read_report_row(
         breakdown = _pay_breakdown(image, ink, xs, header_edges, group)
         for kind, col in sorted(breakdown.items(), key=lambda item: item[1]):
             box = (xs[col], top, xs[col + 1], bottom)
-            raw, amount = _read_amount(image, box) if rubles else (None, None)
+            raw, amount = _read_amount(image, box)
             details.append(
                 ReportDetailCell(
                     f"{code}-{kind}",
                     page_locator(page, image, box),
                     raw,
-                    amount,
+                    amount if rubles else None,
                     labels[kind],
                     "RUB",
                     code,
+                    unit_unverified=not rubles,
+                    unverified_amount=amount if not rubles else None,
                 )
             )
     return ReportReading(

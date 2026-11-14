@@ -522,15 +522,21 @@ def _amount_components(scope, documents, grounds, bound, *, stage: str | None = 
     return components, unresolved
 
 
-def _detail_row(cell: ReportDetailCell, evidence: Evidence | None) -> ResultRow:
+def _detail_row(
+    cell: ReportDetailCell, evidence: Evidence | None, unverified: Evidence | None = None
+) -> ResultRow:
     reason = "По загруженным документам не удалось подтвердить этот подпоказатель."
     reasons = [Reason(code="detail_not_supported", message=reason, evidence_refs=[])]
     if evidence is None:
         reasons.append(
             Reason(
-                code="report_cell_unreadable",
-                message="Не удалось подтвердить значение ячейки КФЗ.",
-                evidence_refs=[],
+                code="report_unit_unverified" if cell.unit_unverified else "report_cell_unreadable",
+                message=(
+                    "Не удалось подтвердить единицу или масштаб значения КФЗ."
+                    if cell.unit_unverified
+                    else "Не удалось подтвердить значение ячейки КФЗ."
+                ),
+                evidence_refs=[unverified.id] if unverified else [],
             )
         )
     return ResultRow(
@@ -539,7 +545,7 @@ def _detail_row(cell: ReportDetailCell, evidence: Evidence | None) -> ResultRow:
         indicator_code=cell.parent_code,
         unit=cell.unit,
         reported_value=evidence.normalized_value if evidence else None,
-        reported_evidence_refs=[evidence.id] if evidence else [],
+        reported_evidence_refs=[item.id for item in (evidence, unverified) if item],
         expected_value=None,
         observed_evidence_sum=None,
         delta=None,
@@ -591,6 +597,25 @@ def _rows(run_id, scope, report, native, scanned: ReportReading | None, document
                     locator=locator,
                 )
             )
+    uncertain_cells = [
+        cell for cell in [*(scanned.cells if scanned else []), *details] if cell.unit_unverified
+    ]
+    for cell in uncertain_cells:
+        if cell.raw is not None and cell.unverified_amount is not None:
+            assertions.append(
+                ObservationAssertion(
+                    run_id=run_id,
+                    document_id=report.id,
+                    opened_sha256=report.sha256,
+                    source_format=report.format,
+                    kind="reported_value",
+                    raw_value=cell.raw,
+                    normalized_value=format(cell.unverified_amount, "f"),
+                    unit=None,
+                    method="ocr",
+                    locator=cell.locator,
+                )
+            )
     binding = bind_observations(run_id, manifest, assertions)
     for error in binding.errors:
         document = next(item for item in documents if item.id == error.document_id)
@@ -604,8 +629,14 @@ def _rows(run_id, scope, report, native, scanned: ReportReading | None, document
     reported_evidence = {
         item.locator.model_dump_json(): item
         for item in binding.evidence
-        if item.kind == "reported_value"
+        if item.kind == "reported_value" and item.unit is not None
     }
+    uncertain_evidence = {
+        item.locator.model_dump_json(): item
+        for item in binding.evidence
+        if item.kind == "reported_value" and item.unit is None
+    }
+    uncertain_addresses = {cell.locator.model_dump_json() for cell in uncertain_cells}
     rows = []
     issues = []
     supporting = [document for document in documents if document.role == "support"]
@@ -665,12 +696,19 @@ def _rows(run_id, scope, report, native, scanned: ReportReading | None, document
         observed, expected = calculation.admitted_sum(unit="RUB", completeness=complete)
         source = reported_evidence.get(locator.model_dump_json())
         refs = [source.id] if source else []
+        uncertain_source = uncertain_evidence.get(locator.model_dump_json())
+        uncertain_refs = [uncertain_source.id] if uncertain_source else []
         if not refs:
+            unit_unverified = locator.model_dump_json() in uncertain_addresses
             reasons.append(
                 Reason(
-                    code="report_cell_unreadable",
-                    message="Не удалось подтвердить значение ячейки КФЗ.",
-                    evidence_refs=[],
+                    code="report_unit_unverified" if unit_unverified else "report_cell_unreadable",
+                    message=(
+                        "Не удалось подтвердить единицу или масштаб значения КФЗ."
+                        if unit_unverified
+                        else "Не удалось подтвердить значение ячейки КФЗ."
+                    ),
+                    evidence_refs=uncertain_refs,
                 )
             )
         delta = root = None
@@ -699,7 +737,7 @@ def _rows(run_id, scope, report, native, scanned: ReportReading | None, document
                 indicator_code=code,
                 unit="RUB",
                 reported_value=amount if refs else None,
-                reported_evidence_refs=refs,
+                reported_evidence_refs=refs or uncertain_refs,
                 expected_value=expected,
                 observed_evidence_sum=observed,
                 delta=delta,
@@ -727,7 +765,12 @@ def _rows(run_id, scope, report, native, scanned: ReportReading | None, document
         total.root_issue_id = mismatches[0].root_issue_id
         total.derived_mismatch = True
     rows.extend(
-        _detail_row(cell, reported_evidence.get(cell.locator.model_dump_json())) for cell in details
+        _detail_row(
+            cell,
+            reported_evidence.get(cell.locator.model_dump_json()),
+            uncertain_evidence.get(cell.locator.model_dump_json()),
+        )
+        for cell in details
     )
     return rows, list(binding.evidence), issues
 

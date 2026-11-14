@@ -64,7 +64,7 @@ def _scan_page(
             fill="black",
             font=heading_font,
         )
-    draw.text((100, 245), "Синтетический документ. Суммы: руб.", fill="black", font=heading_font)
+    draw.text((100, 245), "Суммы КФЗ: руб.", fill="black", font=heading_font)
 
     columns = (100, 370, 815, 1070, 1315, 1585, 1855, 2100)
     labels = (
@@ -164,7 +164,7 @@ def write_kfz_with_breakdown(
     draw.text((70, 45), "Синтетическая карточка учёта фактических затрат", fill="black", font=title)
     draw.text((70, 114), f"Договор № {contract}", fill="black", font=title)
     draw.text((70, 179), f"Отчетный период: {_display_period(period)}", fill="black", font=title)
-    draw.text((70, 238), "Суммы: руб.", fill="black", font=heading)
+    draw.text((70, 238), "Суммы КФЗ: руб.", fill="black", font=heading)
     ys = (280, 395, 516, 640, 760, 855)
     for y in ys:
         draw.line((xs[0], y, xs[-1], y), fill="black", width=4)
