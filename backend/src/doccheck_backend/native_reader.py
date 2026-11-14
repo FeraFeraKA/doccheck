@@ -22,6 +22,7 @@ from pdfminer.layout import LTChar, LTItem, LTPage
 from pdfminer.pdfexceptions import PDFException
 from pdfminer.pdfinterp import PDFPageInterpreter
 from pdfminer.psexceptions import PSException
+from pdfminer.utils import Matrix, Rect, apply_matrix_rect, mult_matrix
 from pdfplumber.page import Page, PDFPageAggregatorWithMarkedContent
 from pdfplumber.utils import chars_to_textmap, objects_to_bbox
 from pdfplumber.utils.exceptions import PdfminerException
@@ -248,13 +249,43 @@ def _visible_pdf_box(page: Page) -> tuple[float, float, float, float]:
 class _PDFShowAggregator(PDFPageAggregatorWithMarkedContent):
     show_id = 0
 
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.form_boxes: list[Rect | None] = []
+
+    def begin_figure(self, name: str, bbox: Rect, matrix: Matrix) -> None:
+        transform = mult_matrix(matrix, self.ctm)
+        a, b, c, d, _, _ = transform
+        # An enclosing rectangle cannot represent a skewed clipping polygon.
+        clip = apply_matrix_rect(transform, bbox) if (b == c == 0 or a == d == 0) else None
+        if clip is not None and self.form_boxes:
+            parent = self.form_boxes[-1]
+            if parent is None:
+                clip = None
+            else:
+                clip = (
+                    max(clip[0], parent[0]),
+                    max(clip[1], parent[1]),
+                    min(clip[2], parent[2]),
+                    min(clip[3], parent[3]),
+                )
+        self.form_boxes.append(clip)
+        super().begin_figure(name, bbox, matrix)
+
+    def end_figure(self, name: str) -> None:
+        super().end_figure(name)
+        self.form_boxes.pop()
+
     def render_string(self, *args, **kwargs) -> None:
         self.show_id += 1
         super().render_string(*args, **kwargs)
 
     def render_char(self, *args, **kwargs) -> float:
         width = super().render_char(*args, **kwargs)
-        self.cur_item._objs[-1].doccheck_show_id = self.show_id
+        glyph = self.cur_item._objs[-1]
+        glyph.doccheck_show_id = self.show_id
+        if self.form_boxes:
+            glyph.doccheck_form_box = self.form_boxes[-1]
         return width
 
 
@@ -276,12 +307,24 @@ class _NativePDFPage(Page):
         item = super().process_object(obj)
         if isinstance(obj, LTChar):
             item["show_id"] = obj.doccheck_show_id
+            if hasattr(obj, "doccheck_form_box"):
+                clip = obj.doccheck_form_box
+                item["form_box"] = (
+                    None
+                    if clip is None
+                    else (
+                        clip[0] + self.mediabox[0],
+                        self.height - clip[3] + self.mediabox[1],
+                        clip[2] + self.mediabox[0],
+                        self.height - clip[1] + self.mediabox[1],
+                    )
+                )
         return item
 
 
 def _pdf_line_fragments(
     chars: list[dict], column_rules: list[tuple[float, float, float]]
-) -> Iterator[tuple[int, str, list[dict], bool]]:
+) -> Iterator[tuple[int, str, list[dict], bool, bool]]:
     spaces = sorted((c["x0"], c["top"], c["x1"]) for c in chars if c["text"] in _GROUP_SPACES)
     space_starts = [space[0] for space in spaces]
     text_map = chars_to_textmap(chars)
@@ -291,6 +334,7 @@ def _pdf_line_fragments(
         previous_index = start
         glyphs = []
         ambiguous = False
+        continues_previous = False
         for index in range(start, match.end()):
             _, char = text_map.tuples[index]
             if char is None:
@@ -311,7 +355,7 @@ def _pdf_line_fragments(
                     )
                     same_show = previous["show_id"] == char["show_id"]
                     written_space = False
-                    if not ruled and numeric_boundary and not same_show:
+                    if not ruled and numeric_boundary:
                         first = bisect_left(space_starts, previous["x1"] - 0.1)
                         last = bisect_left(space_starts, char["x0"])
                         written_space = any(
@@ -320,13 +364,22 @@ def _pdf_line_fragments(
                         )
                     # Across text-show operations, a terminal blank can be padding.
                     # Within one operation, a wide shift may still cross a cell boundary.
-                    separate_operators = (
-                        not same_show and text_map.as_string[previous_index + 1 : index].isspace()
+                    inferred_numeric_space = (
+                        numeric_boundary
+                        and (not same_show or not written_space)
+                        and text_map.as_string[previous_index + 1 : index].isspace()
                     )
-                    if ruled or gap > 1.5 * height or (numeric_boundary and separate_operators):
-                        yield number, text_map.as_string[start:index].strip(), glyphs, ambiguous
+                    if ruled or gap > 1.5 * height or inferred_numeric_space:
+                        yield (
+                            number,
+                            text_map.as_string[start:index].strip(),
+                            glyphs,
+                            ambiguous,
+                            continues_previous,
+                        )
                         start = index
                         glyphs = []
+                        continues_previous = not ruled and same_show
                         ambiguous = (
                             not ruled
                             and numeric_boundary
@@ -341,7 +394,13 @@ def _pdf_line_fragments(
             previous = char
             previous_index = index
         if glyphs:
-            yield number, text_map.as_string[start : match.end()].strip(), glyphs, ambiguous
+            yield (
+                number,
+                text_map.as_string[start : match.end()].strip(),
+                glyphs,
+                ambiguous,
+                continues_previous,
+            )
 
 
 def _pdf_text_lines(page: Page, visible_box: tuple[float, float, float, float]) -> list[dict]:
@@ -359,8 +418,12 @@ def _pdf_text_lines(page: Page, visible_box: tuple[float, float, float, float]) 
         else:
             position = (x0, y0, x1, y1)
         ux0, uy0, ux1, uy1 = position
-        visible = x1 > left and x0 < right and y1 > top and y0 < bottom
-        clipped = x0 < left or x1 > right or y0 < top or y1 > bottom
+        clip = char.get("form_box", visible_box)
+        unknown_clip = clip is None
+        a, b, c, d = clip if clip is not None else visible_box
+        a, b, c, d = max(a, left), max(b, top), min(c, right), min(d, bottom)
+        visible = a < c and b < d and x1 > a and x0 < c and y1 > b and y0 < d
+        clipped = unknown_clip or x0 < a or x1 > c or y0 < b or y1 > d
         item = {
             **char,
             "x0": ux0,
@@ -371,10 +434,10 @@ def _pdf_text_lines(page: Page, visible_box: tuple[float, float, float, float]) 
             "upright": char["upright"] if page.rotation in (0, 180) else not char["upright"],
         }
         visible_position = (
-            max(left, x0),
-            max(top, y0),
-            min(right, x1),
-            min(bottom, y1),
+            max(a, x0),
+            max(b, y0),
+            min(c, x1),
+            min(d, y1),
             clipped,
         )
         positions[id(item)] = visible_position if visible else None
@@ -384,16 +447,21 @@ def _pdf_text_lines(page: Page, visible_box: tuple[float, float, float, float]) 
         return []
     visible_lines = []
     visible_number = previous_number = 0
-    for number, text, fragment, ambiguous in _pdf_line_fragments(chars, _pdf_column_rules(page)):
+    previous_fragment_visible = False
+    for number, text, fragment, ambiguous, continues in _pdf_line_fragments(
+        chars, _pdf_column_rules(page)
+    ):
         glyphs = [positions[id(char)] for char in fragment]
         visible_glyphs = [box for box in glyphs if box is not None]
         if not visible_glyphs:
+            previous_fragment_visible = False
             continue
         if number != previous_number:
             visible_number += 1
             previous_number = number
         line = {"number": visible_number, "text": text, "reading_box": objects_to_bbox(fragment)}
         line["ambiguous"] = ambiguous and bool(_rub_tokens(text))
+        line["continues_previous"] = continues and previous_fragment_visible
         if len(visible_glyphs) != len(glyphs) or any(box[4] for box in visible_glyphs):
             # Do not expose hidden text or reparse a visible tail as a complete amount.
             line["text"] = "".join(
@@ -407,6 +475,7 @@ def _pdf_text_lines(page: Page, visible_box: tuple[float, float, float, float]) 
         line["x1"] = max(box[2] for box in glyphs)
         line["bottom"] = max(box[3] for box in glyphs)
         visible_lines.append(line)
+        previous_fragment_visible = True
     return visible_lines
 
 
@@ -592,6 +661,24 @@ def _wrapped_pdf_lines(lines: list[dict], dividers: list) -> set[int]:
     return interrupted
 
 
+def _split_pdf_kopecks(lines: list[dict]) -> set[int]:
+    interrupted = set()
+    for index, line in enumerate(lines):
+        before = line["text"]
+        if line.get("clipped") or not _rub_tokens(before):
+            continue
+        joined = before
+        # Rubles, kopeck digits and the unit can occupy three fragments of a show.
+        for tail in lines[index + 1 : index + 3]:
+            if not tail["continues_previous"] or tail.get("clipped"):
+                break
+            joined += "\n" + tail["text"]
+            if any(not numeral and cents for numeral, cents in _rub_tokens(joined)):
+                interrupted.add(index)
+                break
+    return interrupted
+
+
 def _read_pdf(path: Path, collected: _Collected) -> None:
     with pdfplumber.open(path) as document:
         for original in document.pages:
@@ -616,6 +703,7 @@ def _read_pdf(path: Path, collected: _Collected) -> None:
                 for sequence in _pdf_column_sequences(lines)
                 for index in _wrapped_pdf_lines([lines[index] for index in sequence], dividers)
             }
+            interrupted.update(_split_pdf_kopecks(lines))
             for index, line in enumerate(lines):
                 box = (
                     max(0.0, (line["x0"] - x0) / width),

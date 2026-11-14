@@ -182,6 +182,7 @@ def _single_page_pdf(
     font: bytes = b"Helvetica",
     extra_resources: bytes = b"",
     extra_objects: tuple[bytes, ...] = (),
+    font_extra: bytes = b"",
 ) -> Path:
     objects = (
         b"<< /Type /Catalog /Pages 2 0 R >>",
@@ -191,7 +192,7 @@ def _single_page_pdf(
         + b" /Resources << /Font << /F1 4 0 R >> "
         + extra_resources
         + b" >> /Contents 5 0 R >>",
-        b"<< /Type /Font /Subtype /Type1 /BaseFont /" + font + b" >>",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /" + font + b" " + font_extra + b" >>",
         b"<< /Length " + str(len(stream)).encode() + b" >>\nstream\n" + stream + b"\nendstream",
         *extra_objects,
     )
@@ -376,11 +377,87 @@ def test_pdf_terminal_space_does_not_join_id_to_amount(
 
 
 @pytest.mark.parametrize("rotation", [0, 90, 180, 270])
+@pytest.mark.parametrize("rule", [False, True])
+def test_pdf_single_show_can_contain_two_cells(tmp_path, rotation, rule):
+    stream = (
+        b"BT /F1 12 Tf 20 160 Td (ID) Tj ET\n"
+        b"BT /F1 12 Tf 55 160 Td (Amount) Tj ET\n"
+        b"BT /F1 12 Tf 20 140 Td [(123) -1116.666667 (456 RUB)] TJ ET\n"
+    )
+    if rule:
+        stream += b"51 126 m 51 154 l S\n"
+    path = _single_page_pdf(
+        tmp_path / "upload", stream, font=b"Courier", page_attrs=f"/Rotate {rotation}".encode()
+    )
+    result = read_native_document(path, "pdf")
+    assert [o.raw_text for o in result.observations[-2:]] == ["123", "456 RUB"]
+    assert [o.amount for o in result.observations[-2:]] == [None, Decimal(456) if rule else None]
+    assert [issue.code for issue in result.issues] == ([] if rule else ["ambiguous_rub_amount"])
+
+
+@pytest.mark.parametrize("rotation", [0, 90, 180, 270])
+@pytest.mark.parametrize("box_left", [0, 19.2])
+def test_pdf_form_bbox_cannot_hide_the_sign_of_a_reading(tmp_path, rotation, box_left):
+    text = b"BT /F1 12 Tf 12 140 Td (-120,35 RUB) Tj ET"
+    form = (
+        f"<< /Type /XObject /Subtype /Form /BBox [{box_left} 0 150 200] ".encode()
+        + b"/Resources << /Font << /F1 4 0 R >> >> /Length "
+        + str(len(text)).encode()
+        + b" >>\nstream\n"
+        + text
+        + b"\nendstream"
+    )
+    path = _single_page_pdf(
+        tmp_path / "upload",
+        b"/FormA Do",
+        font=b"Courier",
+        page_attrs=f"/Rotate {rotation}".encode(),
+        extra_resources=b"/XObject << /FormA 6 0 R >>",
+        extra_objects=(form,),
+    )
+    result = read_native_document(path, "pdf")
+    (observation,) = result.observations
+    if box_left:
+        assert observation.amount is None and not observation.raw_text.startswith("-")
+        assert [issue.code for issue in result.issues] == ["clipped_pdf_text"]
+    else:
+        assert observation.amount == Decimal("-120.35") and result.issues == ()
+
+
+@pytest.mark.parametrize("rotation", [0, 90, 180, 270])
+@pytest.mark.parametrize(
+    "segments",
+    [
+        b"(1 RUB ) -2500 (25 XYZ.)",
+        b"(1 RUB 25 ) -2500 (XYZ.)",
+        b"(1 RUB ) -2500 (25 ) -2500 (XYZ.)",
+    ],
+)
+def test_pdf_horizontal_kopeck_continuation_is_not_an_integer(tmp_path, rotation, segments):
+    cmap = b"begincmap\n3 beginbfchar\n<58> <043A>\n<59> <043E>\n<5A> <043F>\nendbfchar\nendcmap"
+    cmap_object = (
+        b"<< /Length " + str(len(cmap)).encode() + b" >>\nstream\n" + cmap + b"\nendstream"
+    )
+    stream = b"BT /F1 12 Tf 20 140 Td [" + segments + b"] TJ ET"
+    path = _single_page_pdf(
+        tmp_path / "upload",
+        stream,
+        font=b"Courier",
+        page_attrs=f"/Rotate {rotation}".encode(),
+        font_extra=b"/ToUnicode 6 0 R",
+        extra_objects=(cmap_object,),
+    )
+    result = read_native_document(path, "pdf")
+    assert all(observation.amount is None for observation in result.observations)
+    assert [issue.code for issue in result.issues] == ["ambiguous_rub_amount"]
+
+
+@pytest.mark.parametrize("rotation", [0, 90, 180, 270])
 def test_pdf_reused_form_has_distinct_show_operations(tmp_path, rotation):
     stream = b"/FormA Do\nq 1 0 0 1 145 0 cm /FormA Do Q"
     text = b"BT /F1 12 Tf 20 140 Td [(1 ) -2500 (234,56 RUB)] TJ ET"
     form = (
-        b"<< /Type /XObject /Subtype /Form /BBox [0 0 125 200] "
+        b"<< /Type /XObject /Subtype /Form /BBox [0 0 145 200] "
         b"/Resources << /Font << /F1 4 0 R >> >> /Length "
         + str(len(text)).encode()
         + b" >>\nstream\n"
