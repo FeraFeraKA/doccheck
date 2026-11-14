@@ -8,13 +8,13 @@ from decimal import Decimal
 from doccheck_backend.contracts.locators import PageLocator
 from doccheck_backend.native_observations import Observation
 
-_CONTRACT = re.compile(r"\b(?:контракт|договор)\s*№\s*([\w./-]+)", re.IGNORECASE)
+_CONTRACT = re.compile(r"\b(?:контракт|договор)\s*(?:№\s*)?([\w./-]*\d[\w./-]*)", re.IGNORECASE)
 _STAGE_DATE = re.compile(
-    r'\b(начало|окончание)\s+(\d+)\s+этапа\s*:?\s*[«"“]?\s*'
-    r'(\d{1,2})\s*[»"”]?\s+([а-яё]+)\s+(\d{4})\s*г?\.?',
+    r'\b(начало|окончание)\s+([\dз]+)\s+этапа\s*:?\s*[«"“”]?\s*'
+    r'(\d{1,2})\s*[»"”“]?\s+([а-яё]+)\s+(\d{4})\s*г?[.,]?',
     re.IGNORECASE,
 )
-_ROW = re.compile(r"^\s*(\d+)\s+этап\s*[,.:]?\s*(\d{4})\s*(?:г\.?\s*)?[:.]?\s*$", re.I)
+_ROW = re.compile(r"^\s*([\dз]+)\s+этап\s*[,.:]?\s*(\d{4})\s*(?:г\.?\s*)?[:.]?\s*$", re.I)
 _MONTHS = tuple(
     "января февраля марта апреля мая июня июля августа сентября октября ноября декабря".split()
 )
@@ -115,14 +115,16 @@ def _dated_stages(
     for item in items:
         # Label and date can be separate adjacent recognition boxes.
         neighbor_text = " ".join(other.raw_text for other in _row_neighbors(item, items))
-        for label, stage, day, month, year in _STAGE_DATE.findall(neighbor_text.casefold()):
+        readings = _STAGE_DATE.findall(item.raw_text.casefold())
+        readings.extend(_STAGE_DATE.findall(neighbor_text.casefold()))
+        for label, stage, day, month, year in readings:
             if month not in _MONTHS:
                 continue
             try:
                 value = date(int(year), _MONTHS.index(month) + 1, int(day))
             except ValueError:
                 continue
-            stages.setdefault(int(stage), {}).setdefault(label, set()).add(value)
+            stages.setdefault(int(stage.replace("з", "3")), {}).setdefault(label, set()).add(value)
     return stages
 
 
@@ -133,7 +135,9 @@ def parse_scan_report(observations: tuple[Observation, ...]) -> ScanScope | None
         if isinstance(item.locator, PageLocator) and item.locator.bbox is not None
     )
     visible = tuple(
-        item for item in positioned if item.confidence is not None and item.confidence >= _MIN_SCORE
+        item
+        for item in positioned
+        if item.repeated_read or (item.confidence is not None and item.confidence >= _MIN_SCORE)
     )
     contracts = {
         value
@@ -158,11 +162,17 @@ def parse_scan_report(observations: tuple[Observation, ...]) -> ScanScope | None
     matches = []
     for item in positioned:
         label = _ROW.fullmatch(item.raw_text.casefold())
-        if label and (int(label[1]), int(label[2])) == (stage, last.year):
+        if label and (int(label[1].replace("з", "3")), int(label[2])) == (stage, last.year):
             matches.append(item)
-    if len(matches) != 1 or matches[0] not in visible:
+    confirmed_rows = [item for item in matches if item in visible]
+    if len(confirmed_rows) != 1:
         return None
-    row = matches[0]
+    row = confirmed_rows[0]
+    if any(
+        _page(other) != _page(row) or abs(_center(other, 1) - _center(row, 1)) > 0.004
+        for other in matches
+    ):
+        return None
     row_items = _row_neighbors(row, positioned)
     candidates = [
         item

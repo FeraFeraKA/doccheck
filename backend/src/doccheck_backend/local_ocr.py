@@ -1,10 +1,17 @@
 """Bridge an explicitly configured offline OCR provider to original-page addresses."""
 
+import json
 import math
 import os
+import re
+import subprocess
+from collections import Counter
+from contextlib import closing
+from dataclasses import replace
 from functools import lru_cache
 from importlib import import_module
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from doccheck_backend.contracts.locators import PageLocator
 from doccheck_backend.native_observations import NativeDocument, NativeIssue, Observation
@@ -145,13 +152,323 @@ def read_paddle(path: Path, file_format: str) -> NativeDocument:
         if len(pdf) > _MAX_PAGES:
             return NativeDocument(issues=(NativeIssue("ocr_page_limit"),))
         for index in range(len(pdf)):
-            with pdf[index] as page:
+            with closing(pdf[index]) as page:
                 width, height = page.get_size()
                 # PDFium's default render applies intrinsic page rotation.
                 # No post-render crop, orientation or unwarp is applied.
                 scale = min(4.0, 3300 / max(width, height))
-                with page.render(scale=scale) as bitmap:
+                with closing(page.render(scale=scale)) as bitmap:
                     result = _ocr_frame(bitmap.to_pil().convert("RGB"), index + 1, engine)
             observations.extend(result.observations)
             issues.extend(result.issues)
     return NativeDocument(tuple(observations), tuple(issues))
+
+
+def _position_text(value: str) -> str:
+    return " ".join(value.casefold().split())
+
+
+def _overlap(left: PageLocator, right: PageLocator) -> float:
+    if left.page != right.page or left.bbox is None or right.bbox is None:
+        return 0
+    x0, y0, x1, y1 = left.bbox
+    u0, v0, u1, v1 = right.bbox
+    area = max(0, min(x1, u1) - max(x0, u0)) * max(0, min(y1, v1) - max(y0, v0))
+    union = (x1 - x0) * (y1 - y0) + (u1 - u0) * (v1 - v0) - area
+    return area / union if union else 0
+
+
+def _windows_frame(
+    path: Path, page: int, helper: Path, executable: Path
+) -> tuple[Observation, ...]:
+    # The path is passed as an argument to the bundled helper, never executable text.
+    result = subprocess.run(
+        [
+            str(executable),
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(helper),
+            "-ImagePath",
+            str(path),
+        ],
+        capture_output=True,
+        timeout=45,
+        check=True,
+        encoding="utf-8",
+        creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+    payload = json.loads(result.stdout)
+    width, height = payload["width"], payload["height"]
+    if not isinstance(width, int) or not isinstance(height, int) or min(width, height) <= 0:
+        raise ValueError("invalid Windows OCR frame dimensions")
+    observations = []
+    for index, line in enumerate(payload["lines"], 1):
+        if not line["words"]:
+            continue
+        groups = []
+        words = sorted(line["words"], key=lambda word: word["box"][0])
+        for word in words:
+            x0, y0, x1, y1 = word["box"]
+            if not all(math.isfinite(x) for x in (x0, y0, x1, y1)):
+                raise ValueError("non-finite Windows OCR box")
+            if not 0 <= x0 < x1 <= width or not 0 <= y0 < y1 <= height:
+                raise ValueError("Windows OCR box outside the frame")
+            prev = groups[-1][-1] if groups else None
+            if prev and x0 - prev["box"][2] <= 1.5 * (y1 - y0):
+                groups[-1].append(word)
+            else:
+                groups.append([word])
+        for group_index, group in enumerate(groups, 1):
+            x0 = min(word["box"][0] for word in group)
+            y0 = min(word["box"][1] for word in group)
+            x1 = max(word["box"][2] for word in group)
+            y1 = max(word["box"][3] for word in group)
+            observations.append(
+                Observation(
+                    " ".join(word["text"] for word in group),
+                    PageLocator(
+                        kind="page",
+                        page=page,
+                        bbox=(x0 / width, y0 / height, x1 / width, y1 / height),
+                        fragment_id=f"winocr-{index}-{group_index}",
+                    ),
+                )
+            )
+    return tuple(observations)
+
+
+_CONTEXT_CROP = re.compile(
+    r"(?:^начало\s+[\dз]|^окончание\s+[\dз]|^\s*[\dз]+\s+этап|"
+    r"^(?:контракт|договор)\b)",
+    re.IGNORECASE,
+)
+
+
+_DATE_TRIGGER = re.compile(r"^(?:начало|окончание)\s+[\dз]", re.I)
+
+
+def _date_windows_crop(image, item: Observation, target, page, helper, executable):
+    from PIL import Image, ImageOps
+
+    x0, y0, x1, y1 = item.locator.bbox
+    height = y1 - y0
+    width = x1 - x0
+    left = round(max(0, x1 + width * 0.11) * image.width)
+    top = round(max(0, y0 - height * 0.45) * image.height)
+    bottom = round(min(1, y1 + height * 0.42) * image.height)
+    date_pattern = re.compile(r"^[\W_]*(\d{1,2})[\W_]+([а-яё]+)\s+(\d{4})(?:\s*г[^\w]*)?$", re.I)
+    months = frozenset(
+        "января февраля марта апреля мая июня июля августа сентября октября ноября декабря".split()
+    )
+    reads = {}
+    for width_factor, scale in ((1.65, 4.5), (1.9, 4.5), (1.9, 3.0), (2.15, 3.6)):
+        right = round(min(1, x1 + width * width_factor) * image.width)
+        crop = ImageOps.grayscale(image.crop((left, top, right, bottom)))
+        if min(crop.size) <= 0:
+            continue
+        scaled = crop.resize(
+            (round(crop.width * scale), round(crop.height * scale)), Image.Resampling.BICUBIC
+        )
+        scaled.thumbnail((3500, 3500))
+        scaled.save(target)
+        fragments = _windows_frame(target, page, helper, executable)
+        text = " ".join(part.raw_text for part in fragments)
+        match = date_pattern.fullmatch(text)
+        if match and match[2].casefold() in months and 1 <= int(match[1]) <= 31:
+            key = tuple(part.casefold() for part in match.groups())
+            reads.setdefault(key, []).append((crop, fragments))
+    if len(reads) != 1 or len(next(iter(reads.values()))) < 2:
+        return None
+    crop, fragments = next(iter(reads.values()))[0]
+    x0 = (left + min(part.locator.bbox[0] for part in fragments) * crop.width) / image.width
+    y0 = (top + min(part.locator.bbox[1] for part in fragments) * crop.height) / image.height
+    x1 = (left + max(part.locator.bbox[2] for part in fragments) * crop.width) / image.width
+    y1 = (top + max(part.locator.bbox[3] for part in fragments) * crop.height) / image.height
+    return Observation(
+        " ".join(part.raw_text for part in fragments),
+        PageLocator(
+            kind="page",
+            page=page,
+            bbox=(x0, y0, x1, y1),
+            fragment_id=f"winocr-date-{item.locator.fragment_id}",
+        ),
+        repeated_read=True,
+    )
+
+
+def _context_windows_crops(
+    page_image,
+    raw: tuple[Observation, ...],
+    target: Path,
+    page: int,
+    helper: Path,
+    executable: Path,
+) -> tuple[Observation, ...]:
+    from PIL import Image
+
+    proposals = [
+        item
+        for item in raw
+        if _CONTEXT_CROP.search(item.raw_text) and item.locator.bbox is not None
+    ]
+    if len(proposals) > 16:
+        return ()
+    result = []
+    for index, item in enumerate(proposals, 1):
+        if _DATE_TRIGGER.search(item.raw_text):
+            date_box = _date_windows_crop(page_image, item, target, page, helper, executable)
+            if date_box is not None:
+                result.append(date_box)
+            continue
+        x0, y0, x1, y1 = item.locator.bbox
+        height = y1 - y0
+        joined_context = bool(
+            re.match(r"^(?:начало|окончание|контракт|договор)", item.raw_text, re.I)
+        )
+        width = x1 - x0
+        left = max(0, round((x0 - height) * page_image.width))
+        right = min(
+            page_image.width,
+            round(
+                (x1 + max(width * 2.8, height * 19) if joined_context else x1 + height * 3)
+                * page_image.width
+            ),
+        )
+        top = max(0, round((y0 - height * 0.32) * page_image.height))
+        bottom = min(page_image.height, round((y1 + height * 0.32) * page_image.height))
+        local = page_image.crop((left, top, right, bottom))
+        if min(local.size) <= 0:
+            continue
+        reads = []
+        for factor in (2.7, 3.6):
+            scaled = local.resize(
+                (round(local.width * factor), round(local.height * factor)),
+                Image.Resampling.LANCZOS,
+            )
+            scaled.thumbnail((3500, 3500))
+            scaled.save(target)
+            observations = _windows_frame(target, page, helper, executable)
+            # One crop can contain two rows. Keep only words whose baseline intersects the trigger.
+            fragments = [
+                part
+                for part in observations
+                if y0 - height * 0.30
+                <= (top + (part.locator.bbox[1] + part.locator.bbox[3]) * local.height / 2)
+                / page_image.height
+                <= y1 + height * 0.30
+            ]
+            if fragments:
+                reads.append(sorted(fragments, key=lambda part: part.locator.bbox[0]))
+        if len(reads) != 2:
+            continue
+        texts = [" ".join(part.raw_text for part in fragments) for fragments in reads]
+        if len(Counter(_position_text(text) for text in texts)) != 1:
+            continue
+        fragments = reads[0]
+        xx0 = (
+            left + min(part.locator.bbox[0] for part in fragments) * local.width
+        ) / page_image.width
+        yy0 = (
+            top + min(part.locator.bbox[1] for part in fragments) * local.height
+        ) / page_image.height
+        xx1 = (
+            left + max(part.locator.bbox[2] for part in fragments) * local.width
+        ) / page_image.width
+        yy1 = (
+            top + max(part.locator.bbox[3] for part in fragments) * local.height
+        ) / page_image.height
+        result.append(
+            Observation(
+                texts[0],
+                PageLocator(
+                    kind="page",
+                    page=page,
+                    bbox=(xx0, yy0, xx1, yy1),
+                    fragment_id=f"winocr-context-{index}",
+                ),
+                repeated_read=True,
+            )
+        )
+    return tuple(result)
+
+
+def _read_windows_page(
+    first: Path, second: Path, page: int, helper: Path, executable: Path
+) -> tuple[Observation, ...]:
+    original = _windows_frame(first, page, helper, executable)
+    verification = _windows_frame(second, page, helper, executable)
+    positions = {}
+    for item in verification:
+        positions.setdefault(_position_text(item.raw_text), []).append(item)
+    readings = tuple(
+        replace(
+            item,
+            repeated_read=sum(
+                _overlap(item.locator, alternative.locator) >= 0.55
+                for alternative in positions.get(_position_text(item.raw_text), ())
+            )
+            == 1,
+        )
+        for item in original
+    )
+    from PIL import Image
+
+    with Image.open(first) as image:
+        contexts = _context_windows_crops(
+            image, readings, first.with_name("context.png"), page, helper, executable
+        )
+    return (*readings, *contexts)
+
+
+def read_windows(path: Path, file_format: str) -> NativeDocument:
+    """Reuse installed Windows OCR (Russian); publish same-engine repeat agreement only."""
+    if os.name != "nt":
+        return NativeDocument(issues=(NativeIssue("windows_ocr_unavailable"),))
+    from PIL import Image
+
+    executable = Path(os.environ["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/powershell.exe"
+    helper = Path(__file__).with_name("windows_ocr.ps1")
+    if not executable.is_file() or not helper.is_file():
+        return NativeDocument(issues=(NativeIssue("windows_ocr_unavailable"),))
+
+    with TemporaryDirectory(prefix="doccheck-winocr-") as temp:
+        first = Path(temp) / "source.png"
+        second = Path(temp) / "verification.png"
+        if file_format == "png":
+            with Image.open(path) as source:
+                if source.width * source.height > _MAX_RENDER_PIXELS:
+                    return NativeDocument(issues=(NativeIssue("ocr_image_too_large", page=1),))
+                image = source.convert("RGB")
+                image.thumbnail((3600, 3600))
+                image.save(first)
+                image.resize(
+                    (max(1, round(image.width * 0.87)), max(1, round(image.height * 0.87))),
+                    Image.Resampling.LANCZOS,
+                ).save(second)
+            return NativeDocument(_read_windows_page(first, second, 1, helper, executable))
+        if file_format != "pdf":
+            return NativeDocument(issues=(NativeIssue("ocr_unsupported_format"),))
+
+        import pypdfium2
+
+        observations = []
+        with pypdfium2.PdfDocument(path) as pdf:
+            if len(pdf) > _MAX_PAGES:
+                return NativeDocument(issues=(NativeIssue("ocr_page_limit"),))
+            for index in range(len(pdf)):
+                with closing(pdf[index]) as page:
+                    width, height = page.get_size()
+                    scale = min(7.0, 3600 / max(width, height))
+                    for target, factor in ((first, 1.0), (second, 0.87)):
+                        with closing(page.render(scale=scale * factor)) as bitmap:
+                            bitmap.to_pil().convert("RGB").save(target)
+                observations.extend(
+                    _read_windows_page(first, second, index + 1, helper, executable)
+                )
+    if not observations:
+        return NativeDocument(issues=(NativeIssue("ocr_no_text"),))
+    return NativeDocument(tuple(observations))

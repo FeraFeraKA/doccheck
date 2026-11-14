@@ -16,6 +16,7 @@ class Observation:
     cached_value: Decimal | None = None
     component_locators: tuple[Locator, ...] = ()
     confidence: float | None = None
+    repeated_read: bool = False
 
 
 @dataclass(frozen=True)
