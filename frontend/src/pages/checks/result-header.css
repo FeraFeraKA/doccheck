@@ -40,7 +40,7 @@
 }
 
 .result-header-actions { min-width: 0; margin-inline-start: auto; }
-.checks-content .result-history-link {
+.checks-content .result-header-actions :is(.result-history-link, .result-edit-pack) {
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -51,7 +51,13 @@
   font-size: 12px;
   line-height: 18px;
 }
-.checks-content .result-history-link:hover { background: var(--ui-soft); }
+.checks-content .result-header-actions :is(.result-history-link, .result-edit-pack):hover { background: var(--ui-soft); }
+.result-edit-pack {
+  color: var(--ui-ink);
+  font-weight: 500;
+  white-space: nowrap;
+}
+.result-edit-pack svg { flex-shrink: 0; }
 
 .checks-content .result-summary { margin-top: 20px; }
 
@@ -71,15 +77,38 @@
 .result-summary-marker[data-tone="discrepancy"] { background: #ffdabd; }
 .result-summary-marker[data-tone="unverified"] { background: #d7b9f6; }
 
-.result-summary-card {
-  min-width: 0;
-  border-color: var(--ui-line);
-  background: #fff;
+.result-unverified { margin-top: 1rem; }
+.checks-content .result-unverified h3 {
+  margin-bottom: .375rem;
+  font: 500 15px/1.5 var(--font-sans);
+}
+.result-unverified-list { font-size: 13px; }
+.result-unverified-list > li {
+  display: grid;
+  grid-template-columns: minmax(10rem, 1fr) minmax(0, 3fr);
+  align-items: start;
+  gap: .25rem 1rem;
+  border-bottom: 1px solid var(--ui-line);
+  padding-block: .5rem;
+  overflow-wrap: anywhere;
+}
+.checks-content .result-unverified-list button {
+  width: fit-content;
+  border: 0;
+  padding: 0;
+  color: var(--ui-ink);
+  background: transparent;
+  text-align: start;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  font: inherit;
+  font-weight: 500;
 }
 
 @media (max-width: 700px) {
   .check-result-header .check-result-tabs { gap: 6px; }
   .checks-content .check-result-header .check-result-tabs a { font-size: 12px; line-height: 17px; padding: 10px 12px; }
+  .result-unverified-list > li { grid-template-columns: minmax(0, 1fr); }
 }
 
 .checks-content [aria-label="Дополнительные проверки"] h2 {

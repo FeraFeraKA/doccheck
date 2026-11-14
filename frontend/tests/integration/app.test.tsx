@@ -20,7 +20,7 @@ it('показывает явно синтетический lifecycle с под
     .mockResolvedValueOnce(Response.json(syntheticJob('completed')));
   vi.stubGlobal('fetch', fetchMock);
   renderApp();
-  expect(screen.getByRole('heading', { name: 'DocCheck' })).toBeVisible();
+  expect(screen.getByRole('heading', { name: 'Проверка системы' })).toBeVisible();
   expect(screen.getByText('OCR и настоящая финансовая сверка здесь не выполняются.')).toBeVisible();
   await screen.findByText('API и PostgreSQL доступны.');
   fireEvent.click(screen.getByRole('button', { name: 'Создать синтетическое задание' }));

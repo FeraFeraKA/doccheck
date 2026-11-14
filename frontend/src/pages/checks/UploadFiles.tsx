@@ -1,9 +1,14 @@
 import { FileTypeIcon } from './FileTypeIcon';
 import { WorkspaceIcon } from './WorkspaceIcon';
+import type { RetainedDocument } from './createRun';
+import './upload-files.css';
 
-interface UploadFile {
-  id: number;
-  file: File;
+export type UploadFile =
+  | { id: string; file: File; state: 'reading' | 'ready' | 'failed' }
+  | { id: string; retained: RetainedDocument };
+
+export function uploadFileInfo(item: UploadFile) {
+  return 'file' in item ? item.file : item.retained;
 }
 
 const fileExtension = (name: string) => name.split('.').pop()?.toUpperCase() ?? '';
@@ -11,28 +16,46 @@ const sizeLabel = (bytes: number) =>
   bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1).replace('.', ',')} МБ`
     : `${Math.max(1, Math.round(bytes / 1024))} КБ`;
 
-export function UploadFileList({ files, onRemove, disabled }: {
+export function UploadSpinner() {
+  return <span className="upload-spinner" aria-hidden="true" />;
+}
+
+export function UploadFileList({ files, onRemove, disabled, transferring }: {
   files: UploadFile[];
-  onRemove: (id: number) => void;
+  onRemove: (id: string) => void;
   disabled: boolean;
+  transferring: boolean;
 }) {
   if (!files.length) return null;
   return (
     <ul className="upload-file-list" aria-label="Добавленные файлы">
-      {files.map(({ id, file }) => (
-        <li className="upload-file-row" key={id}>
-          <FileTypeIcon extension={fileExtension(file.name)} />
-          <div className="upload-file-info">
-            <strong title={file.name}>{file.name}</strong>
-            <span>{sizeLabel(file.size)}</span>
-          </div>
-          <span className="upload-file-status" aria-hidden="true"><WorkspaceIcon name="check" size={20} /></span>
-          <button className="upload-remove" type="button" disabled={disabled} onClick={() => onRemove(id)}
-            aria-label={`Удалить ${file.name}`} title="Убрать файл">
-            <WorkspaceIcon name="close" size={18} />
-          </button>
-        </li>
-      ))}
+      {files.map((item) => {
+        const { name, size } = uploadFileInfo(item);
+        const reading = 'file' in item && item.state === 'reading';
+        const failed = 'file' in item && item.state === 'failed';
+        const uploading = transferring && 'file' in item;
+        return (
+          <li className="upload-file-row" key={item.id}>
+            <FileTypeIcon extension={fileExtension(name)} />
+            <div className="upload-file-info">
+              <strong title={name}>{name}</strong>
+              <span>{sizeLabel(size)}</span>
+              {failed && <span className="upload-file-error" role="alert">Не удалось прочитать файл. Выберите его заново.</span>}
+            </div>
+            <span className="upload-file-status">
+              {(reading || uploading) && <>
+                <UploadSpinner />
+                <span className="sr-only">{reading ? 'Чтение файла' : 'Передача файла'}</span>
+              </>}
+              {!failed && !reading && !uploading && <span aria-hidden="true"><WorkspaceIcon name="check" size={20} /></span>}
+            </span>
+            <button className="upload-remove" type="button" disabled={disabled} onClick={() => onRemove(item.id)}
+              aria-label={`Удалить ${name}`} title="Убрать файл">
+              <WorkspaceIcon name="close" size={18} />
+            </button>
+          </li>
+        );
+      })}
     </ul>
   );
 }

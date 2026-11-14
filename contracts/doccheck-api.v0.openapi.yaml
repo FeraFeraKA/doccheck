@@ -165,6 +165,124 @@ paths:
                   next_cursor: {type: [string, 'null']}
         '422': {$ref: '#/components/responses/InvalidInput'}
         '503': {$ref: '#/components/responses/Unavailable'}
+  /api/v0/runs/uploads:
+    post:
+      summary: Принять пакет до запуска проверки
+      description: >
+        Сохраняет и проверяет пакет. До явного запуска worker его не забирает
+        и пакет не отображается в истории проверок. Срок запуска — один час.
+        В редактировании можно передать ID завершённой проверки и сохранить
+        часть её файлов. Новый комплект использует ровно одну КФЗ и минимум
+        один первичный документ.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                report: {type: string, format: binary}
+                documents:
+                  type: array
+                  maxItems: 100
+                  items: {type: string, format: binary}
+                source_run_id: {$ref: '#/components/schemas/Id'}
+                retained_document_id:
+                  type: array
+                  maxItems: 101
+                  items: {$ref: '#/components/schemas/Id'}
+      responses:
+        '201':
+          description: Пакет сохранён и готов к запуску.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [upload_id]
+                properties:
+                  upload_id: {$ref: '#/components/schemas/Id'}
+        '400': {$ref: '#/components/responses/InvalidInput'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/ResultUnavailable'}
+        '410':
+          description: Истёк срок запуска ранее сохранённого пакета.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ApiError'}
+        '413': {$ref: '#/components/responses/InvalidInput'}
+        '415': {$ref: '#/components/responses/InvalidInput'}
+        '422': {$ref: '#/components/responses/InvalidInput'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+  /api/v0/runs/uploads/{upload_id}/start:
+    parameters:
+      - $ref: '#/components/parameters/UploadId'
+    post:
+      summary: Поставить сохранённый пакет в очередь
+      description: Повторный запрос возвращает тот же ID проверки и не запускает вторую обработку.
+      responses:
+        '202':
+          description: Пакет принят к обработке. Текущее состояние доступно по Location.
+          headers:
+            Location:
+              required: true
+              schema: {type: string}
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [run_id, status]
+                properties:
+                  run_id: {$ref: '#/components/schemas/Id'}
+                  status: {const: queued}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '410':
+          description: Истёк срок запуска сохранённого пакета.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ApiError'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+  /api/v0/runs/uploads/{upload_id}:
+    parameters:
+      - $ref: '#/components/parameters/UploadId'
+    delete:
+      summary: Освободить файлы пакета, который ещё не запущен
+      responses:
+        '204':
+          description: Пакет удалён, ранее запущен или уже отсутствует.
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+  /api/v0/runs/{run_id}/pack:
+    parameters:
+      - $ref: '#/components/parameters/RunId'
+    get:
+      summary: Получить список файлов завершённой проверки для нового комплекта
+      responses:
+        '200':
+          description: Метаданные исходного комплекта. Путь хранения и содержимое файлов не выдаются.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [documents]
+                properties:
+                  documents:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, name, size, role]
+                      properties:
+                        id: {$ref: '#/components/schemas/Id'}
+                        name: {type: string}
+                        size: {type: integer, minimum: 1}
+                        role: {enum: [report, supporting]}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/ResultUnavailable'}
+        '503': {$ref: '#/components/responses/Unavailable'}
   /api/v0/runs/{run_id}:
     parameters:
       - $ref: '#/components/parameters/RunId'
@@ -402,6 +520,11 @@ paths:
         '503': {$ref: '#/components/responses/Unavailable'}
 components:
   parameters:
+    UploadId:
+      name: upload_id
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/Id'}
     RunId:
       name: run_id
       in: path
@@ -492,6 +615,9 @@ components:
           required: [progress]
           properties:
             archived_at: {type: [string, 'null'], format: date-time}
+            synthetic:
+              type: boolean
+              description: Серверная маркировка синтетического комплекта или сохранённого результата.
             progress:
               description: |
                 Число документов, для которых завершилась обработка. КФЗ входит
@@ -596,6 +722,8 @@ components:
             - invalid_input
             - idempotency_conflict
             - upload_too_large
+            - upload_not_found
+            - upload_expired
             - unsupported_media_type
             - unsupported_file_format
             - run_not_found

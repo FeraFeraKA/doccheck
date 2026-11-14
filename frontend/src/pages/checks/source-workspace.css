@@ -2,6 +2,25 @@
   --source-panel-width: clamp(300px, 37vw, 620px);
 }
 
+.checks-content .source-workspace-launch {
+  position: absolute;
+  inset: 0 0 auto auto;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid var(--ui-line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ui-primary);
+}
+.checks-content .source-workspace-launch:is(:hover, [aria-expanded="true"]) { background: var(--ui-soft); }
+.checks-content .page-content:has(.source-workspace-launch) .check-result-header > :first-child {
+  padding-inline-end: 52px;
+}
+
 @media (min-width: 701px) {
   .accountant-workspace .app-content:has(.source-workspace[data-source-open="true"] .source-workspace-panel:not([data-fullscreen="true"])) {
     margin-inline-end: var(--source-panel-width);
@@ -84,9 +103,8 @@
 .source-document-select button:not(:disabled):hover { background: var(--ui-soft); }
 
 .compact-source .source-context-tabs { padding: 2px 10px; border-bottom: 0; }
-.compact-source .source-context-rule > header { margin: -4px -8px 8px; }
 .compact-source .source-viewer { flex: 1; min-height: 0; }
-.compact-source .source-viewer > :not(.source-viewer-viewport, .source-viewer-pdf, .source-viewer-placeholder) { flex-shrink: 0; }
+.compact-source .source-viewer > :not(.source-viewer-viewport, .source-viewer-pdf, .source-viewer-placeholder, .document-reader) { flex-shrink: 0; }
 .compact-source .source-viewer-heading { padding: 4px 8px; }
 .compact-source .source-viewer-toolbar {
   padding: 2px 8px;

@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
 from tempfile import SpooledTemporaryFile
@@ -7,7 +8,7 @@ from uuid import UUID, uuid4
 import pytest
 from fastapi.testclient import TestClient
 from httpx import Request
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, select, update
 from starlette import formparsers
 
 from doccheck_backend import uploads
@@ -30,6 +31,115 @@ def submit(client, key, data=FIELDS, files=(REPORT, DOCUMENT)):
     return client.post(
         "/api/v0/runs", headers={"Idempotency-Key": str(key)}, data=data, files=list(files)
     )
+
+
+def test_transferred_package_is_invisible_until_started(database_url, tmp_path):
+    root = tmp_path / "runs"
+    key = uuid4()
+    with TestClient(create_app(Settings(database_url, upload_root=root))) as client:
+
+        def prepare():
+            return client.post(
+                "/api/v0/runs/uploads",
+                headers={"Idempotency-Key": str(key)},
+                files=[REPORT, DOCUMENT],
+            )
+
+        prepared = prepare()
+        assert prepared.status_code == 201
+        upload_id = prepared.json()["upload_id"]
+        assert prepare().json() == prepared.json()
+        assert submit(client, key, data={}).status_code == 409
+        assert client.get("/api/v0/runs").json()["items"] == []
+        assert client.get(f"/api/v0/runs/{upload_id}").status_code == 404
+
+        def start():
+            return client.post(f"/api/v0/runs/uploads/{upload_id}/start")
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            started, replay = executor.submit(start), executor.submit(start)
+            first, second = started.result(), replay.result()
+        assert first.status_code == second.status_code == 202
+        assert first.json() == second.json() == {"run_id": upload_id, "status": "queued"}
+        assert first.headers["Location"] == f"/api/v0/runs/{upload_id}"
+        assert client.delete(f"/api/v0/runs/uploads/{upload_id}").status_code == 204
+        assert client.get(first.headers["Location"]).json()["status"] == "queued"
+        assert (root / upload_id).is_dir()
+
+
+def test_replaced_and_expired_prepared_packages_release_files(database_url, tmp_path):
+    root = tmp_path / "runs"
+    with TestClient(create_app(Settings(database_url, upload_root=root))) as client:
+
+        def prepare():
+            response = client.post(
+                "/api/v0/runs/uploads",
+                headers={"Idempotency-Key": str(uuid4())},
+                files=[REPORT, DOCUMENT],
+            )
+            assert response.status_code == 201
+            return response.json()["upload_id"]
+
+        discarded = prepare()
+        assert client.delete(f"/api/v0/runs/uploads/{discarded}").status_code == 204
+        assert client.delete(f"/api/v0/runs/uploads/{discarded}").status_code == 204
+        assert not (root / discarded).exists()
+
+        expired = prepare()
+        with client.app.state.engine.begin() as connection:
+            connection.execute(
+                update(Run)
+                .where(Run.id == UUID(expired))
+                .values(prepared_at=datetime.now(UTC) - timedelta(hours=2))
+            )
+        refused = client.post(f"/api/v0/runs/uploads/{expired}/start")
+        assert refused.status_code == 410
+        assert refused.json()["code"] == "upload_expired"
+        assert prepare() != expired
+        assert not (root / expired).exists()
+        assert client.get("/api/v0/runs").json()["items"] == []
+
+
+def test_package_revision_reuses_verified_originals_without_changing_source(database_url, tmp_path):
+    root = tmp_path / "runs"
+    with TestClient(create_app(Settings(database_url, upload_root=root))) as client:
+        source = submit(client, uuid4()).json()["run_id"]
+        pack_url = f"/api/v0/runs/{source}/pack"
+        assert client.get(pack_url).status_code == 409
+        with client.app.state.engine.begin() as connection:
+            connection.execute(update(Run).where(Run.id == UUID(source)).values(status="completed"))
+        documents = client.get(pack_url).json()["documents"]
+        report = next(item for item in documents if item["role"] == "report")
+        original = root / source / report["id"]
+        payload = {"source_run_id": source, "retained_document_id": report["id"]}
+        changed = ("documents", ("replacement.png", DOCUMENT[1][1]))
+
+        def prepare(files):
+            return client.post(
+                "/api/v0/runs/uploads",
+                headers={"Idempotency-Key": str(uuid4())},
+                data=payload,
+                files=files,
+            )
+
+        assert prepare([REPORT, changed]).status_code == 422
+        prepared = prepare([changed])
+        assert prepared.status_code == 201
+        upload_id = prepared.json()["upload_id"]
+        assert upload_id != source
+        assert client.post(f"/api/v0/runs/uploads/{upload_id}/start").status_code == 202
+        with client.app.state.engine.connect() as connection:
+            row = (
+                connection.execute(select(Run.__table__).where(Run.id == UUID(upload_id)))
+                .mappings()
+                .one()
+            )
+        assert row["scope"] == {}
+        assert row["documents"][0]["id"] != report["id"]
+        assert [item["name"] for item in row["documents"]] == [report["name"], "replacement.png"]
+        assert (root / upload_id / row["documents"][0]["id"]).read_bytes() == original.read_bytes()
+        assert client.get(pack_url).json()["documents"] == documents
+        assert client.get(f"/api/v0/runs/{source}").json()["status"] == "completed"
 
 
 def test_create_replay_and_conflict(database_url, tmp_path):
@@ -270,7 +380,7 @@ def test_write_failure_does_not_queue_a_run(database_url, tmp_path, monkeypatch)
     key = uuid4()
     with TestClient(create_app(Settings(database_url, upload_root=root))) as client:
         with monkeypatch.context() as patch:
-            patch.setattr(uploads, "_save_file", fail_write)
+            patch.setattr(uploads, "_copy_file", fail_write)
             failed = submit(client, key)
         assert failed.status_code == 503
         assert failed.json()["code"] == "service_unavailable"

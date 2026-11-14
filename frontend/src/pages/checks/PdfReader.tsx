@@ -1,22 +1,20 @@
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { getPdfPage } from './documentPreviewApi';
-import type { SourceEvidence } from './sourceApi';
-import type { SourceTone } from './OfficeReader';
-import { WorkspaceIcon } from './WorkspaceIcon';
+import { ReaderArrow } from './ReaderArrow';
 
-type Box = Extract<SourceEvidence['locator'], {kind: 'page'}>['bbox'];
-
-export function PdfReader({ runId, documentId, startPage, box, tone, fallback, renderPage }: {
+export function PdfReader({ runId, documentId, startPage, sourceId, fallback, renderPage }: {
   runId: string;
   documentId: string;
   startPage: number;
-  box?: Box;
-  tone?: SourceTone;
-  fallback: ReactNode;
-  renderPage: (url: string, page: number, box: Box, tone?: SourceTone) => ReactNode;
+  sourceId: string | null;
+  fallback: (page: number) => ReactNode;
+  renderPage: (url: string, page: number) => ReactNode;
 }) {
-  const [page, setPage] = useState(startPage);
+  const [navigation, setNavigation] = useState({ start: startPage, sourceId, page: startPage });
+  const atSource = navigation.start !== startPage || navigation.sourceId !== sourceId;
+  if (atSource) setNavigation({ start: startPage, sourceId, page: startPage });
+  const page = atSource ? startPage : navigation.page;
   const [attempt, setAttempt] = useState(0);
   const [status, setStatus] = useState<{ page: number; attempt: number; pages?: number; url?: string }>();
   const current = status?.page === page && status.attempt === attempt ? status : undefined;
@@ -42,28 +40,28 @@ export function PdfReader({ runId, documentId, startPage, box, tone, fallback, r
   }, [runId, documentId, page, attempt]);
 
   function go(next: number) {
-    if (pages !== undefined && next >= 1 && next <= pages) setPage(next);
+    if (pages !== undefined && next >= 1 && next <= pages) setNavigation({ start: startPage, sourceId, page: next });
   }
 
   return <>
     {pages !== undefined && <div className="document-reader-controls document-reader-paging" role="group" aria-label="Страницы PDF">
-      <button type="button" aria-label="Предыдущая страница" aria-disabled={page === 1}
-        tabIndex={page === 1 ? -1 : undefined}
-        onClick={() => go(page - 1)}><WorkspaceIcon name="chevron" size={15} /></button>
-      <span aria-live="polite">Страница {page} / {pages}</span>
-      <button type="button" aria-label="Следующая страница" aria-disabled={page === pages}
-        tabIndex={page === pages ? -1 : undefined}
-        onClick={() => go(page + 1)}><WorkspaceIcon name="chevron" size={15} /></button>
+      <div className="reader-range">
+        <ReaderArrow label="Предыдущая страница" direction="left" edge={page === 1}
+          unavailable={page === 1} onNavigate={() => go(page - 1)} />
+        <span aria-live="polite">Страница {page} / {pages}</span>
+        <ReaderArrow label="Следующая страница" direction="right" edge={page === pages}
+          unavailable={page === pages} onNavigate={() => go(page + 1)} />
+      </div>
       <button className="reader-source-jump" type="button" aria-disabled={page === startPage}
         tabIndex={page === startPage ? -1 : undefined}
-        onClick={() => go(startPage)}>К источнику</button>
+        onClick={() => go(startPage)}>{sourceId === null ? 'К началу' : 'К источнику'}</button>
     </div>}
     {!current
       ? <div className="source-viewer-placeholder"><p role="status">Загрузка страницы PDF…</p></div>
       : current.url
-        ? renderPage(current.url, page, page === startPage ? box : undefined, tone)
+        ? renderPage(current.url, page)
         : <>
-          {fallback}
+          {fallback(page)}
           <div className="source-viewer-placeholder source-reader-retry">
             <p role="status">Предпросмотр страницы с подсветкой недоступен.</p>
             <button type="button" onClick={() => setAttempt((previous) => previous + 1)}>Повторить предпросмотр</button>

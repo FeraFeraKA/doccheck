@@ -1,10 +1,14 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { Link, MemoryRouter, Route, Routes } from 'react-router';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { CheckDetail, ChecksOverview } from '../../src/pages/checks';
 import { HomePage } from '../../src/pages/home/HomePage';
 import { loadDemoRun } from '../../src/pages/checks/checkData';
 import type { RunDetails } from '../../src/pages/checks/checkData';
+
+beforeEach(() => {
+  vi.stubGlobal('matchMedia', () => ({ matches: false }));
+});
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -27,8 +31,7 @@ it.each(['/checks', '/'])('открывает публичный обзор с %
 
   if (entry === '/') fireEvent.click(screen.getByRole('link', { name: 'Открыть интерфейс сверки' }));
   expect(screen.getByText('История рабочих проверок доступна в локальной установке.')).toBeVisible();
-  fireEvent.click(screen.getByRole('link', { name: 'Синтетическая сверка' }));
-  expect(await screen.findByRole('heading', { name: 'Синтетическая сверка' })).toBeVisible();
+  expect(screen.queryByRole('link', { name: 'Синтетическая сверка' })).not.toBeInTheDocument();
   expect(loadHistory).not.toHaveBeenCalled();
   expect(fetchMock.mock.calls.every(([path]) => path === '/health')).toBe(true);
 });
@@ -49,17 +52,12 @@ it('различает загрузку истории, ошибку и пуст
 
 it('открывает сохранённый запуск из истории и показывает терминальное состояние', async () => {
   const summary = {
-    run_id: 'saved-run', status: 'queued', created_at: '2026-11-13T12:00:00Z', error: null,
+    run_id: 'saved-run', status: 'failed', created_at: '2026-11-13T12:00:00Z',
+    error: { code: 'test_failure', message: 'Безопасная причина остановки' },
   };
   const fetchMock = vi.fn<typeof fetch>()
     .mockResolvedValueOnce(Response.json({ items: [summary], next_cursor: null }))
-    .mockResolvedValueOnce(Response.json({
-      ...summary, progress: { processed_documents: 0, total_documents: 2 },
-    }))
-    .mockResolvedValueOnce(Response.json({
-      ...summary, status: 'failed', progress: null,
-      error: { code: 'test_failure', message: 'Безопасная причина остановки' },
-    }));
+    .mockResolvedValueOnce(Response.json({ ...summary, progress: null }));
   vi.stubGlobal('fetch', fetchMock);
 
   render(<MemoryRouter initialEntries={['/checks']}>
@@ -69,13 +67,11 @@ it('открывает сохранённый запуск из истории �
     </Routes>
   </MemoryRouter>);
 
-  expect(screen.getByRole('link', { name: 'Синтетическая сверка' })).toBeVisible();
   fireEvent.click(await screen.findByRole('link', { name: 'Проверка КФЗ №saved-run' }));
-  expect(await screen.findByText('Обработано документов: 0 из 2')).toBeVisible();
   expect(await screen.findByRole('alert')).toHaveTextContent('Безопасная причина остановки');
   expect(screen.getByRole('status')).toHaveTextContent('Ошибка обработки');
   expect(fetchMock.mock.calls.map(([path]) => path)).toEqual([
-    '/api/v0/runs', '/api/v0/runs/saved-run', '/api/v0/runs/saved-run',
+    '/api/v0/runs', '/api/v0/runs/saved-run',
   ]);
   expect(screen.queryByText('Синтетическая сверка · готовый пример')).not.toBeInTheDocument();
 });
@@ -103,7 +99,7 @@ it('после ошибки получения состояния повторя
   expect(fetchMock).toHaveBeenCalledTimes(3);
 });
 
-it('показывает прогресс задания без готового результата и игнорирует ответ для старого ID', async () => {
+it('перенаправляет активную проверку в очередь и игнорирует ответ для старого ID', async () => {
   let finishFirst: ((value: RunDetails) => void) | undefined;
   let firstSignal: AbortSignal | undefined;
   const loadRun = (id: string, signal: AbortSignal): Promise<RunDetails> => {
@@ -121,22 +117,23 @@ it('показывает прогресс задания без готового
 
   render(<MemoryRouter initialEntries={['/checks/first']}>
     <Link to="/checks/second">Следующая проверка</Link>
-    <Routes><Route path="/checks/:id" element={<CheckDetail view="table" loadRun={loadRun} />} /></Routes>
+    <Routes>
+      <Route path="/checks/new" element={<h1>Очередь проверок</h1>} />
+      <Route path="/checks/:id" element={<CheckDetail view="table" loadRun={loadRun} />} />
+    </Routes>
   </MemoryRouter>);
 
   expect(screen.getByRole('status')).toHaveTextContent('Загрузка проверки');
   await act(async () => {});
   fireEvent.click(screen.getByRole('link', { name: 'Следующая проверка' }));
-  expect(await screen.findByRole('heading', { name: 'Вторая проверка' })).toBeVisible();
-  expect(screen.getByRole('status')).toHaveTextContent('Обработка документов');
-  expect(screen.getByText('Обработано документов: 0 из 2')).toBeVisible();
+  expect(await screen.findByRole('heading', { name: 'Очередь проверок' })).toBeVisible();
   expect(screen.queryByRole('table')).not.toBeInTheDocument();
   expect(firstSignal?.aborted).toBe(true);
 
   await act(async () => {
     finishFirst?.({ title: 'Первая проверка', status: 'completed', result: null });
   });
-  expect(screen.getByRole('heading', { name: 'Вторая проверка' })).toBeVisible();
+  expect(screen.getByRole('heading', { name: 'Очередь проверок' })).toBeVisible();
   expect(screen.queryByText('Первая проверка')).not.toBeInTheDocument();
 });
 
@@ -212,8 +209,7 @@ it('показывает абзац и ячейку таблицы DOCX в сп�
     <Routes><Route path="/checks/:id" element={<CheckDetail view="table" loadRun={loadRun} />} /></Routes>
   </MemoryRouter>);
 
-  const disclosure = await screen.findByText('Основания выбранного показателя', { selector: 'summary' });
-  disclosure.parentElement?.setAttribute('open', '');
+  fireEvent.click(await screen.findByRole('button', { name: /^150,50\s*₽$/ }));
   const select = await screen.findByRole('combobox', { name: 'Доказательство' });
   for (const [id, location] of [
     ['docx-paragraph', 'Абзац 3'],
@@ -221,7 +217,7 @@ it('показывает абзац и ячейку таблицы DOCX в сп�
   ]) {
     expect(within(select).getByRole('option', { name: 'synthetic.docx · ' + location })).toBeVisible();
     fireEvent.change(select, { target: { value: id } });
-    expect(screen.getByText(location, { selector: 'dd' })).toBeVisible();
+    expect(select).toHaveValue(id);
   }
 });
 
@@ -267,21 +263,19 @@ it('показывает доказательства слагаемых при 
     <Routes><Route path="/checks/:id" element={<CheckDetail view="table" loadRun={loadRun} />} /></Routes>
   </MemoryRouter>);
 
-  const disclosure = await screen.findByText('Основания выбранного показателя', { selector: 'summary' });
-  disclosure.parentElement?.setAttribute('open', '');
-  const select = await screen.findByRole('combobox', { name: 'Доказательство' });
-  expect(within(select).getByRole('option', { name: /Лист «Синтетика», C6/ })).toBeVisible();
-  expect(within(select).getByRole('option', { name: /Лист «Синтетика», C7/ })).toBeVisible();
-  const breakdown = screen.getByText('Основания по слагаемым', { selector: 'summary' });
-  fireEvent.click(breakdown);
-  const [first, second] = screen.getByRole('list', { name: 'Слагаемые' }).querySelectorAll<HTMLElement>(':scope > li');
+  fireEvent.click(await screen.findByRole('button', { name: /^Синтетическая статья A$/ }));
+  const breakdown = screen.getByRole('list', { name: 'Слагаемые показателя: Синтетическая статья A' });
+  const [first, second] = breakdown.querySelectorAll<HTMLElement>(':scope > li');
+  for (const item of [first, second]) item.querySelector('details')?.setAttribute('open', '');
   const firstAmount = within(first).getByRole('button', { name: /^Сумма · .*C6$/ });
   const secondAmount = within(second).getByRole('button', { name: /^Сумма · .*C7$/ });
   expect(within(first).queryByRole('button', { name: /^Сумма · .*C7$/ })).not.toBeInTheDocument();
   expect(within(second).getByRole('button', { name: /^Договор · .*A2$/ })).toBeVisible();
   fireEvent.click(secondAmount);
+  const select = await screen.findByRole('combobox', { name: 'Доказательство' });
+  expect(within(select).getByRole('option', { name: /Лист «Синтетика», C6/ })).toBeVisible();
+  expect(within(select).getByRole('option', { name: /Лист «Синтетика», C7/ })).toBeVisible();
   expect(select).toHaveValue('amount-2');
   expect(firstAmount).toHaveAttribute('aria-pressed', 'false');
   expect(secondAmount).toHaveAttribute('aria-pressed', 'true');
-  expect(screen.getByText('Лист «Синтетика», C7', { selector: 'dd' })).toBeVisible();
 });

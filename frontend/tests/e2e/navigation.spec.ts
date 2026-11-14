@@ -10,7 +10,7 @@ test('Tab scrolls the fixed sidebar to system status in a short window', async (
   const scroll = () => sidebar.evaluate((element) => element.scrollTop);
   expect(await scroll()).toBe(0);
   await expect(status).not.toBeInViewport();
-  for (const name of ['DocCheck', 'Новая проверка', 'Проверки', 'Архив проверок', 'Проверка системы']) {
+  for (const name of ['На страницу новой проверки', 'Новая проверка', 'Проверки', 'Архив проверок', 'Проверка системы']) {
     await page.keyboard.press('Tab');
     await expect(sidebar.getByRole('link', { name, exact: true })).toBeFocused();
   }
@@ -42,6 +42,7 @@ for (const width of [701, 768, 1250, 1251, 1650]) {
     expect((await main.boundingBox())?.x).toBe(64);
     await sidebar.hover({ position: { x: 30, y: 30 } });
     await expect(sidebar).toHaveCSS('width', '220px');
+    await expect(sidebar.getByText('doccheck', { exact: true })).toHaveCount(0);
     await expect(checks.getByText('Проверки')).toHaveCSS('opacity', '1');
     expect((await main.boundingBox())?.x).toBe(64);
     await page.mouse.move(width - 4, 5);

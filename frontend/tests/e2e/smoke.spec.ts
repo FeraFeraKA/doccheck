@@ -10,7 +10,7 @@ test('synthetic API mock: queued → processing → completed', async ({ page })
     return route.fulfill({ json: syntheticJob(pollCount === 1 ? 'processing' : 'completed') });
   });
   await page.goto('/system-status');
-  await expect(page.getByRole('heading', { name: 'DocCheck' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Проверка системы' })).toBeVisible();
   await expect(page.getByText('API и PostgreSQL доступны.')).toBeVisible();
   await page.getByRole('button', { name: 'Создать синтетическое задание' }).click();
   await expect(page.getByText('Статус: В очереди')).toBeVisible();
