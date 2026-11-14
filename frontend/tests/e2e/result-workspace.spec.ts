@@ -18,11 +18,17 @@ for (const [width, height] of [[1440, 1100], [768, 844], [390, 600]]) {
       ...example.result, run_id: id, documents,
       evidence: example.result.evidence.map((item) => item.id === evidence.id ? evidence : item),
     } }));
-    await page.route(`**/api/v0/runs/${id}/documents/report/fragments?evidence_id=${evidence.id}`,
-      (route) => route.fulfill({ json: evidence }));
+    let fragmentRequests = 0;
+    let originalRequests = 0;
+    await page.route(`**/api/v0/runs/${id}/documents/report/fragments?evidence_id=${evidence.id}`, (route) => {
+      fragmentRequests += 1;
+      return route.fulfill({ json: evidence });
+    });
     const image = readFileSync(new URL('../../../docs/synthetic/nrt-89/inputs/12_communication.png', import.meta.url));
-    await page.route(`**/api/v0/runs/${id}/documents/report`, (route) =>
-      route.fulfill({ body: image, contentType: 'application/octet-stream' }));
+    await page.route(`**/api/v0/runs/${id}/documents/report`, (route) => {
+      originalRequests += 1;
+      return route.fulfill({ body: image, contentType: 'application/octet-stream' });
+    });
 
     await page.goto(`/checks/${id}`);
     const opener = page.getByRole('button', { name: 'Просмотреть источник' });
@@ -48,7 +54,37 @@ for (const [width, height] of [[1440, 1100], [768, 844], [390, 600]]) {
     await drawer.getByRole('button', { name: 'Увеличить масштаб' }).click();
     await drawer.getByRole('button', { name: 'К фрагменту' }).click();
     await expect(box).toBeInViewport({ ratio: 1 });
+
+    const imageElement = viewport.getByRole('img', { name: 'synthetic-report.png' });
+    const previousSrc = await imageElement.getAttribute('src');
+    const requests = [originalRequests, fragmentRequests];
+    const scrollRatio = () => viewport.evaluate((element) =>
+      element.scrollTop / Math.max(1, element.scrollHeight - element.clientHeight));
+    const before = await scrollRatio();
+    expect(before).toBeGreaterThan(0);
+    const expand = drawer.getByRole('button', { name: 'Развернуть источник на весь экран' });
+    const collapse = drawer.getByRole('button', { name: 'Свернуть источник в боковую панель' });
+    const highlight = drawer.getByRole('button', { name: 'Подсветка' });
+    await highlight.click();
+    await expand.press('Enter');
+    await expect(collapse).toHaveAttribute('aria-pressed', 'true');
+    await expect(collapse).toBeFocused();
+    expect((await drawer.boundingBox())?.width).toBe(width);
+    expect(await scrollRatio()).toBeCloseTo(before, 2);
+    await expect(drawer.getByText('125%', { exact: true })).toBeVisible();
+    await expect(highlight).toHaveAttribute('aria-pressed', 'false');
+    await expect(imageElement).toHaveAttribute('src', previousSrc ?? '');
+    await collapse.click();
+    await expect(expand).toHaveAttribute('aria-pressed', 'false');
+    expect((await drawer.boundingBox())?.width).toBe(Math.min(width, 800));
+    expect(await scrollRatio()).toBeCloseTo(before, 2);
+    expect([originalRequests, fragmentRequests]).toEqual(requests);
+    await expand.click();
     await page.keyboard.press('Escape');
+    await expect(opener).toBeFocused();
+    await opener.click();
+    await expect(expand).toHaveAttribute('aria-pressed', 'false');
+    await drawer.getByRole('button', { name: 'Закрыть просмотр источника' }).click();
     await expect(opener).toBeFocused();
   });
 }
