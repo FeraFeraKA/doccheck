@@ -56,7 +56,7 @@ interface ReviewCalculation {
 interface ReviewRow {
   id: string;
   label: string;
-  status: string;
+  status: ResultStatus;
   unit: string;
   reported_value: string | null;
   expected_value: string | null;
@@ -72,6 +72,12 @@ interface ReviewRow {
 // Fields used by the transferred screens. The API client's decoder validates
 // this projection before handing a server result to a caller.
 type ResultStatus = 'verified' | 'discrepancy' | 'unverified';
+
+const defaultExplanations: Record<ResultStatus, string> = {
+  verified: 'Значение подтверждено документами.',
+  discrepancy: 'Значение в КФЗ отличается от подтверждённого документами.',
+  unverified: 'Недостаточно подтверждений для проверки показателя.',
+};
 export interface RubCoverage extends Record<ResultStatus, string | null> {
   total: string;
   shares: Partial<Record<ResultStatus, string>> | null;
@@ -114,7 +120,8 @@ export function formatMeasure(value: string | null, unit: string) {
   return value === null ? '—' : `${formatDecimal(value)} ${unit === 'RUB' ? '₽' : unit}`;
 }
 
-export function rowExplanation(row: ReviewRow) {
-  return row.reasons[0]?.message
-    ?? (row.status === 'unverified' ? row.completeness.reason : 'Суммы совпадают');
+export function rowExplanation(row: ReviewRow, issue?: ReviewIssue) {
+  const explanation = row.reasons.find(({ message }) => message.trim())?.message;
+  return (explanation ?? issue?.message.trim()) || (row.status === 'unverified' && row.completeness.reason.trim()
+    ? row.completeness.reason : defaultExplanations[row.status]);
 }

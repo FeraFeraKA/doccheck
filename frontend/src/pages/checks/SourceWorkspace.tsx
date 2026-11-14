@@ -255,7 +255,9 @@ export function SourceWorkspace({ workspace }: { workspace: ReturnType<typeof us
           onClick={toggleFullscreen}><PanelIcon name={expanded ? 'collapse' : 'expand'} /></button>
         <button ref={closeControl} type="button" aria-label="Закрыть просмотр источника" title="К таблице" onClick={close}><PanelIcon name="close" /></button>
       </header>
-      {workspace.row ? <SourceContext row={workspace.row} compact>{preview}</SourceContext> : preview(true)}
+      {workspace.row && workspace.evidenceId
+        ? <SourceContext row={workspace.row}>{preview}</SourceContext>
+        : preview(true)}
     </dialog>}
   </div>;
 }

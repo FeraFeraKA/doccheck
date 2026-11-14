@@ -118,6 +118,16 @@
 }
 
 .result-header-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.run-archive-action { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; }
+.run-archive-action { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: 13px; }
 .run-archive-action [role="alert"] { color: #922930; }
-.run-archive-action [role="status"]:empty { display: none; }
+.checks-content .run-archive-action .run-accept-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 8px 12px;
+  background: var(--ui-primary);
+  color: #fff;
+}
+.run-accept-button svg { flex: none; }
+.run-accepted { display: inline-flex; align-items: center; gap: 6px; color: var(--ui-primary); }
