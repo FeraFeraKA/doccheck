@@ -66,6 +66,25 @@ it('сохраняет подтверждённый формат и явный n
   expect(result.documents[1].format).toBeNull();
 });
 
+it('сохраняет состояния чтения из API и принимает прежний ответ без состояния', async () => {
+  const [{ parse_status: omitted, ...legacy }, parsed, partial, error] = example.result.documents;
+  expect(omitted).toBe('parsed');
+  stubFetch(Response.json({ ...example.result, documents: [
+    legacy, parsed, { ...partial, parse_status: 'partial' }, error,
+    { ...legacy, id: 'pending', parse_status: 'pending' },
+  ] }));
+  const { result } = await loadFindings(id);
+  expect(result.documents.map(({ parse_status }) => parse_status)).toEqual([
+    undefined, 'parsed', 'partial', 'error', 'pending',
+  ]);
+});
+
+it.each([null, 'read', 0])('отклоняет недопустимое состояние чтения %s', async (parse_status) => {
+  const documents = example.result.documents.map((document) => ({ ...document, parse_status }));
+  stubFetch(Response.json({ ...example.result, documents }));
+  await expect(loadFindings(id)).rejects.toBeInstanceOf(InvalidFindingsResponse);
+});
+
 it('сохраняет цепочку от непроверенного показателя до ошибки источника', async () => {
   stubFetch(Response.json(example.result));
   const { result } = await loadFindings(id);

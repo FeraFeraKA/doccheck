@@ -1,5 +1,6 @@
 import { HttpError } from '../../shared/api/requestJson';
-import type { ReviewResult } from './reviewResult';
+import { documentParseStatuses } from './reviewResult';
+import type { DocumentParseStatus, ReviewResult } from './reviewResult';
 
 type Dict = Record<string, unknown>;
 type Read<T> = (value: unknown) => T;
@@ -42,9 +43,9 @@ function text(value: unknown): string {
   return value;
 }
 
-function choice(value: unknown, choices: readonly string[]): string {
-  const item = text(value);
-  if (!choices.includes(item)) throw new InvalidFindingsResponse();
+function choice<T extends string>(value: unknown, choices: readonly T[]): T {
+  const item = choices.find((candidate) => candidate === value);
+  if (item === undefined) throw new InvalidFindingsResponse();
   return item;
 }
 
@@ -135,6 +136,10 @@ function primaryIssue(value: unknown): ReviewResult['summary']['primary_issues']
   };
 }
 
+export function readDocumentParseStatus(value: unknown): DocumentParseStatus | undefined {
+  return value === undefined ? undefined : choice(value, documentParseStatuses);
+}
+
 function document(value: unknown): ReviewResult['documents'][number] {
   const item = record(value);
   const decision = record(item.decision);
@@ -143,6 +148,7 @@ function document(value: unknown): ReviewResult['documents'][number] {
     name: text(item.name),
     format: item.format === null ? null : choice(item.format, ['pdf', 'png', 'xlsx', 'docx']),
     role: choice(item.role, ['report', 'support']),
+    parse_status: readDocumentParseStatus(item.parse_status),
     decision: {
       state: choice(decision.state, ['include', 'exclude', 'needs_review', 'parse_error']),
       reason_code: text(decision.reason_code),
