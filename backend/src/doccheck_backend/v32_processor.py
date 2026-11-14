@@ -66,7 +66,7 @@ _ARTICLES = {
 _HEX = re.compile(r"[0-9a-f]{32}")
 _MAX_PAGES = 12
 _MAX_NATIVE_CHARS = 24_000
-_RULES_VERSION = "doccheck-local-v3.2-addressed.9"
+_RULES_VERSION = "doccheck-local-v3.2-addressed.10"
 _REPORT_FIELDS = ("contract_number", "period_start", "period_end")
 _REPORT_SCHEMA = {
     "type": "object",
@@ -262,11 +262,16 @@ def _identity_crop(path: Path, locator: PageLocator) -> Path:
 
 def _model_input(path: Path) -> tuple[str | None, list[Path]]:
     from bench.e2e_v32_20261114.runtime import native_text
+    from pypdf.errors import PdfReadError
+    from pypdfium2 import PdfiumError
 
-    text = native_text(path)
-    if text and len(text) > _MAX_NATIVE_CHARS:
-        raise ExtractionLimit
-    return (text, []) if text and text.strip() else (None, _images(path))
+    try:
+        text = native_text(path)
+        if text and len(text) > _MAX_NATIVE_CHARS:
+            raise ExtractionLimit
+        return (text, []) if text and text.strip() else (None, _images(path))
+    except (PdfReadError, PdfiumError) as error:
+        raise OcrError("Cannot read the PDF source for the model") from error
 
 
 def _predict(

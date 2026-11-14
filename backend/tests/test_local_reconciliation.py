@@ -166,6 +166,37 @@ def test_calculates_status_and_total_from_admitted_sources(database_url, tmp_pat
         assert client.get(f"/api/v0/runs/{run_id}/exports/xlsx").content.startswith(b"PK")
 
 
+def test_broken_pdf_is_reported_on_its_source_without_failing_the_run(database_url, tmp_path):
+    report, files = write_reconciliation_case(tmp_path)
+    settings = Settings(database_url, upload_root=tmp_path / "uploads")
+    with TestClient(create_app(settings)) as client:
+        run_id = _prepare_and_start(
+            client,
+            [
+                ("report", (report.name, report.read_bytes())),
+                *(("documents", (path.name, path.read_bytes())) for path in files),
+                ("documents", ("truncated.pdf", b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog")),
+            ],
+        )
+        assert run_document_worker(
+            client.app.state.engine,
+            settings.upload_root,
+            V32Processor(no_model, no_model),
+            once=True,
+        )
+        entry = f"/api/v0/runs/{run_id}"
+        findings = client.get(entry + "/findings")
+        assert findings.status_code == 200, client.get(entry).json()
+        result = findings.json()
+        damaged = next(doc for doc in result["documents"] if doc["name"] == "truncated.pdf")
+        assert damaged["decision"]["state"] == "parse_error"
+        assert any(issue["code"] == "source_unreadable" for issue in damaged["errors"])
+        assert any(doc["decision"]["state"] == "include" for doc in result["documents"])
+        row = next(row for row in result["rows"] if row["id"] == "payroll")
+        assert row["reported_value"] == row["observed_evidence_sum"] == "1070.45"
+        assert row["status"] == "unverified"
+
+
 def test_scanned_breakdown_retains_unverified_values_without_counting_them_twice(
     database_url, tmp_path
 ):
