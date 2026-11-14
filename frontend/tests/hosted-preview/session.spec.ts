@@ -24,4 +24,99 @@ test('uses a Secure cookie and shows only the invited synthetic result', async (
   expect(cookie?.httpOnly).toBe(true);
   await page.reload();
   await expect(page.getByRole('link', { name: 'Выгрузка XLSX' })).toBeVisible();
+  await page.getByRole('button', { name: 'Источники', exact: true }).click();
+  const sources = page.getByRole('region', { name: 'Источники проверки' });
+  await sources.getByRole('button', { name: /act.docx/ }).first().click();
+  const original = sources.getByRole('link', { name: 'Скачать оригинал' });
+  await expect(original).toBeVisible();
+  await expect(sources.getByText('Без НДС.', { exact: false })).toBeVisible();
+  await expect(sources.locator('mark')).toHaveText('9 000,00');
+  const originalPath = await original.getAttribute('href');
+  if (!originalPath) throw new Error('Original link is missing');
+  const download = await page.request.get(originalPath);
+  expect(download.ok()).toBe(true);
+  expect(download.headers()['content-disposition']).toContain('attachment');
+  const xlsx = await page.getByRole('link', { name: 'Выгрузка XLSX' }).getAttribute('href');
+  if (!xlsx) throw new Error('XLSX link is missing');
+  const exportResult = await page.request.get(xlsx);
+  expect(exportResult.ok()).toBe(true);
+  expect(exportResult.headers()['content-type']).toContain('spreadsheetml.sheet');
+});
+
+test('distinguishes a missing original, a retryable failure and an available original without text', async ({ page }) => {
+  const runId = '11111111-1111-4111-8111-111111111111';
+  const prefix = '/api/preview/v1/runs';
+  await page.route('**' + prefix, (route) => route.fulfill({
+    json: [{ run_id: runId, status: 'completed' }],
+  }));
+  await page.route('**' + prefix + '/' + runId + '/findings', (route) => route.fulfill({
+    json: {
+      synthetic: true,
+      evidence: [
+        { id: 'missing', document_id: 'missing-original' },
+        { id: 'retry', document_id: 'retry-original' },
+        { id: 'without-text', document_id: 'image', locator: {
+          kind: 'page', page: 3, bbox: [0.1, 0.2, 0.7, 0.4],
+        } },
+        { id: 'invalid-address', document_id: 'invalid', locator: {
+          kind: 'page', page: 9, bbox: [0.7, 0.2, 0.1, 0.4],
+        } },
+        { id: 'sheet-address', document_id: 'sheet', locator: {
+          kind: 'sheet', sheet: 'Сводная', range: 'B5:C7',
+        } },
+        { id: 'paragraph-address', document_id: 'docx', locator: {
+          kind: 'paragraph', paragraph: 9,
+        } },
+        { id: 'table-address', document_id: 'table', locator: {
+          kind: 'table_cell', table: 2, row: 4, cell: 3,
+        } },
+      ],
+      documents: [
+        { id: 'missing-original', name: 'Удалённый DOCX' },
+        { id: 'retry-original', name: 'Временный сбой' },
+        { id: 'image', name: 'Скан' },
+        { id: 'invalid', name: 'Неверный адрес' },
+        { id: 'sheet', name: 'Лист XLSX' },
+        { id: 'docx', name: 'Абзац DOCX' },
+        { id: 'table', name: 'Таблица DOCX' },
+      ],
+    },
+  }));
+  let attempts = 0;
+  await page.route('**/fragment-preview?*', (route) => {
+    const id = new URL(route.request().url()).searchParams.get('evidence_id');
+    if (id === 'missing') return route.fulfill({ status: 404, json: { code: 'document_not_found' } });
+    if (id === 'retry' && attempts++ === 0) return route.fulfill({ status: 503 });
+    return route.fulfill({ json: { text: null, highlight: null } });
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Источники', exact: true }).click();
+  const sources = page.getByRole('region', { name: 'Источники проверки' });
+  const original = sources.getByRole('link', { name: 'Скачать оригинал' });
+  await sources.getByRole('button', { name: /Удалённый DOCX/ }).click();
+  await expect(sources.getByRole('status')).toHaveText('Оригинал недоступен.');
+  await expect(original).toHaveCount(0);
+  const retry = sources.getByRole('button', { name: /Временный сбой/ });
+  await retry.click();
+  await expect(sources.getByRole('alert')).toContainText('Не удалось загрузить фрагмент.');
+  await expect(original).toHaveCount(0);
+  await retry.click();
+  await expect(original).toHaveAttribute('href', prefix + '/' + runId + '/documents/retry-original');
+  await sources.getByRole('button', { name: /Скан/ }).click();
+  await expect(sources.getByRole('status')).toHaveText('У оригинала нет доступного текстового фрагмента.');
+  await expect(sources.getByText('Страница 3', { exact: false })).toBeVisible();
+  await expect(sources.getByText('Координаты фрагмента: 0.1, 0.2, 0.7, 0.4', { exact: false })).toBeVisible();
+  await expect(original).toHaveAttribute('href', prefix + '/' + runId + '/documents/image');
+  await sources.getByRole('button', { name: /Неверный адрес/ }).click();
+  await expect(original).toHaveAttribute('href', prefix + '/' + runId + '/documents/invalid');
+  await expect(sources.getByText('Адрес источника недоступен.')).toBeVisible();
+  for (const [buttonText, address] of [
+    [/Лист XLSX/, 'Лист «Сводная», B5:C7'],
+    [/Абзац DOCX/, 'Абзац 9'],
+    [/Таблица DOCX/, 'Таблица 2, строка 4, ячейка 3'],
+  ] as const) {
+    await sources.getByRole('button', { name: buttonText }).click();
+    await expect(sources.getByText(address, { exact: false })).toBeVisible();
+    await expect(original).toBeVisible();
+  }
 });
