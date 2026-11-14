@@ -1,5 +1,5 @@
-import { useLayoutEffect, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router';
+import { useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Link, useLocation, useParams } from 'react-router';
 import { loadCheckRun, runStatusLabels } from './checkData';
 import type { RunDetails } from './checkData';
 import { demoJob } from './demoData';
@@ -9,6 +9,7 @@ import { FindingsHttpError, loadFindings } from './loadFindings';
 import { ResultHeader } from './ResultHeader';
 import type { CheckView } from './ResultHeader';
 import { ResultSummary, resultHeadline, resultTone } from './ResultSummary';
+import { documentDecisionLabels, ResultDocuments } from './ResultDocuments';
 import { ResultTable } from './ResultTable';
 import { formatDecimal, formatLocation, statusLabels } from './reviewResult';
 import type { ReviewResult } from './reviewResult';
@@ -127,8 +128,13 @@ interface ResultContentProps {
 }
 
 function ResultContent({ id, view, result, run, synthetic, stored }: ResultContentProps) {
-  const [rowJump, setRowJump] = useState<{ id: string }>();
-  const { summary, documents, scope } = result;
+  const location = useLocation();
+  const [rowJump, setRowJump] = useState<{ id: string; locationKey: string }>();
+  const linkedRowJump = useMemo(() => {
+    const id = new URLSearchParams(location.search).get('indicator');
+    return id !== null && result.rows.some((row) => row.id === id) ? { id, locationKey: location.key } : undefined;
+  }, [location.search, location.key, result.rows]);
+  const { summary, scope } = result;
   const runPath = '/checks/' + encodeURIComponent(id);
   const tone = resultTone(summary.counts);
   const syntheticLabel = id === demoJob.run_id ? 'Синтетическая сверка · готовый пример'
@@ -140,11 +146,11 @@ function ResultContent({ id, view, result, run, synthetic, stored }: ResultConte
         conclusion={resultHeadline[tone]} tone={tone} syntheticLabel={syntheticLabel} />
       {stored && <div className="stored-run-status mt-3 text-[13px]"><RunState run={run} /></div>}
       {(view === 'table' || view === 'conclusion') && <ResultSummary id={id} runPath={runPath} result={result} stored={stored}
-        onOpenRow={view === 'table' ? (rowId) => setRowJump({ id: rowId }) : undefined} />}
+        onOpenRow={view === 'table' ? (rowId) => setRowJump({ id: rowId, locationKey: location.key }) : undefined} />}
       {view === 'table' && <>
         <div className="mt-6">
           {result.rows.length > 0
-            ? <Reconciliation result={result} storedRunId={stored ? id : undefined} rowJump={rowJump} />
+            ? <Reconciliation result={result} storedRunId={stored ? id : undefined} rowJump={rowJump?.locationKey === location.key ? rowJump : linkedRowJump} />
             : <section className="checks-card"><h2>Показатели</h2><p>Показатели отсутствуют.</p></section>}
         </div>
         {synthetic && summary.counts.discrepancy > 0 && <section className="checks-card">
@@ -152,15 +158,11 @@ function ResultContent({ id, view, result, run, synthetic, stored }: ResultConte
           <p>Правила сверки могут предложить объяснение для проверки бухгалтером. В этом примере таких гипотез нет.</p>
         </section>}
       </>}
-      {view === 'documents' && <>
-        <Documents documents={documents} />
-        <Link to={runPath + '/exceptions'} className="mt-3 inline-block">Исключения</Link>
-      </>}
-      {view === 'exceptions' && (
-        <Documents title="Исключения" documents={documents.filter((doc) => doc.decision.state !== 'include')}
-          empty="Исключений нет."
-          notice={synthetic ? 'Действия бухгалтера недоступны в синтетическом режиме.' : undefined} />
-      )}
+      {(view === 'documents' || view === 'exceptions') && <ResultDocuments
+        key={view} result={result} runPath={runPath} storedRunId={stored ? id : undefined}
+        exceptions={view === 'exceptions'} synthetic={synthetic}
+        rowEvidenceIds={resultRowEvidenceIds} formatAddress={formatSourceChoice}
+      />}
       {view === 'log' && <CheckLog synthetic={synthetic} />}
     </>
   );
@@ -467,7 +469,7 @@ function Reconciliation({ result, storedRunId, rowJump }: {
               <dl className="source-address-card">
                 <dt>Документ</dt><dd>{document.name}</dd>
                 {document.decision.state !== 'include' && <>
-                  <dt>Решение по документу</dt><dd>{decisions[document.decision.state]}</dd>
+                  <dt>Решение по документу</dt><dd>{documentDecisionLabels[document.decision.state]}</dd>
                 </>}
                 <dt>Адрес в результате</dt><dd>{formatLocation(source.locator)}</dd>
                 {'bbox' in source.locator && source.locator.bbox && <>
@@ -499,34 +501,6 @@ function Reconciliation({ result, storedRunId, rowJump }: {
     </section>
     </dialog>
   );
-}
-
-const decisions: Record<string, string> = {
-  include: 'Включён', exclude: 'Исключён', needs_review: 'Требует проверки', parse_error: 'Ошибка чтения',
-};
-
-function Documents({ documents, title = 'Документы', empty = 'Документы отсутствуют.', notice }: {
-  documents: ReviewResult['documents'];
-  title?: string;
-  empty?: string;
-  notice?: string;
-}) {
-  return <section className="checks-card">
-    <h2>{title}</h2>
-    {notice && <p role="status" className="checks-caption">{notice}</p>}
-    {documents.length === 0 ? <p>{empty}</p> : <div className="checks-table-scroll">
-      <table>
-        <thead><tr><th>Файл</th><th>Роль</th><th>Решение</th><th>Основание</th></tr></thead>
-        <tbody>{documents.map((document) => (
-          <tr key={document.id}>
-            <td>{document.name}</td><td>{document.role === 'report' ? 'Отчёт' : 'Первичный документ'}</td>
-            <td>{decisions[document.decision.state]}</td>
-            <td>{document.decision.message}{document.errors.map((error) => <p key={error.id}>{error.message}</p>)}</td>
-          </tr>
-        ))}</tbody>
-      </table>
-    </div>}
-  </section>;
 }
 
 export function CheckLog({ synthetic = true }: { synthetic?: boolean }) {
