@@ -97,3 +97,108 @@ def test_disagreement_and_letters_in_value_stay_unknown(table):
 
     assert detect_table_grid(image, row) is not None
     assert read_table_amounts(image, row, headings, read) == {}
+
+
+def _default_cell_read(box, _scale):
+    left, top, _, _ = box
+    if top < 145:
+        text = "Затраты на оплату труда 0200" if left < 380 else "Общепроизводственные затраты 0800"
+    elif top < 270:
+        text = "Оплату труда, всего"
+    else:
+        text = "1234,67"
+    return (_source(text, 10, 10, 36, 36),)
+
+
+def test_payroll_without_leaf_header_band_does_not_raise(table):
+    image, row, headings = table
+    draw = ImageDraw.Draw(image)
+    for y in (270, 315):
+        draw.rectangle((30, y, 770, y + 1), fill=255)
+    for x in _COORDINATES:
+        draw.line((x, 90, x, _ROW[-1]), width=2, fill=0)
+
+    assert "payroll" not in read_table_amounts(image, row, headings, _default_cell_read)
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "affected"),
+    [(30, 240, {"payroll", "production_overhead"}), (240, 525, {"payroll"})],
+    ids=["label-only-divider", "money-column-divider"],
+)
+def test_local_row_rule_blocks_cell_even_if_too_short_for_global_grid(table, left, right, affected):
+    image, row, headings = table
+    ImageDraw.Draw(image).line((left, 384, right, 384), fill=0, width=2)
+
+    result = read_table_amounts(image, row, headings, _default_cell_read)
+
+    assert result.keys().isdisjoint(affected)
+    if "production_overhead" not in affected:
+        assert result["production_overhead"].amount == Decimal("1234.67")
+
+
+def test_long_gap_in_selected_column_boundary_does_not_block_other_column(table):
+    image, row, headings = table
+    ImageDraw.Draw(image).rectangle((239, 285, 243, 344), fill=255)
+
+    result = read_table_amounts(image, row, headings, _default_cell_read)
+
+    assert "payroll" not in result
+    assert result["production_overhead"].amount == Decimal("1234.67")
+
+
+@pytest.mark.parametrize(
+    "header",
+    [
+        ("Общепроизводственные затраты 10800",) * 3,
+        (
+            "Общепроизводственные затраты 0800",
+            "Общепроизводственные затраты 0800",
+            "Общепроизводственные затраты 0900",
+        ),
+    ],
+    ids=["longer-number-contains-code", "third-read-disagrees"],
+)
+def test_header_must_confirm_standalone_code_without_contradiction(table, header):
+    image, row, headings = table
+
+    def read(box, scale):
+        if box[1] < 145 and box[0] > 525:
+            return (_source(header[scale - 2], 10, 10, 36, 36),)
+        return _default_cell_read(box, scale)
+
+    result = read_table_amounts(image, row, headings, read)
+
+    assert "production_overhead" not in result
+    assert result["payroll"].amount == Decimal("1234.67")
+
+
+def test_subsidy_only_payroll_leaf_is_not_the_complete_aggregate(table):
+    image, row, headings = table
+
+    def read(box, scale):
+        if 145 < box[1] < 270:
+            return (_source("Оплату труда, всего за счёт субсидии", 10, 10, 36, 36),)
+        return _default_cell_read(box, scale)
+
+    result = read_table_amounts(image, row, headings, read)
+
+    assert "payroll" not in result
+    assert result["production_overhead"].amount == Decimal("1234.67")
+
+
+@pytest.mark.parametrize("signed", ["−1234,67", "(1234,67)", "separate"])
+def test_third_read_with_negation_blocks_positive_consensus(table, signed):
+    image, row, headings = table
+
+    def read(box, scale):
+        if box[1] > _ROW[0] and box[0] > 525 and scale == 4:
+            if signed == "separate":
+                return (_source("−", 3, 10, 12, 35), _source("1234,67", 14, 10, 45, 35))
+            return (_source(signed, 10, 10, 36, 36),)
+        return _default_cell_read(box, scale)
+
+    result = read_table_amounts(image, row, headings, read)
+
+    assert "production_overhead" not in result
+    assert result["payroll"].amount == Decimal("1234.67")
