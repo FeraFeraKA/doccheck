@@ -1,6 +1,7 @@
 """Write the saved reconciliation result as an Excel report."""
 
 import re
+import textwrap
 from io import BytesIO
 
 from openpyxl import Workbook
@@ -83,6 +84,15 @@ def _source_ids(row: ResultRow) -> str | None:
     for reason in row.reasons:
         references.extend(reason.evidence_refs)
     return "\n".join(dict.fromkeys(references)) or None
+
+
+def _compact_text(parts: list[str], detail_sheet: str) -> str | None:
+    unique = list(dict.fromkeys(filter(None, parts)))
+    text = "\n".join(unique)
+    text = _NON_XML_TEXT.sub(lambda match: ascii(match[0])[1:-1], text)
+    if len(text.encode("utf-16-le")) // 2 <= 32_767:
+        return text or None
+    return f"Подробности на листе «{detail_sheet}»."
 
 
 def export_check_result(result: CheckResult) -> bytes:
@@ -263,6 +273,131 @@ def export_check_result(result: CheckResult) -> bytes:
         for ref in document.decision.evidence_refs:
             _append(decision_sources, f"D{number}", source_keys[ref])
     _finish(decision_sources, 1, (30, 30))
+
+    report = workbook.create_sheet("Отчёт", 0)
+    report.sheet_view.showGridLines = False
+    report.sheet_properties.pageSetUpPr.fitToPage = True
+    report.page_setup.fitToWidth = 1
+    report.page_setup.fitToHeight = 0
+    report.page_setup.orientation = "landscape"
+    _append(report, "ОТЧЁТ ПО ПРОВЕРКЕ")
+    report.merge_cells("A1:F1")
+    report["A1"].font = Font(bold=True, size=13)
+    if result.synthetic:
+        _append(report, "Тестовые данные")
+    _append(
+        report,
+        "Показатель КФЗ",
+        "Значение в КФЗ",
+        "Ожидаемо по документам",
+        "Расхождение",
+        "Статус",
+        "Пояснение",
+    )
+    header = report.max_row
+    for cell in report[header]:
+        cell.font = Font(bold=True)
+    for row in result.rows:
+        messages = [reason.message for reason in row.reasons if reason.message]
+        if row.status == "unverified" and row.completeness.reason not in messages:
+            messages.append(row.completeness.reason)
+        if row.expected_value is None and row.observed_evidence_sum is not None:
+            messages.append(f"По доступным документам: {row.observed_evidence_sum} {row.unit}")
+        suffix = f" ({row.indicator_code})" if row.indicator_code else ""
+        suffix += f" · {row.unit}"
+        suffix = _NON_XML_TEXT.sub(lambda match: ascii(match[0])[1:-1], suffix)
+        if len(suffix.encode("utf-16-le")) // 2 > 32_000:
+            unit = _NON_XML_TEXT.sub(lambda match: ascii(match[0])[1:-1], row.unit)
+            suffix = f" · {unit}"
+        if len(suffix.encode("utf-16-le")) // 2 > 32_000:
+            suffix = " · Единица на листе «Сверка»"
+        label = _NON_XML_TEXT.sub(lambda match: ascii(match[0])[1:-1], row.label) + suffix
+        if len(label.encode("utf-16-le")) // 2 > 32_767:
+            available = 32_767 - len(("… " + suffix).encode("utf-16-le")) // 2
+            clean_label = _NON_XML_TEXT.sub(lambda match: ascii(match[0])[1:-1], row.label)
+            prefix = clean_label.encode("utf-16-le")[: max(0, available) * 2]
+            label = prefix.decode("utf-16-le", errors="ignore") + "… " + suffix
+        _append(
+            report,
+            label,
+            row.reported_value,
+            row.expected_value,
+            row.delta,
+            _STATUS_LABELS[row.status],
+            _compact_text(messages, "Сверка"),
+        )
+    _append(report)
+    _append(report, "Дополнительные проверки")
+    report.cell(report.max_row, 1).font = Font(bold=True)
+    for document in result.documents:
+        if document.decision.state == "include" and not document.errors:
+            continue
+        messages = [document.decision.message, *(error.message for error in document.errors)]
+        if len(document.decision.evidence_refs) <= 20:
+            messages.extend(
+                f"{documents[source.document_id].name} · {_location(source.locator)}"
+                for ref in document.decision.evidence_refs
+                if (source := next((item for item in result.evidence if item.id == ref), None))
+            )
+        else:
+            messages.append("Источники решения приведены на листе «Основания решений».")
+        state = {
+            "exclude": "Исключён",
+            "needs_review": "Требует проверки",
+            "parse_error": "Ошибка чтения",
+            "include": "Прочитан частично"
+            if document.parse_status == "partial"
+            else "Ошибка чтения",
+        }.get(document.decision.state, document.decision.state)
+        _append(
+            report,
+            state,
+            document.name,
+            None,
+            None,
+            None,
+            _compact_text(messages, "Документы"),
+        )
+    for issue in summary.primary_issues:
+        _append(report, "Замечание", None, None, None, None, issue.message)
+    for column, width in enumerate((43, 24, 29, 22, 20, 70), 1):
+        report.column_dimensions[get_column_letter(column)].width = width
+    widths = (20, 11, 13, 10, 9, 33)
+    for row_number in range(report.max_row, header, -1):
+        values = [report.cell(row_number, column).value for column in range(1, 7)]
+        lines = [
+            [line for part in value.split("\n") for line in textwrap.wrap(part, width) or [""]]
+            if isinstance(value, str)
+            else []
+            for value, width in zip(values, widths, strict=True)
+        ]
+        pages = max((len(cell_lines) + 23) // 24 for cell_lines in lines)
+        if pages > 1:
+            report.insert_rows(row_number + 1, pages - 1)
+        for page in range(max(pages, 1)):
+            for column, cell_lines in enumerate(lines, 1):
+                portion = cell_lines[page * 24 : (page + 1) * 24]
+                if not portion:
+                    continue
+                cell = report.cell(row_number + page, column)
+                cell.value = values[column - 1] if len(cell_lines) <= 24 else "\n".join(portion)
+                cell.data_type = "s"
+                cell.alignment = Alignment(vertical="top", wrap_text=True)
+    for row in report.iter_rows(min_row=header + 1):
+        height = max(
+            (
+                sum(len(textwrap.wrap(part, width)) or 1 for part in cell.value.split("\n"))
+                if isinstance(cell.value, str)
+                else 1
+            )
+            for cell, width in zip(row, widths, strict=True)
+        )
+        report.row_dimensions[row[0].row].height = max(18, min(360, height * 15))
+    report.freeze_panes = f"A{header + 1}"
+    report.print_title_rows = f"1:{header}"
+    workbook.active = 0
+    for detail in workbook.worksheets[1:]:
+        detail.sheet_state = "hidden"
 
     with BytesIO() as output:
         workbook.save(output)
