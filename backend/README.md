@@ -136,6 +136,82 @@ uv run --frozen python -m doccheck_backend.run_worker --processor my_local_adapt
 загрузки адаптера завершает команду до захвата заданий. Опция `--once`
 ограничивает процесс одним заданием.
 
+### Локальный worker v3.2 с Qwen и LoRA в WSL 2
+
+Проверено в Ubuntu 24.04 на RTX 2060 6 ГБ с CUDA 12.9, PostgreSQL 16 и
+Tesseract с языками `rus` и `eng`. Понадобятся `python3.12-venv`,
+`postgresql`, `tesseract-ocr-rus`, `tesseract-ocr-eng`, `fonts-dejavu-core`,
+`nginx` и `openssl`. Из корня репозитория:
+
+```sh
+python3.12 -m venv .venv-ml
+.venv-ml/bin/pip install -r backend/requirements-v32-cuda.lock
+.venv-ml/bin/pip install --no-deps -e ./backend -e ./backend/ml_module
+.venv-ml/bin/pip check
+(cd frontend && pnpm install --frozen-lockfile && pnpm build)
+sudo -u postgres createdb -O "$(id -un)" doccheck_pilot
+bash scripts/doccheck-pilot.sh start
+```
+
+Скрипт использует локальную роль PostgreSQL с именем пользователя Linux.
+Переменные `DOCCHECK_QWEN_MODEL_DIR` и `DOCCHECK_QWEN_ADAPTER_PATH` задают
+пути к модели и чекпойнту. По умолчанию используются
+`~/doccheck-data/model` и `~/doccheck-data/adapter/0000100_adapters.safetensors`.
+Держите `adapter_config.json` рядом с чекпойнтом.
+Worker обрабатывает задания последовательно и требует указанный LoRA.
+
+Пилот открывается на `https://localhost:8443`. Сертификат `localhost.crt`
+и данные доступа находятся в `~/doccheck-data/pilot/`. Для своего клиента
+проверьте сертификат из этого каталога. По умолчанию и UI, и API доступны
+через loopback. Файлы и результаты остаются локально. Для ручного выбора
+разлинованной КФЗ нажмите «Указать строку КФЗ» и введите договор, границы,
+этап и страницу. У компактной КФЗ могут использоваться явные даты на самом
+документе. Факты без адреса первоисточника и неполные документы не включаются
+в слагаемые. Полнота сверки требует отдельного подтверждения.
+
+Для одновременной работы закрытого пилота и публичного теста оба worker
+используют один `DOCCHECK_GPU_LOCK` (по умолчанию
+`~/doccheck-data/qwen-gpu.lock`) и освобождают память модели после задания.
+Значение `off` оставляет модель загруженной для изолированного замера на
+одном worker, когда другие процессы не принимают задания на GPU.
+
+### Публичный синтетический тест
+
+Соберите frontend отдельно и поместите один сгенерированный пакет
+в `~/doccheck-data/public-trial/package`. Копируйте только `inputs`
+и `inputs.json`. Создайте отдельную локальную базу и запустите origin:
+
+```sh
+PYTHONPATH=. .venv-ml/bin/python scripts/doccheck-benchmark.py generate data/synthetic-50 --count 50
+trial="$HOME/doccheck-data/public-trial"
+install -d -m 700 "$trial/package"
+cp -a data/synthetic-50/890100/inputs data/synthetic-50/890100/inputs.json "$trial/package/"
+(cd frontend && VITE_DOCCHECK_PUBLIC_TRIAL=1 VITE_DOCCHECK_PUBLIC_DEMO=1 pnpm exec vite build --outDir "$trial/frontend")
+sudo -u postgres createdb -O "$(id -un)" doccheck_public_trial
+bash scripts/doccheck-public-trial.sh start
+curl --fail http://127.0.0.1:18743/health
+```
+
+Прокси принимает пустой запрос на проверку готовой синтетики и выдаёт
+результат и его источники из отдельной БД. Origin слушает только
+`127.0.0.1:18743`, API работает через приватный Unix-сокет.
+Для тестовой публикации HTTPS направляйте только на этот origin.
+`bash scripts/doccheck-public-trial.sh stop` останавливает тест.
+
+### Замеры
+
+Пока работает закрытый пилот, из корня репозитория:
+
+```sh
+PYTHONPATH=. .venv-ml/bin/python scripts/doccheck-benchmark.py run data/synthetic-50 --count 50
+PYTHONPATH=. .venv-ml/bin/python scripts/doccheck-benchmark.py summary data/synthetic-50
+```
+
+Комплекты обрабатываются последовательно. Скрипт сверяет SHA-256 входов,
+проверяет выдачу каждого денежного адреса, сохраняет выгрузку XLSX и
+пишет результаты по заданиям, показателям и файлам. Время включает
+загрузку и опрос состояния с шагом 2 секунды.
+
 ### Отдельный документный worker в Compose
 
 Обычный `docker compose up --build --wait` запускает синтетический worker.
