@@ -229,6 +229,11 @@ def test_bundled_package_recovers_original_ids_after_ephemeral_storage_loss(data
     assert hashlib.sha256(_MANIFEST.read_bytes()).hexdigest() == _MANIFEST_SHA256
     run = next(root.iterdir())
     originals = {file.name: file.read_bytes() for file in run.iterdir()}
+    first, second = list(run.iterdir())
+    first.unlink()
+    second.write_bytes(b"?" * second.stat().st_size)
+    seed_demo(config)
+    assert {file.name: file.read_bytes() for file in run.iterdir()} == originals
     rmtree(run)
     seed_demo(config)
     assert list(root.iterdir()) == [run]

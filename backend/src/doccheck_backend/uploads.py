@@ -2,9 +2,10 @@
 
 import json
 import os
-from hashlib import sha256
+from hashlib import file_digest, sha256
 from pathlib import Path
 from shutil import rmtree
+from stat import S_ISREG
 from tempfile import TemporaryDirectory, mkdtemp
 from uuid import UUID, uuid4
 from zipfile import BadZipFile, ZipFile
@@ -250,7 +251,14 @@ def _restore_hosted_dir(
         ):
             raise ValueError("Hosted package manifest differs from saved originals")
     destination = root / str(run_id)
-    if destination.exists():
+    if destination.is_symlink() or (destination.exists() and not destination.is_dir()):
+        raise ValueError("Hosted package directory is not a regular directory")
+    if destination.is_dir():
+        for old, new in zip(previous, current, strict=True):
+            original = destination / old["id"]
+            if not _matches_original(original, old):
+                (staged / new["id"]).replace(original)
+        _sync_directory(destination)
         return
     # Work via unique staged names first, then switch atomically into place.
     with TemporaryDirectory(prefix=".restore-", dir=root) as directory:
@@ -261,3 +269,14 @@ def _restore_hosted_dir(
         _sync_directory(restored)
         restored.rename(destination)
         _sync_directory(root)
+
+
+def _matches_original(path: Path, item: dict) -> bool:
+    try:
+        info = path.lstat()
+        if not S_ISREG(info.st_mode) or info.st_size != item["size"]:
+            return False
+        with path.open("rb") as stream:
+            return file_digest(stream, "sha256").hexdigest() == item["sha256"]
+    except FileNotFoundError:
+        return False
