@@ -864,29 +864,40 @@ def test_model_pixel_pages_cannot_reuse_pdf_text_overlay_as_evidence(
     assert all(item.document_id != uploaded_files[1]["id"] for item in result.evidence)
 
 
-def test_report_request_preserves_text_and_image_on_the_same_page(tmp_path):
-    from types import SimpleNamespace
+def test_report_request_preserves_small_raster_alongside_native_kfz_text(tmp_path, monkeypatch):
+    monkeypatch.syspath_prepend(Path(__file__).resolve().parents[2])
+    from bench.e2e_v32_20261114 import runtime
+    from PIL import Image
+    from pypdf import PdfReader, PdfWriter
 
     from doccheck_backend.v32_report_model import read_report_with_model
 
-    requests = []
-    image = tmp_path / "rendered.png"
-    image.write_bytes(b"rendered bytes")
+    caption = "The report provides the following data for the reporting period."
+    native = tmp_path / "native.pdf"
+    _write_text_pdf(native, [caption])
+    raster = tmp_path / "raster.pdf"
+    with Image.new("RGB", (35, 20), "red") as image:
+        image.save(raster, "PDF", resolution=72)
 
-    def prepare_pages(path, output):
-        return [SimpleNamespace(number=2, text="Visible native heading", image=image)]
+    report = tmp_path / "report.pdf"
+    with PdfWriter() as writer:
+        page = writer.add_page(PdfReader(native).pages[0])
+        page.merge_page(PdfReader(raster).pages[0])
+        writer.write(report)
+
+    requests = []
 
     def request(path, body, *, timeout):
+        assert path == "/api/chat"
         requests.append(body)
         return {"message": {"content": "{}"}}
 
-    runtime = SimpleNamespace(prepare_pdf_pages=prepare_pages, api=request)
-    has_raster, prediction = read_report_with_model(
-        tmp_path / "report.pdf", runtime, "test", pdf=True
-    )
+    monkeypatch.setattr(runtime, "api", request)
+    has_raster, prediction = read_report_with_model(report, runtime, "test", pdf=True)
 
     assert has_raster and prediction is None
     (message,) = requests[0]["messages"]
-    assert "Страница 2: изображение № 1." in message["content"]
-    assert "Страница 2, извлечённый текст:\nVisible native heading" in message["content"]
-    assert len(message["images"]) == 1
+    assert "Страница 1: изображение № 1." in message["content"]
+    assert caption in message["content"]
+    (encoded_image,) = message["images"]
+    assert encoded_image.startswith("iVBOR")
