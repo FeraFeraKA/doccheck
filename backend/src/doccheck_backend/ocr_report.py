@@ -278,6 +278,8 @@ def _bare_date_fragments(observations: tuple[Observation, ...], location: Observ
 def select_scan_contract(
     positioned: tuple[Observation, ...],
     visible: tuple[Observation, ...] | None = None,
+    *,
+    require_one_location: bool = False,
 ) -> tuple[str, Observation] | None:
     """Return the single addressed contract when its observed readings agree."""
     if visible is None:
@@ -303,6 +305,10 @@ def select_scan_contract(
         if reading[1] != contract and any(_same_region(source, location) for source, _ in sources):
             return None
     locations = _preferred_value_locations(sources)
+    if require_one_location and any(
+        not _same_region(left, right) for left, right in combinations(locations, 2)
+    ):
+        return None
     for item in positioned:
         value = item.raw_text.strip()
         if value == contract or not _CONTRACT_TOKEN.fullmatch(value):

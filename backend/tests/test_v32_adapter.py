@@ -779,7 +779,17 @@ def test_unrelated_xlsx_heading_cannot_relabel_total():
     )
 
 
-def test_primary_png_contract_conflict_prevents_evidence(uploaded_files, tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    ("repeat_x", "repeat_contract", "confidence", "expected"),
+    [
+        (0.06, "E2E-99", 0.74, False),
+        (0.06, "E2E-31", 0.99, True),
+        (0.52, "E2E-31", 0.99, False),
+    ],
+)
+def test_primary_png_contract_needs_single_undisputed_location(
+    uploaded_files, tmp_path, monkeypatch, repeat_x, repeat_contract, confidence, expected
+):
     from PIL import Image
     from test_local_ocr import _box
 
@@ -800,7 +810,9 @@ def test_primary_png_contract_conflict_prevents_evidence(uploaded_files, tmp_pat
     monkeypatch.setattr(v32.runtime, "api", predict_scan)
     observations = (
         _box("Договор № E2E-31", 0.06, 0.09, 0.36),
-        _box("Договор № E2E-99", 0.06, 0.09, 0.36, confidence=0.74),
+        _box(
+            f"Договор № {repeat_contract}", repeat_x, 0.09, repeat_x + 0.30, confidence=confidence
+        ),
     )
     monkeypatch.setattr(
         "doccheck_backend.v32_adapter.read_scan", lambda *_: NativeDocument(observations)
@@ -808,5 +820,8 @@ def test_primary_png_contract_conflict_prevents_evidence(uploaded_files, tmp_pat
     job = process(StoredRun(uuid4(), None, uploaded_files), tmp_path)
 
     assert job.result.documents[1].decision.state == "needs_review"
-    assert not job.result.documents[1].decision.evidence_refs
-    assert all(item.document_id != uploaded_files[1]["id"] for item in job.result.evidence)
+    primary_evidence = [
+        item for item in job.result.evidence if item.document_id == uploaded_files[1]["id"]
+    ]
+    assert len(primary_evidence) == int(expected)
+    assert job.result.documents[1].decision.evidence_refs == [item.id for item in primary_evidence]

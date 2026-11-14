@@ -769,7 +769,7 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
         document = documents[file_id]
         if document.decision.state != "needs_review":
             continue
-        contract = select_scan_contract(source_items)
+        contract = select_scan_contract(source_items, require_one_location=True)
         if contract is None or contract[0] != scope.contract_number:
             continue
         _, item = contract
