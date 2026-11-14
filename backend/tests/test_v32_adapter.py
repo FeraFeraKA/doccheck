@@ -13,7 +13,6 @@ from doccheck_backend.run_worker import StoredRun
 from doccheck_backend.v32_adapter import process
 
 _TEST_MODEL_DIGEST = "d8b0f5e9760cd1682034f292d7ef72ec46f432149be0df7574bf2d6e92e38c04"
-v32 = pytest.importorskip("bench.e2e_v32_20261114.run")
 
 
 @pytest.fixture
@@ -59,6 +58,9 @@ def uploaded_files(tmp_path):
 
 
 def _stub_ollama(monkeypatch, amount):
+    monkeypatch.syspath_prepend(Path(__file__).resolve().parents[2])
+    from bench.e2e_v32_20261114 import run as v32
+
     calls = []
 
     def request(path, body=None, timeout=600):
@@ -102,6 +104,7 @@ def test_worker_adapter_infers_scope_and_anchors_partial_sum(uploaded_files, tmp
     assert job.status == "completed"
     result = job.result
     assert result.run_id == str(run.id)
+    assert result.synthetic is False
     assert result.scope.contract_number == "E2E-31"
     assert result.scope.period_end == "2027-03-31"
     (row,) = result.rows
@@ -140,3 +143,17 @@ def test_corrupt_primary_reports_technical_issue(uploaded_files, tmp_path, monke
     assert job.status == "completed_with_issues"
     assert job.result.documents[1].errors
     assert job.result.rows[0].observed_evidence_sum is None
+
+
+def test_multiple_document_totals_are_not_admitted(uploaded_files, tmp_path, monkeypatch):
+    _stub_ollama(monkeypatch, "1172.70")
+    primary = uploaded_files[1]
+    path = tmp_path / primary["id"]
+    act = Document(path)
+    act.add_paragraph("Итого: 3 000,00 руб.")
+    act.save(path)
+    primary["sha256"] = sha256(path.read_bytes()).hexdigest()
+
+    result = process(StoredRun(uuid4(), None, uploaded_files), tmp_path).result
+    assert result.rows[0].observed_evidence_sum is None
+    assert result.documents[1].decision.state == "needs_review"

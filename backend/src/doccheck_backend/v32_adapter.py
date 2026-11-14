@@ -1,11 +1,14 @@
 """Translate the bounded v3.2 workflow into the saved result contract."""
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import date
 from decimal import Decimal
 from pathlib import Path
 from shutil import copyfile
 from tempfile import TemporaryDirectory
+from urllib.error import URLError
 from zipfile import BadZipFile, ZipFile
 
 from doccheck_backend.contracts.locators import SheetLocator
@@ -92,7 +95,7 @@ def _safe_office(path: Path) -> bool:
 
 def _money(value: str | Decimal) -> str:
     amount = Decimal(value)
-    if not amount.is_finite() or amount.as_tuple().exponent < -2:
+    if not amount.is_finite() or amount != amount.quantize(Decimal("0.01")):
         raise ValueError("unsupported precision in v3.2 result")
     return f"{abs(amount) if not amount else amount:.2f}"
 
@@ -105,6 +108,7 @@ def _document(
     message: str = "Документ прочитан.",
     duplicate_of: str | None = None,
     technical_error: bool = False,
+    reason_code: str | None = None,
 ) -> SourceDocument:
     codes = {
         "include": "parsed",
@@ -120,7 +124,7 @@ def _document(
         role="report" if report else "support",
         parse_status="error" if technical_error else "parsed",
         decision=FileDecision(
-            state=state, reason_code=codes[state], message=message, evidence_refs=[]
+            state=state, reason_code=reason_code or codes[state], message=message, evidence_refs=[]
         ),
         errors=[FileError(id=f"{file.id}-read", code="v32_file_unavailable", message=message)]
         if technical_error
@@ -155,7 +159,9 @@ def _same_contract(observation: Observation, contract: str) -> bool:
     return match is not None and match[1] == contract
 
 
-def _same_period(observation: Observation, dates: tuple, parse_date) -> bool:
+def _same_period(
+    observation: Observation, dates: tuple[date, date], parse_date: Callable[[str], date | None]
+) -> bool:
     if not _PERIOD.match(observation.raw_text.strip()):
         return False
     return tuple(parse_date(part) for part in _DATE.findall(observation.raw_text)) == dates
@@ -177,23 +183,29 @@ def _bind_component(
     }
     observations = read_native_document(path, "docx").observations
     amount = decision_rules.parse_amount(prediction.get("amount"))
-    if amount is None or amount.as_tuple().exponent < -2:
+    if amount is None or amount != amount.quantize(Decimal("0.01")):
         return None
     start, end, issue = decision_rules.document_interval(prediction)
     if issue or start is None or end is None:
         return None
     amount_slots = [
-        item for item in observations if item.amount == amount and _TOTAL.search(item.raw_text)
+        item for item in observations if _TOTAL.search(item.raw_text) and item.amount is not None
     ]
-    contract_slots = [item for item in observations if _same_contract(item, scope.contract_number)]
-    period_slots = [
-        item for item in observations if _same_period(item, (start, end), decision_rules.parse_date)
-    ]
+    contract_slots = [item for item in observations if _CONTRACT.fullmatch(item.raw_text.strip())]
+    period_slots = [item for item in observations if _PERIOD.match(item.raw_text.strip())]
     article_slots = [
         item for item in observations if any(text in item.raw_text for text in statements)
     ]
     groups = (amount_slots, contract_slots, period_slots, article_slots)
-    if len(amount_slots) != 1 or not all(groups):
+    if (
+        len(amount_slots) != 1
+        or amount_slots[0].amount != amount
+        or not all(groups)
+        or not all(_same_contract(item, scope.contract_number) for item in contract_slots)
+        or not all(
+            _same_period(item, (start, end), decision_rules.parse_date) for item in period_slots
+        )
+    ):
         return None
 
     money = _money(amount)
@@ -235,9 +247,15 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
 
     files = {item.id: item for item in map(InputFile.from_manifest, run.documents)}
     report = files[run.report_document_id]
+    requested_scope = Scope.model_validate(run.scope) if run.scope is not None else None
+    if requested_scope is not None and requested_scope.report_row_locator is not None:
+        return _failure(run, "v32_scope_unsupported", "Адаптер v3.2 сверяет КФЗ целиком.")
     if report.format != "xlsx":
         return _failure(run, "v32_report_format", "Адаптер v3.2 ожидает КФЗ XLSX.")
-    tags = v32.runtime.api("/api/tags")
+    try:
+        tags = v32.runtime.api("/api/tags", timeout=10)
+    except (OSError, URLError, ValueError):
+        return _failure(run, "v32_model_unavailable", "Локальная Ollama недоступна.")
     digests = [
         item.get("digest") for item in tags.get("models", ()) if item.get("name") == v32.MODEL
     ]
@@ -262,7 +280,7 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
             period_end=prediction["period_end"],
             report_row_locator=None,
         )
-        scope = Scope.model_validate(run.scope) if run.scope is not None else inferred
+        scope = requested_scope or inferred
         if (scope.contract_number, scope.period_start, scope.period_end) != (
             inferred.contract_number,
             inferred.period_start,
@@ -382,13 +400,24 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
                 )
             )
 
-    excluded = {item["id"] for item in comparison["excluded_documents"]}
+    excluded = {item["id"]: item["reason"] for item in comparison["excluded_documents"]}
     for file_id, file in files.items():
         if file_id == report.id or file_id in documents:
             continue
-        if file_id in excluded:
+        exclusion = excluded.get(file_id)
+        if exclusion == "different_contract":
             documents[file_id] = _document(
-                file, state="exclude", message="Документ относится к другому договору или периоду."
+                file,
+                state="needs_review",
+                reason_code=exclusion,
+                message="По данным v3.2 указан другой договор.",
+            )
+        elif exclusion == "outside_period":
+            documents[file_id] = _document(
+                file,
+                state="needs_review",
+                reason_code=exclusion,
+                message="По данным v3.2 документ вне периода сверки.",
             )
         else:
             documents[file_id] = _document(
