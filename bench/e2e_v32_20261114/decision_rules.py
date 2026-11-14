@@ -18,6 +18,82 @@ from .document_identity import literal_id, validate_number_evidence
 
 CATEGORIES = {"production_overhead", "general_admin", "payroll", "insurance", "other"}
 
+_ISSUER_FORMS = {
+    "общество с ограниченной ответственностью": "ооо",
+    "публичное акционерное общество": "пао",
+    "акционерное общество": "ао",
+    "индивидуальный предприниматель": "ип",
+}
+_ISSUER_TAX_LABEL = re.compile(r"\bинн\b", re.I)
+_ISSUER_TAX_VALUE = re.compile(r"\bинн\b\s*(?:[:№]\s*)?([0-9]+)(?![\w-])", re.I)
+_ISSUER_REQUISITES = re.compile(r"\s*[,;(]?\s*(?:инн|кпп|огрн(?:ип)?)\s*(?:[:№]\s*)?[0-9].*$", re.I)
+
+
+def _inn_checksum_valid(value):
+    """Check a literal INN token; this does not establish its owner."""
+    def digit(prefix, weights):
+        return str(sum(int(n) * w for n, w in zip(prefix, weights)) % 11 % 10)
+
+    org = (2, 4, 10, 3, 5, 9, 4, 6, 8)
+    if len(value) == 10:
+        return digit(value[:9], org) == value[9]
+    if len(value) == 12:
+        first = (7, *org)
+        return digit(value[:10], first) == value[10] and digit(value[:11], (3, *first)) == value[11]
+    return False
+
+
+def _issuer_comparison_key(value, native_text):
+    """Return bounded issuer context only when source requisites are unambiguous.
+
+    Full and short legal forms follow the same normalization as the API.
+    An INN elsewhere in the document cannot safely be attributed to this issuer.
+    """
+    if not isinstance(value, str) or not isinstance(native_text, str) or "\ufffd" in value:
+        return None
+    value = unicodedata.normalize("NFC", value).casefold().translate(str.maketrans("", "", '«»“”„"'))
+    value = re.sub(r"\s+", " ", value).strip()
+    labels = _ISSUER_TAX_LABEL.findall(value)
+    if len(_ISSUER_TAX_LABEL.findall(native_text)) != len(labels):
+        return None
+    tax_ids = _ISSUER_TAX_VALUE.findall(value)
+    if len(labels) != len(tax_ids) or len(set(tax_ids)) > 1 or any(not _inn_checksum_valid(x) for x in tax_ids):
+        return None
+    issuer = _ISSUER_REQUISITES.sub("", value).strip(" .,:;«»\"'()")
+    for full, short in _ISSUER_FORMS.items():
+        if issuer.startswith(full + " "):
+            issuer = short + issuer[len(full):]
+            break
+    match = re.fullmatch(r"(ооо|пао|ао|ип)\s+(.+)", issuer)
+    if not match:
+        return None
+    return match.group(1), match.group(2).strip(), tax_ids[0] if tax_ids else None
+
+
+def _distinct_issuers(left, right):
+    """Use compatible explicit forms and different names only as a collision veto."""
+    if not left or not right:
+        return False
+    left_form, left_name, left_inn = left
+    right_form, right_name, right_inn = right
+    # A shared INN and differing names is a conflict, not proof of separation.
+    if left_inn and right_inn and left_inn == right_inn:
+        return False
+    # An abbreviated or expanded name may describe the same organization.
+    return (left_form == right_form and left_name != right_name
+            and left_name not in right_name and right_name not in left_name)
+
+
+def _contradictory_issuers(left, right):
+    if not left or not right:
+        return False
+    _, left_name, left_inn = left
+    _, right_name, right_inn = right
+    return bool(left_inn and right_inn and (
+        (left_inn == right_inn and left_name != right_name)
+        or (left_inn != right_inn and left_name == right_name)
+    ))
+
 
 def normalize_identifier(value):
     if value is None:
@@ -231,7 +307,8 @@ def reconcile(documents, report_rows, contract_number, period_start, period_end,
             possible_ids.add(raw_number)
         item = {"id": doc_id, "amount": amount, "category": category,
                 "period_start": start.isoformat(), "period_end": end.isoformat(),
-                "document_kind": identity.get("document_kind"), "issuer_key": identity.get("issuer_key")}
+                "document_kind": identity.get("document_kind"), "issuer_key": identity.get("issuer_key"),
+                "issuer_comparison": _issuer_comparison_key(identity.get("issuer_key"), document.get("source_native_text"))}
         context = (contract, start, end, normalize_identifier(facts.get("counterparty")))
         if number:
             # A full literal native ID is not normalized across scripts, case,
@@ -240,8 +317,13 @@ def reconcile(documents, report_rows, contract_number, period_start, period_end,
             # Compare with every previously seen document. A later incompatible
             # issuer must not hide an earlier matching candidate.
             for previous in seen_business[key]:
-                context_conflict = [field for field in ("document_kind", "issuer_key")
-                    if item[field] is not None and previous[field] is not None and item[field] != previous[field]]
+                context_conflict = []
+                if (item["document_kind"] and previous["document_kind"]
+                        and item["document_kind"] != previous["document_kind"]
+                        and not _contradictory_issuers(item["issuer_comparison"], previous["issuer_comparison"])):
+                    context_conflict.append("document_kind")
+                if _distinct_issuers(item["issuer_comparison"], previous["issuer_comparison"]):
+                    context_conflict.append("issuer_key")
                 if context_conflict:
                     # Explicitly different kinds or issuers identify incompatible
                     # candidates, not a collision to remove from either sum.
