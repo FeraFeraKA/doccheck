@@ -100,13 +100,13 @@ def _match_unit(text: str, start: int, units: tuple[str, ...]) -> tuple[int, boo
     return None
 
 
-def _possible_kopecks(text: str, start: int) -> tuple[str, bool]:
+def _possible_kopecks(text: str, start: int) -> tuple[str, bool, int | None]:
     index = start
     while index < len(text) and _token_space(text[index]):
         index += 1
     token_start = index
     if index == len(text) or text[index] not in _NUMBER_CHARACTERS + _SIGNS:
-        return "", False
+        return "", False, None
     if text[index] in _SIGNS:
         index += 1
     token_end = index
@@ -116,16 +116,20 @@ def _possible_kopecks(text: str, start: int) -> tuple[str, bool]:
         index += 1
     suffix = _match_unit(text, index, _KOPECK_UNITS)
     if suffix is None:
-        return "", False
+        return "", False, None
     # Validate the whole run, so a split or malformed kopeck group cannot disappear.
     digits = text[token_start:token_end]
     gap = text[start:token_start] + text[token_end:index]
-    return digits, suffix[1] or not re.fullmatch(r"[0-9]{1,2}", digits) or any(
-        char not in _SPACE_CHARS for char in gap
+    return (
+        digits,
+        suffix[1]
+        or not re.fullmatch(r"[0-9]{1,2}", digits)
+        or any(char not in _SPACE_CHARS for char in gap),
+        suffix[0],
     )
 
 
-def _rub_tokens(text: str) -> list[tuple[str, str]]:
+def _rub_tokens(text: str) -> list[tuple[str, str, tuple[int, int]]]:
     matches = []
     # Each reverse scan stops at the first non-numeric character. Runs between currency
     # markers cannot overlap, even when the document has a long invalid grouping.
@@ -170,38 +174,54 @@ def _rub_tokens(text: str) -> list[tuple[str, str]]:
             )
         ):
             numeral = ""
-        kopecks, interrupted = _possible_kopecks(text, currency_end)
+        kopecks, interrupted, kopecks_end = _possible_kopecks(text, currency_end)
         if (
             interrupted_currency
             or interrupted
             or any(char not in _SPACE_CHARS for char in text[last:end])
         ):
             numeral = ""
-        matches.append((numeral, kopecks))
+        matches.append((numeral, kopecks, (last - len(numeral), kopecks_end or last)))
     return matches
 
 
 def _text_amount(text: str, *, rub_column: bool = False) -> tuple[Decimal | None, bool]:
     matches = _rub_tokens(text)
     if not matches and rub_column and re.search(r"\d", text):
-        matches = [(text.strip(), "")]
+        numeral = text.strip()
+        matches = [(numeral, "", (len(text) - len(text.lstrip()), len(text.rstrip())))]
     if len(matches) != 1:
         return None, bool(matches)
-    numeral, kopecks = matches[0]
+    numeral, kopecks, _ = matches[0]
+    amount = _parse_rub_amount(numeral, kopecks)
+    return amount, amount is None
+
+
+def rub_amount_span(text: str) -> tuple[Decimal, tuple[int, int]] | None:
+    """Find the only fully readable RUB amount and its original character span."""
+    matches = _rub_tokens(text)
+    if len(matches) != 1:
+        return None
+    numeral, kopecks, span = matches[0]
+    amount = _parse_rub_amount(numeral, kopecks)
+    return (amount, span) if amount is not None else None
+
+
+def _parse_rub_amount(numeral: str, kopecks: str) -> Decimal | None:
     number = _NUMBER.fullmatch(numeral)
     if number is None:
-        return None, True
+        return None
     sign, integer, fraction = number.groups()
     if kopecks:
         if fraction or len(kopecks) > 2:
-            return None, True
+            return None
         fraction = "." + kopecks.zfill(2)
     compact = ("-" if sign in ("-", "−") else "") + re.sub(_SPACE, "", integer)
     compact += (fraction or "").replace(",", ".")
     try:
-        return Decimal(compact), False
+        return Decimal(compact)
     except InvalidOperation:
-        return None, True
+        return None
 
 
 def _observe(

@@ -10,14 +10,16 @@ from doccheck_backend.fragment_preview import render_preview
 from doccheck_backend.native_pdf import read_pdf
 
 
-def _preview(content: bytes, file_format: str, locator: dict, raw: str) -> dict:
+def _preview(
+    content: bytes, file_format: str, locator: dict, raw: str, normalized: str = "25.00"
+) -> dict:
     evidence = Evidence.model_validate(
         {
             "id": "evidence",
             "document_id": "document",
             "kind": "amount",
             "raw_value": raw,
-            "normalized_value": "25.00",
+            "normalized_value": normalized,
             "unit": "RUB",
             "method": "test",
             "locator": locator,
@@ -52,8 +54,14 @@ def test_xlsx_reads_only_exact_cell(tmp_path):
         ("Сумма: 25 руб.", {"start_byte": 12, "end_byte": 14}),
         ("Суммы: 25 и 25 руб.", None),
         ("Сумма: −25 руб.", None),
+        ("Сумма: − 25 руб.", None),
+        ("Сумма: −\u00a025 руб.", None),
+        ("Сумма: -\t25 руб.", None),
         ("Сумма: 1 25 руб.", None),
         ("Сумма: 25,99 руб.", None),
+        ("Сумма: 25 руб. 99 коп.", None),
+        ("Сумма: 25 рублей 99 копеек.", None),
+        ("Сумма: 25 руб. 00 коп.", None),
     ],
 )
 def test_docx_exact_cell_suppresses_ambiguous_matches(text, highlight):
@@ -68,6 +76,34 @@ def test_docx_exact_cell_suppresses_ambiguous_matches(text, highlight):
         "text": text,
         "highlight": highlight,
     }
+
+
+@pytest.mark.parametrize(
+    ("reading", "raw_value", "saved", "expected"),
+    [
+        ("− 25 руб.", "− 25", "-25.00", "− 25"),
+        ("25 руб. 99 коп.", "25 руб. 99 коп.", "25.99", "25 руб. 99 коп."),
+        ("25 рублей 99 копеек.", "25 рублей 99 копеек", "25.99", "25 рублей 99 копеек"),
+        ("25 рублей 99 копеек.", "25 рублей 99 копеек", "25.00", None),
+        ("25 рублей 99 копеек.", "25", "25.99", None),
+        ("25 руб.", "25", "26.00", None),
+        ("25 руб., 26 руб.", "25", "25.00", None),
+    ],
+)
+def test_numeric_highlight_requires_a_complete_matching_amount(reading, raw_value, saved, expected):
+    text = f"Сумма 🧮: {reading}"
+    docx = Document()
+    docx.add_paragraph(text)
+    content = BytesIO()
+    docx.save(content)
+    address = {"kind": "paragraph", "paragraph": 1}
+    preview = _preview(content.getvalue(), "docx", address, raw_value, saved)
+    assert preview["text"] == text
+    if expected is None:
+        assert preview["highlight"] is None
+    else:
+        span = preview["highlight"]
+        assert text.encode("utf-8")[span["start_byte"] : span["end_byte"]].decode() == expected
 
 
 def test_pdf_preview_uses_exact_recorded_fragment_on_selected_page(tmp_path):

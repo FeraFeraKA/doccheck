@@ -1,5 +1,7 @@
 """Text preview derived from an addressed fragment of a verified original."""
 
+import re
+from decimal import Decimal, InvalidOperation
 from typing import BinaryIO
 from zipfile import BadZipFile, ZipFile
 
@@ -8,11 +10,12 @@ from pydantic import BaseModel
 from doccheck_backend.contracts.locators import Locator, PageLocator
 from doccheck_backend.contracts.result import Evidence
 from doccheck_backend.native_pdf import read_pdf
-from doccheck_backend.native_reader import read_native_document
+from doccheck_backend.native_reader import read_native_document, rub_amount_span
 
 MAX_INPUT_BYTES = 8 * 1024**2
 _MAX_OFFICE_UNPACKED_BYTES = 32 * 1024**2
 MAX_TEXT_BYTES = 4096
+_BARE_NUMBER = re.compile(r"[+−-]?[0-9]+(?:[.,][0-9]+)?(?:[Ee][+-]?[0-9]+)?")
 
 
 class Highlight(BaseModel):
@@ -57,7 +60,7 @@ def render_preview(stream: BinaryIO, file_format: object, evidence: Evidence) ->
         return empty
     if len(encoded) > MAX_TEXT_BYTES:
         return empty
-    return FragmentPreview(text=text, highlight=_highlight(text, evidence.raw_value))
+    return FragmentPreview(text=text, highlight=_highlight(text, evidence))
 
 
 def _same_locator(observed: Locator, saved: Locator) -> bool:
@@ -71,7 +74,8 @@ def _same_locator(observed: Locator, saved: Locator) -> bool:
     )
 
 
-def _highlight(text: str, raw_value: str) -> Highlight | None:
+def _highlight(text: str, evidence: Evidence) -> Highlight | None:
+    raw_value = evidence.raw_value
     if not raw_value.strip():
         return None
     start = text.find(raw_value)
@@ -82,10 +86,37 @@ def _highlight(text: str, raw_value: str) -> Highlight | None:
         text, end - 1, raw_value[-1], 1
     ):
         return None
+    if evidence.kind in ("amount", "reported_value"):
+        reading = _numeric_span(text, evidence.unit)
+        if reading is None:
+            return None
+        value, (number_start, number_end) = reading
+        if value != Decimal(evidence.normalized_value) or not (
+            start <= number_start < number_end <= end
+        ):
+            return None
+        start, end = number_start, number_end
     return Highlight(
         start_byte=len(text[:start].encode("utf-8")),
         end_byte=len(text[:end].encode("utf-8")),
     )
+
+
+def _numeric_span(text: str, unit: str | None) -> tuple[Decimal, tuple[int, int]] | None:
+    if unit == "RUB":
+        reading = rub_amount_span(text)
+        if reading is not None:
+            return reading
+    # Currency-less values are eligible only when they occupy the whole address.
+    stripped = text.strip()
+    if _BARE_NUMBER.fullmatch(stripped) is None:
+        return None
+    try:
+        value = Decimal(stripped.replace("−", "-").replace(",", "."))
+    except InvalidOperation:
+        return None
+    start = len(text) - len(text.lstrip())
+    return value, (start, start + len(stripped))
 
 
 def _joined_token(text: str, position: int, edge: str, direction: int) -> bool:
