@@ -14,6 +14,8 @@ import re
 from xml.etree import ElementTree as ET
 from zipfile import ZipFile
 
+from openpyxl.styles.numbers import BUILTIN_FORMATS, is_date_format, is_timedelta_format
+
 try:
     from .decision_rules import parse_amount, parse_date
 except ImportError:
@@ -33,6 +35,8 @@ def evaluate_cell(cells, address, stack=()):
     cell = cells.get(address)
     if not cell:
         raise ValueError(f"Missing numeric cell {address}")
+    if cell.get("type") in {"b", "e", "d"} or cell.get("temporal_format"):
+        raise ValueError(f"Nonmonetary value in monetary cell {address}")
     expression = cell.get("formula")
     if not expression:
         value = parse_amount(cell.get("value"))
@@ -61,10 +65,27 @@ def evaluate_cell(cells, address, stack=()):
     return evaluate(expression)
 
 
+def temporal_styles(archive):
+    if "xl/styles.xml" not in archive.namelist():
+        return [False]
+    styles = ET.fromstring(archive.read("xl/styles.xml"))
+    formats = dict(BUILTIN_FORMATS)
+    formats.update({
+        int(item.attrib["numFmtId"]): item.attrib["formatCode"]
+        for item in styles.findall("x:numFmts/x:numFmt", NS)
+    })
+    return [
+        is_date_format(code) or is_timedelta_format(code)
+        for style in styles.findall("x:cellXfs/x:xf", NS)
+        for code in [formats.get(int(style.get("numFmtId", "0")))]
+    ] or [False]
+
+
 def read_native_report(path):
     path = Path(path).resolve()
     raw = path.read_bytes()
     with ZipFile(path) as archive:
+        date_styles = temporal_styles(archive)
         shared = []
         if "xl/sharedStrings.xml" in archive.namelist():
             shared = ["".join(node.itertext()) for node in ET.fromstring(archive.read("xl/sharedStrings.xml")).findall("x:si", NS)]
@@ -84,12 +105,19 @@ def read_native_report(path):
         xml = ET.fromstring(archive.read(worksheet_path))
     cells = {}
     for cell in xml.findall("x:sheetData/x:row/x:c", NS):
+        cell_type = cell.get("t")
         value = cell.findtext("x:v", namespaces=NS)
-        if cell.get("t") == "s" and value is not None:
+        if cell_type == "s" and value is not None:
             value = shared[int(value)]
-        elif cell.get("t") == "inlineStr":
+        elif cell_type == "inlineStr":
             value = "".join(cell.find("x:is", NS).itertext())
-        cells[cell.get("r")] = {"value": value, "formula": cell.findtext("x:f", namespaces=NS)}
+        style = int(cell.get("s", "0"))
+        if not 0 <= style < len(date_styles):
+            raise ValueError("Unrecognized worksheet cell style")
+        cells[cell.get("r")] = {
+            "type": cell_type, "value": value, "formula": cell.findtext("x:f", namespaces=NS),
+            "temporal_format": date_styles[style],
+        }
     text = lambda address: str(cells.get(address, {}).get("value") or "").strip()
     if text("B6") != "Статья затрат" or text("C6") != "Отчетная сумма, руб.":
         raise ValueError("Unsupported report table headers")

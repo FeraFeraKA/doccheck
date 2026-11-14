@@ -138,6 +138,9 @@ uv run --frozen python -m doccheck_backend.run_worker --processor my_local_adapt
 
 ### Отдельный документный worker в Compose
 
+Для локальной проверки XLSX КФЗ и DOCX первички через сайт на Windows
+используйте [запуск с адаптером v3.2](../docs/agent-runs/nrt-95-v32-local-windows.md).
+
 Обычный `docker compose up --build --wait` запускает синтетический worker.
 Сохранённые пакеты ждут отдельного сервиса `document-worker`. Когда доверенный
 адаптер установлен в локальном образе с backend DocCheck, задайте в `.env`
