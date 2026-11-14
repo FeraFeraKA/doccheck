@@ -19,18 +19,14 @@ python -m pip install -r bench/e2e_v32_20261114/requirements.txt
 ```powershell
 $env:OLLAMA_HOST = "127.0.0.1:11438"
 $env:OLLAMA_NO_CLOUD = "1"
-$env:OLLAMA_NOPRUNE = "1"
 ollama serve
 ```
 
 В macOS или Linux:
 
 ```sh
-OLLAMA_HOST=127.0.0.1:11438 OLLAMA_NO_CLOUD=1 OLLAMA_NOPRUNE=1 ollama serve
+OLLAMA_HOST=127.0.0.1:11438 OLLAMA_NO_CLOUD=1 ollama serve
 ```
-
-`OLLAMA_NOPRUNE=1` отключает очистку неиспользуемых слоёв моделей при
-запуске сервера. Это не гарантирует неизменность всех файлов хранилища.
 
 Нужна локальная модель `qwen3.5:4b-q4_K_M`. Если её ещё нет, загрузите
 проверенный вариант до обработки документов. Например, во втором PowerShell

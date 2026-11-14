@@ -2,7 +2,8 @@
 
 Версия `doccheck-check-result/1`. Единственный источник машинного контракта —
 [модели Pydantic](../backend/src/doccheck_backend/contracts/).
-[Семантика полей](../docs/result-source-contract.md) согласована в NRT-85.
+[Семантика полей](../docs/result-source-contract.md) описывает значения и
+связи между ними.
 Схема [`check-result.v1.schema.json`](check-result.v1.schema.json)
 генерируется из `CheckJob` и содержит `CheckResult` в `$defs`.
 [`check-result.v1.synthetic.json`](check-result.v1.synthetic.json) показывает
@@ -106,9 +107,7 @@ uv run --frozen pytest tests/test_result_contract.py
 Для разработки UI используйте [синтетический JSON](check-result.v1.synthetic.json).
 Тело примера целиком соответствует `CheckJob`, его поле `result` соответствует
 ответу `GET /api/v0/runs/{run_id}/findings`. В рабочем API фикстура недоступна.
-Маршруты из OpenAPI описывают будущую реализацию NRT-96, NRT-97 и NRT-36.
-
-Команда из CI для проверки OpenAPI и ссылок на схемы запускается из `backend/`.
+Команда проверки OpenAPI и ссылок на схемы запускается из `backend/`.
 
 ```sh
 uv run --frozen openapi-spec-validator ../contracts/doccheck-api.v0.openapi.yaml
