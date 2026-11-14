@@ -1,0 +1,38 @@
+previews:
+  generation: 'off'
+
+services:
+  - type: web
+    name: doccheck-hosted-preview-api
+    runtime: docker
+    plan: free
+    region: frankfurt
+    autoDeployTrigger: 'off'
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: .
+    dockerCommand: python -m doccheck_backend.render_hosted
+    healthCheckPath: /health
+    envVars:
+      - key: DOCCHECK_PUBLIC_DEMO
+        value: '1'
+      - key: DOCCHECK_UPLOAD_ROOT
+        value: /tmp/doccheck-preview/runs
+      - key: DOCCHECK_HOSTED_WORKER_SHA256
+        sync: false
+      - key: DOCCHECK_HOSTED_VIEWERS
+        sync: false
+      - key: DOCCHECK_HOSTED_SESSION_KEY
+        sync: false
+      - key: DOCCHECK_RENDER_DATABASE_URL
+        fromDatabase:
+          name: doccheck-hosted-preview-db
+          property: connectionString
+
+databases:
+  - name: doccheck-hosted-preview-db
+    databaseName: doccheck_hosted_preview
+    user: doccheck_hosted_preview
+    region: frankfurt
+    plan: free
+    postgresMajorVersion: '18'
+    ipAllowList: []

@@ -40,6 +40,7 @@ htmlcov/
 # JavaScript and builds
 node_modules/
 dist/
+dist-hosted-preview/
 build/
 coverage/
 playwright-report/

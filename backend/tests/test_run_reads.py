@@ -7,6 +7,7 @@ from urllib.parse import quote
 from uuid import UUID, uuid4
 
 import pytest
+from docx import Document
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 from starlette.requests import ClientDisconnect
@@ -317,6 +318,74 @@ def test_missing_runs_and_corrupt_result_use_contract_errors(client):
     _update_run(client, run_id, status="completed")
     response = client.get(f"{RUNS}/{run_id}/findings")
     assert (response.status_code, response.json()["code"]) == (503, "service_unavailable")
+
+
+def test_fragment_preview_reads_only_the_addressed_original_text(client, tmp_path, monkeypatch):
+    docx = Document()
+    context = "Работа 🧮: 12 345,67 руб."
+    docx.add_paragraph(context)
+    docx.add_paragraph("Другое место в документе")
+    file = BytesIO()
+    docx.save(file)
+    response = submit(client, uuid4(), files=(REPORT, ("documents", ("act.docx", file.getvalue()))))
+    assert response.status_code == 202
+    run_id = response.json()["run_id"]
+    run = _manifest(client, run_id)
+    report, act = (item["id"] for item in run.documents)
+    url = f"{RUNS}/{run_id}/documents/{act}/fragment-preview"
+    evidence_id = "act/сумма"
+    query = {"evidence_id": evidence_id}
+    assert client.get(url, params=query).status_code == 409
+    assert client.get(url).json() == {
+        "code": "invalid_input",
+        "message": "Некорректный параметр",
+        "field": "evidence_id",
+    }
+    result = _synthetic_result(run).model_dump(mode="json")
+    result["evidence"] = [
+        {
+            "id": evidence_id,
+            "document_id": act,
+            "kind": "amount",
+            "raw_value": "12 345,67",
+            "normalized_value": "12345.67",
+            "unit": "RUB",
+            "method": "synthetic",
+            "locator": {"kind": "paragraph", "paragraph": 1},
+        }
+    ]
+    saved = CheckResult.model_validate(result)
+    _update_run(client, run_id, status="completed", result=saved.model_dump(mode="json"))
+    preview = client.get(url, params=query)
+    assert preview.status_code == 200
+    assert preview.headers["cache-control"] == "no-store"
+    assert preview.json()["text"] == context
+    highlight = preview.json()["highlight"]
+    raw = context.encode("utf-8")[highlight["start_byte"] : highlight["end_byte"]]
+    assert raw.decode("utf-8") == "12 345,67"
+    other = client.get(f"{RUNS}/{run_id}/documents/{report}/fragment-preview", params=query)
+    assert (other.status_code, other.json()["code"]) == (404, "fragment_not_found")
+    path = tmp_path / run_id / act
+    original = path.read_bytes()
+    path.write_bytes(bytes([original[0] ^ 1]) + original[1:])
+    changed = client.get(url, params=query)
+    assert (changed.status_code, changed.json()["code"]) == (404, "document_not_found")
+
+    path.write_bytes(original)
+    open_original = run_reads._open_original
+
+    def rewrite_after_verification(*args):
+        stream, size = open_original(*args)
+        with path.open("r+b") as replacement:
+            replacement.write(bytes([original[0] ^ 1]))
+        return stream, size
+
+    monkeypatch.setattr(run_reads, "_open_original", rewrite_after_verification)
+    changed_after_open = client.get(url, params=query)
+    assert (changed_after_open.status_code, changed_after_open.json()["code"]) == (
+        404,
+        "document_not_found",
+    )
 
 
 def test_missing_database_uses_safe_v0_error(tmp_path):

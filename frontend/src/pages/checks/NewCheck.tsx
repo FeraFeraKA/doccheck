@@ -14,7 +14,8 @@ type FileGroup = 'report' | 'documents';
 const formats = ['.pdf', '.docx', '.xlsx', '.png'];
 const mib = 1024 ** 2;
 const maxFileSize = 50 * mib;
-const maxPackageSize = 250 * mib;
+const maxPackageMiB = import.meta.env.VITE_DOCCHECK_PUBLIC_TUNNEL === '1' ? 90 : 250;
+const maxPackageSize = maxPackageMiB * mib;
 const maxDocuments = 100;
 
 interface SelectedFile {
@@ -120,7 +121,7 @@ export function NewCheck() {
     const size = selected.reduce((total, file) => total + file.size, 0)
       + retainedFiles.reduce((total, item) => total + item.file.size, 0);
     if (size > maxPackageSize) {
-      setError('Размер пакета не должен превышать 250 МиБ.');
+      setError('Размер пакета не должен превышать ' + maxPackageMiB + ' МиБ.');
       return;
     }
 

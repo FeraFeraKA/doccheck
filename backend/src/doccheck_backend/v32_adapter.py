@@ -1,6 +1,7 @@
 """Translate the bounded v3.2 workflow into the saved result contract."""
 
 import re
+from calendar import monthrange
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -12,7 +13,7 @@ from tempfile import TemporaryDirectory
 from urllib.error import URLError
 from zipfile import BadZipFile, ZipFile
 
-from doccheck_backend.contracts.locators import SheetLocator
+from doccheck_backend.contracts.locators import PageLocator, SheetLocator
 from doccheck_backend.contracts.result import (
     RESULT_SCHEMA_VERSION,
     Calculation,
@@ -46,7 +47,30 @@ _ARTICLES = {
     "general_admin": ("0900", "Общехозяйственные расходы"),
     "other": (None, "Прочие расходы"),
 }
-_CONTRACT = re.compile(r"^Договор\s*№\s*(\S+?)\.?$", re.IGNORECASE)
+_CONTRACT = re.compile(r"^Договор\s*(?:№|:)\s*(\S+?)\.?$", re.IGNORECASE)
+_XLSX_SCOPE = re.compile(r"^Проект:\s*(\S+)\s*\|\s*(Период:\s*.+)$", re.IGNORECASE)
+_MONTHS = (
+    "январь январе января",
+    "февраль феврале февраля",
+    "март марте марта",
+    "апрель апреле апреля",
+    "май мае мая",
+    "июнь июне июня",
+    "июль июле июля",
+    "август августе августа",
+    "сентябрь сентябре сентября",
+    "октябрь октябре октября",
+    "ноябрь ноябре ноября",
+    "декабрь декабре декабря",
+)
+_MONTH_NUMBERS = {
+    name: month for month, aliases in enumerate(_MONTHS, 1) for name in aliases.split()
+}
+_PERIOD_MONTH = re.compile(r"^Период:\s*([а-яё]+)\s+(\d{4})(?:\s*г\.?)?\.?$", re.IGNORECASE)
+_XLSX_ARTICLES = {
+    "payroll": ("C8", "расчетная ведомость по оплате труда"),
+    "insurance": ("B6", "расчет страховых взносов"),
+}
 _DATE = re.compile(r"(?<!\d)(?:\d{4}-\d{2}-\d{2}|\d{2}\.\d{2}\.\d{4})(?!\d)")
 _PERIOD = re.compile(r"^Период\b", re.IGNORECASE)
 _TOTAL_CANDIDATE = re.compile(
@@ -54,11 +78,21 @@ _TOTAL_CANDIDATE = re.compile(
     r"стоимость\s+(?:услуг|работ|оказанных|выполненных))\b",
     re.IGNORECASE,
 )
+_RUB_DIGITS = r"(?:[0-9]+|[0-9]{1,3}(?:[ \u00a0\u2009\u202f][0-9]{3})+)(?:[.,][0-9]{1,2})?"
 _CURRENT_TOTAL = re.compile(
     r"^(?:итого\s+|итоговая\s+)?стоимость\s+"
     r"(?:(?:оказанных|выполненных)(?:\s+в\s+этом\s+периоде)?\s+)?(?:услуг|работ)"
-    r"\s*:\s*\d[\d \u00a0\u2009\u202f]*(?:[.,]\d{1,2})?\s*(?:руб\.?|₽)"
+    rf"\s*:\s*{_RUB_DIGITS}\s*(?:руб\.?|₽)"
     r"(?:\.?\s+без\s+НДС)?\.?$",
+    re.IGNORECASE,
+)
+_PDF_SCOPE = re.compile(
+    r"^Период:\s*(\d{4}-\d{2}-\d{2}|\d{2}\.\d{2}\.\d{4})"
+    r"\s*[–—]\s*(\d{4}-\d{2}-\d{2}|\d{2}\.\d{2}\.\d{4})\.?$",
+    re.IGNORECASE,
+)
+_PDF_MONEY = re.compile(
+    rf"\s*:\s*({_RUB_DIGITS})\s*(?:руб\.?|₽)(?:\.?\s+без\s+НДС)?\.?$",
     re.IGNORECASE,
 )
 _MAX_EXPANDED_OFFICE_BYTES = 128 * 1024**2
@@ -172,17 +206,137 @@ def _report_evidence(file: InputFile, category: str, entry: dict) -> Evidence:
     )
 
 
-def _same_contract(observation: Observation, contract: str) -> bool:
-    match = _CONTRACT.fullmatch(observation.raw_text.strip())
-    return match is not None and match[1] == contract
+def _read_pdf_report(
+    file: InputFile, observations: tuple[Observation, ...], decision_rules
+) -> tuple[Scope, dict[str, Evidence]] | None:
+    # Only a single declared period with source addresses is accepted here.
+    # The v3.2 benchmark's fixed raster target is not a generic scope rule.
+    contracts = {
+        contract for item in observations if (contract := _contract(item.raw_text)) is not None
+    }
+    periods = {
+        _period(item.raw_text, decision_rules.parse_date)
+        for item in observations
+        if _PDF_SCOPE.fullmatch(item.raw_text.strip())
+    }
+    if len(contracts) != 1 or len(periods) != 1 or (period := next(iter(periods))) is None:
+        return None
+    if any(
+        not _PDF_SCOPE.fullmatch(item.raw_text.strip())
+        for item in observations
+        if _period_candidate(item.raw_text)
+    ):
+        return None
+    scope = Scope(
+        report_document_id=file.id,
+        contract_number=next(iter(contracts)),
+        period_start=period[0].isoformat(),
+        period_end=period[1].isoformat(),
+        report_row_locator=None,
+    )
+    evidence = {}
+    for category, (_, label) in _ARTICLES.items():
+        candidates = []
+        for item in observations:
+            text = item.raw_text.strip()
+            if text.partition(":")[0].strip().casefold() != label.casefold():
+                continue
+            if isinstance(item.locator, PageLocator):
+                amount = _PDF_MONEY.fullmatch(text[len(label) :])
+                candidates.append((item, amount[1] if amount else None))
+        if len(candidates) > 1 or (candidates and candidates[0][1] is None):
+            return None
+        if len(candidates) == 1:
+            item, raw_amount = candidates[0]
+            value = decision_rules.parse_amount(raw_amount)
+            if value is not None:
+                evidence[category] = Evidence(
+                    id=f"{file.id}-{category}-reported",
+                    document_id=file.id,
+                    kind="reported_value",
+                    raw_value=item.raw_text,
+                    normalized_value=_money(value),
+                    unit="RUB",
+                    method="native_pdf",
+                    locator=item.locator,
+                )
+    return (scope, evidence) if evidence else None
 
 
-def _same_period(
-    observation: Observation, dates: tuple[date, date], parse_date: Callable[[str], date | None]
-) -> bool:
-    if not _PERIOD.match(observation.raw_text.strip()):
-        return False
-    return tuple(parse_date(part) for part in _DATE.findall(observation.raw_text)) == dates
+def _contract(text: str) -> str | None:
+    match = _CONTRACT.fullmatch(text.strip()) or _XLSX_SCOPE.fullmatch(text.strip())
+    return match[1] if match else None
+
+
+def _period(text: str, parse_date: Callable[[str], date | None]) -> tuple[date, date] | None:
+    text = text.strip()
+    if match := _XLSX_SCOPE.fullmatch(text):
+        text = match[2]
+    if not _PERIOD.match(text):
+        return None
+    if month := _PERIOD_MONTH.fullmatch(text):
+        number = _MONTH_NUMBERS.get(month[1].casefold())
+        year = int(month[2])
+        if number is not None and year > 0:
+            return date(year, number, 1), date(year, number, monthrange(year, number)[1])
+    dates = [parse_date(part) for part in _DATE.findall(text)]
+    if len(dates) == 2 and dates[0] is not None and dates[1] is not None and dates[0] <= dates[1]:
+        return dates[0], dates[1]
+    return None
+
+
+def _period_candidate(text: str) -> bool:
+    return (
+        _PERIOD.match(text.strip()) is not None or _XLSX_SCOPE.fullmatch(text.strip()) is not None
+    )
+
+
+def _source_groups(
+    file_format: str, observations: tuple[Observation, ...], extraction: dict, category: str
+) -> tuple[list[Observation], list[Observation]]:
+    if file_format == "xlsx":
+        amounts = [item for item in observations if item.amount_role == "total"]
+        template = _XLSX_ARTICLES.get(category)
+        if (
+            len(amounts) != 1
+            or template is None
+            or not isinstance(amounts[0].locator, SheetLocator)
+            or amounts[0].locator.range != template[0]
+        ):
+            return [], []
+        sheet = amounts[0].locator.sheet
+        articles = [
+            item
+            for item in observations
+            if isinstance(item.locator, SheetLocator)
+            and item.locator.sheet == sheet
+            and item.locator.range == "A1"
+            and " ".join(item.raw_text.casefold().replace("ё", "е").split()) == template[1]
+        ]
+        # Prevent a scope match from an unrelated sheet.
+        if any(
+            item.locator.sheet != sheet
+            for item in observations
+            if _period_candidate(item.raw_text) or _contract(item.raw_text) is not None
+        ):
+            return [], []
+        return amounts, articles
+
+    allocation = extraction.get("category_evidence", {})
+    if allocation.get("financial_usable") is not True:
+        return [], []
+    statements = {
+        entry["text"].strip()
+        for entry in allocation.get("statements", ())
+        if entry.get("decision_effect") == "evidence"
+        and category in entry.get("positive_categories", ())
+        and entry.get("text")
+    }
+    articles = [item for item in observations if any(text in item.raw_text for text in statements)]
+    amounts = [item for item in observations if _TOTAL_CANDIDATE.search(item.raw_text)]
+    if len(amounts) != 1 or not _CURRENT_TOTAL.fullmatch(amounts[0].raw_text.strip()):
+        return [], []
+    return amounts, articles
 
 
 def _bind_component(
@@ -194,37 +348,29 @@ def _bind_component(
     decision_rules,
 ) -> tuple[Component, list[Evidence]] | None:
     prediction = extraction["prediction"]
-    allocation = extraction.get("category_evidence", {})
-    if allocation.get("financial_usable") is not True:
-        return None
-    statements = {
-        entry["text"].strip()
-        for entry in allocation.get("statements", ())
-        if entry.get("decision_effect") == "evidence"
-        and category in entry.get("positive_categories", ())
-        and entry.get("text")
-    }
     amount = decision_rules.parse_amount(prediction.get("amount"))
     if amount is None or amount != amount.quantize(Decimal("0.01")):
         return None
     start, end, issue = decision_rules.document_interval(prediction)
     if issue or start is None or end is None:
         return None
-    amount_slots = [item for item in observations if _TOTAL_CANDIDATE.search(item.raw_text)]
-    contract_slots = [item for item in observations if _CONTRACT.fullmatch(item.raw_text.strip())]
-    period_slots = [item for item in observations if _PERIOD.match(item.raw_text.strip())]
-    article_slots = [
-        item for item in observations if any(text in item.raw_text for text in statements)
-    ]
+    amount_slots, article_slots = _source_groups(file.format, observations, extraction, category)
+    contract_slots = [item for item in observations if _contract(item.raw_text) is not None]
+    period_slots = [item for item in observations if _period_candidate(item.raw_text)]
+    located_amount = amount_slots[0].amount if len(amount_slots) == 1 else None
+    if located_amount is None and file.format == "pdf" and len(amount_slots) == 1:
+        cash = _PDF_MONEY.search(amount_slots[0].raw_text)
+        if cash:
+            located_amount = decision_rules.parse_amount(cash[1])
     groups = (amount_slots, contract_slots, period_slots, article_slots)
     if (
         len(amount_slots) != 1
-        or not _CURRENT_TOTAL.fullmatch(amount_slots[0].raw_text.strip())
-        or amount_slots[0].amount != amount
+        or located_amount != amount
         or not all(groups)
-        or not all(_same_contract(item, scope.contract_number) for item in contract_slots)
+        or not all(_contract(item.raw_text) == scope.contract_number for item in contract_slots)
         or not all(
-            _same_period(item, (start, end), decision_rules.parse_date) for item in period_slots
+            _period(item.raw_text, decision_rules.parse_date) == (start, end)
+            for item in period_slots
         )
     ):
         return None
@@ -245,7 +391,7 @@ def _bind_component(
             raw_value=slot.raw_text,
             normalized_value=value,
             unit=unit,
-            method="v32_prediction_bound_to_native_docx",
+            method=f"v32_prediction_bound_to_native_{file.format}",
             locator=slot.locator,
         )
         for (kind, value, unit), slots in zip(fields, groups, strict=True)
@@ -262,7 +408,7 @@ def _bind_component(
 
 
 def process(run: StoredRun, upload_folder: Path) -> CheckJob:
-    """Process the supported XLSX case and anchor v3.2 findings to saved originals."""
+    """Process an addressed report and anchor v3.2 findings to saved originals."""
     from bench.e2e_v32_20261114 import decision_rules, document_identity
     from bench.e2e_v32_20261114 import run as v32
 
@@ -271,8 +417,8 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
     requested_scope = Scope.model_validate(run.scope) if run.scope is not None else None
     if requested_scope is not None and requested_scope.report_row_locator is not None:
         return _failure(run, "v32_scope_unsupported", "Адаптер v3.2 сверяет КФЗ целиком.")
-    if report.format != "xlsx":
-        return _failure(run, "v32_report_format", "Адаптер v3.2 ожидает КФЗ XLSX.")
+    if report.format not in {"xlsx", "pdf"}:
+        return _failure(run, "v32_report_format", "Адаптер v3.2 ожидает КФЗ XLSX или PDF.")
     try:
         tags = v32.runtime.api("/api/tags", timeout=10)
     except (OSError, URLError, ValueError):
@@ -287,20 +433,43 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
         folder = Path(temp)
         report_entry = report.v32_entry(folder, "report")
         source_path = upload_folder / report.id
-        if not _safe_office(source_path):
+        if report.format == "xlsx" and not _safe_office(source_path):
             return _failure(run, "v32_report_unreadable", "Файл КФЗ не удалось прочитать.")
-        copyfile(source_path, report_entry["path"])
-        extracted_report = v32.extract_report(report_entry)
-        if extracted_report.get("error"):
-            return _failure(run, "v32_report_unreadable", "Адаптер не смог прочитать шаблон КФЗ.")
-        prediction = extracted_report["prediction"]
-        inferred = Scope(
-            report_document_id=report.id,
-            contract_number=prediction["contract_number"],
-            period_start=prediction["period_start"],
-            period_end=prediction["period_end"],
-            report_row_locator=None,
-        )
+        report_path = Path(report_entry["path"])
+        copyfile(source_path, report_path)
+        if report.format == "xlsx":
+            extracted_report = v32.extract_report(report_entry)
+            if extracted_report.get("error"):
+                return _failure(run, "v32_report_unreadable", "Не удалось прочитать КФЗ.")
+            prediction = extracted_report["prediction"]
+            inferred = Scope(
+                report_document_id=report.id,
+                contract_number=prediction["contract_number"],
+                period_start=prediction["period_start"],
+                period_end=prediction["period_end"],
+                report_row_locator=None,
+            )
+            report_evidence = {
+                item["category"]: _report_evidence(report, item["category"], item)
+                for item in prediction["rows"]
+            }
+        else:
+            v32.verify_source(report_entry)
+            native_report = read_native_document(report_path, "pdf")
+            if native_report.issues or not native_report.observations:
+                return _failure(
+                    run,
+                    "v32_pdf_scope_unavailable",
+                    "Для PDF КФЗ нужны адресуемые реквизиты и суммы. Скан требует OCR.",
+                )
+            parsed = _read_pdf_report(report, native_report.observations, decision_rules)
+            if parsed is None:
+                return _failure(
+                    run,
+                    "v32_pdf_scope_ambiguous",
+                    "Не удалось однозначно определить договор, период и суммы в PDF КФЗ.",
+                )
+            inferred, report_evidence = parsed
         scope = requested_scope or inferred
         if (scope.contract_number, scope.period_start, scope.period_end) != (
             inferred.contract_number,
@@ -328,14 +497,30 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
                     )
                     continue
                 source_path = upload_folder / file.id
-                if file.format == "docx" and _safe_office(source_path):
+                if file.format not in {"docx", "xlsx"} or _safe_office(source_path):
                     entry = file.v32_entry(folder, "primary")
                     copyfile(source_path, entry["path"])
-                    native = read_native_document(Path(entry["path"]), "docx")
-                    if any(issue.code == "native_read_error" for issue in native.issues):
+                    native = read_native_document(Path(entry["path"]), file.format)
+                    if file.format == "xlsx" and any(
+                        issue.code == "formula_cache_mismatch" for issue in native.issues
+                    ):
+                        documents[file.id] = _document(
+                            file,
+                            state="needs_review",
+                            reason_code="formula_cache_mismatch",
+                            message="Сохранённое значение формулы не совпадает с пересчитанным.",
+                        )
+                        observations_by_id[file.id] = native.observations
+                        continue
+                    if any(
+                        issue.code in {"native_read_error", "encrypted_pdf"}
+                        for issue in native.issues
+                    ):
                         message = "Структуру исходного документа не удалось прочитать полностью."
                     else:
-                        observations_by_id[file.id] = native.observations
+                        observations_by_id[file.id] = (
+                            () if file.format == "pdf" and native.issues else native.observations
+                        )
                         extracted = v32.extract_primary(entry, previous)
                         if not extracted.get("error"):
                             # The configured model schema supplies no counterparty proof.
@@ -344,17 +529,13 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
                             continue
                         message = "Не удалось извлечь данные из первичного документа."
                 else:
-                    message = "Адаптер ожидает читаемую первичку DOCX."
+                    message = "Структуру файла Office не удалось прочитать."
                 documents[file.id] = _document(
                     file, state="parse_error", message=message, technical_error=True
                 )
         finally:
             v32.runtime.ART = artifact_root
 
-        benchmark_scope = {
-            **scope.model_dump(include={"contract_number", "period_start", "period_end"}),
-            "stage": prediction["stage"],
-        }
         # Check all non-byte-duplicate candidates before v3.2 can collapse them
         # using model totals. The identity number and both scope fields come from
         # the submitted file, and no issuer distinction is assumed for this slice.
@@ -363,27 +544,29 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
             native_text = "\n".join(item.raw_text for item in observations)
             identity = document_identity.resolve_own_number(native_text)
             number = identity["resolved_number"] if identity["status"] == "resolved" else None
-            contracts = [
-                match[1]
+            contracts = {
+                value for item in observations if (value := _contract(item.raw_text)) is not None
+            }
+            periods = {
+                _period(item.raw_text, decision_rules.parse_date)
                 for item in observations
-                if (match := _CONTRACT.fullmatch(item.raw_text.strip()))
-            ]
-            periods = [
-                tuple(decision_rules.parse_date(part) for part in _DATE.findall(item.raw_text))
-                for item in observations
-                if _PERIOD.match(item.raw_text.strip())
-            ]
-            if number and len(set(contracts)) == len(set(periods)) == 1:
-                period = periods[0]
-                if len(period) == 2 and all(period):
-                    identity_groups[number, contracts[0], period].append(file_id)
+                if _period_candidate(item.raw_text)
+            }
+            if number and len(contracts) == len(periods) == 1 and None not in periods:
+                identity_groups[number, next(iter(contracts)), next(iter(periods))].append(file_id)
         native_conflicts = {
             file_id for group in identity_groups.values() if len(group) > 1 for file_id in group
         }
-        comparison = v32.compare(
-            {"scope": benchmark_scope, "completeness": {"status": "unknown", "basis": "worker"}},
-            extracted_report,
+        comparison = decision_rules.reconcile(
             extractions,
+            [
+                {"category": category, "reported_amount": source.normalized_value}
+                for category, source in report_evidence.items()
+            ],
+            scope.contract_number,
+            scope.period_start,
+            scope.period_end,
+            completeness={"status": "unknown", "basis": "worker"},
         )
         conflicted_sources = native_conflicts | {
             reason["id"]
@@ -392,12 +575,11 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
             if reason["reason"] in _IDENTITY_CONFLICTS
         }
         by_id = {item["id"]: item for item in extractions}
-        report_rows = {item["category"]: item for item in prediction["rows"]}
         evidence, rows = [], []
         for item in comparison["rows"]:
             category = item["category"]
             code, label = _ARTICLES[category]
-            reported = _report_evidence(report, category, report_rows[category])
+            reported = report_evidence[category]
             evidence.append(reported)
             components = []
             for file_id in item["source_ids"]:

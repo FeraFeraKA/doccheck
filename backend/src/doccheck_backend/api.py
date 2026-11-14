@@ -14,11 +14,12 @@ from starlette.concurrency import run_in_threadpool
 from starlette.formparsers import MultiPartException, MultiPartParser
 from starlette.types import Receive, Scope, Send
 
-from doccheck_backend import run_reads
+from doccheck_backend import hosted_preview, hosted_queue, run_reads
 from doccheck_backend.config import Settings
 from doccheck_backend.contracts import CheckResult
 from doccheck_backend.contracts.result import Evidence
 from doccheck_backend.database import create_database_engine
+from doccheck_backend.fragment_preview import FragmentPreview
 from doccheck_backend.jobs import create_job, get_job
 from doccheck_backend.models import SyntheticJob
 from doccheck_backend.run_xlsx import XLSX_MEDIA_TYPE, XlsxReportLimitError, export_check_result
@@ -91,6 +92,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         application.state.upload_root = configured.upload_root
         application.state.public_demo = configured.public_demo
         application.state.web_sessions = configured.web_sessions
+        application.state.hosted_worker_digest = configured.hosted_worker_digest
+        application.state.hosted_viewers = configured.hosted_viewers
+        application.state.hosted_session_key = configured.hosted_session_key
         application.state.engine = create_database_engine(configured.database_url)
         try:
             yield
@@ -124,7 +128,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if (
             request.method == "GET"
             and path.startswith("/api/v0/runs")
-            and (path == "/api/v0/runs" or path.endswith("/fragments"))
+            and (path == "/api/v0/runs" or path.endswith(("/fragments", "/fragment-preview")))
         ):
             field = str(exc.errors()[0]["loc"][-1])
             return await run_read_error(
@@ -321,7 +325,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             web_session=_run_session(request),
         )
 
+    @document_runs.get("/{run_id}/documents/{document_id}/fragment-preview")
+    def get_fragment_preview(
+        request: Request,
+        response: Response,
+        run_id: str,
+        document_id: str,
+        evidence_id: Annotated[str, Query(min_length=1)],
+    ) -> FragmentPreview:
+        response.headers["Cache-Control"] = "no-store"
+        return run_reads.get_run_fragment_preview(
+            request.app.state.engine,
+            request.app.state.upload_root,
+            run_id,
+            document_id,
+            evidence_id,
+            web_session=_run_session(request),
+        )
+
     application.include_router(document_runs)
+    application.include_router(hosted_queue.router)
+    application.include_router(hosted_preview.router)
 
     @application.get("/health", response_model=HealthResponse)
     def health(request: Request) -> HealthResponse:
@@ -332,10 +356,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @application.post("/api/synthetic-jobs", response_model=JobResponse, status_code=201)
     def post_job(request: Request) -> JobResponse:
+        if request.app.state.hosted_worker_digest is not None:
+            raise HTTPException(404, "Synthetic demo queue unavailable")
         return create_job(request.app.state.engine)
 
     @application.get("/api/synthetic-jobs/{job_id}", response_model=JobResponse)
     def read_job(job_id: UUID, request: Request) -> JobResponse:
+        if request.app.state.hosted_worker_digest is not None:
+            raise HTTPException(404, "Synthetic demo queue unavailable")
         job = get_job(request.app.state.engine, job_id)
         if job is None:
             raise HTTPException(status_code=404, detail="Job not found")

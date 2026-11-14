@@ -4,7 +4,8 @@ import json
 import re
 from base64 import b64decode, urlsafe_b64encode
 from datetime import UTC, datetime
-from hashlib import file_digest
+from hashlib import file_digest, sha256
+from io import BytesIO
 from os import fstat, stat_result
 from os.path import samestat
 from pathlib import Path
@@ -18,6 +19,7 @@ from sqlalchemy.orm import Session, defer
 
 from doccheck_backend.contracts import CheckResult
 from doccheck_backend.contracts.result import Evidence, Issue, JobStatus
+from doccheck_backend.fragment_preview import MAX_INPUT_BYTES, FragmentPreview, render_preview
 from doccheck_backend.models import Run
 
 _STORED_FILE_ID = re.compile(r"[0-9a-f]{32}")
@@ -245,6 +247,50 @@ def get_run_fragment(
     path_segment: bool = False,
     web_session: UUID | None = None,
 ) -> Evidence:
+    evidence, stream, _, _ = _open_fragment(
+        engine, root, run_id, document_id, evidence_id,
+        path_segment=path_segment, web_session=web_session
+    )
+    stream.close()
+    return evidence
+
+
+def get_run_fragment_preview(
+    engine: Engine,
+    root: Path,
+    run_id: str,
+    document_id: str,
+    evidence_id: str,
+    *,
+    web_session: UUID | None = None,
+) -> FragmentPreview:
+    evidence, stream, size, document = _open_fragment(
+        engine, root, run_id, document_id, evidence_id, web_session=web_session
+    )
+    with stream:
+        if size > MAX_INPUT_BYTES:
+            return FragmentPreview(text=None, highlight=None)
+        try:
+            content = stream.read(size + 1)
+        except OSError:
+            raise unavailable() from None
+    # The parser and the hash must see the same bytes, even if the on-disk
+    # file is rewritten in place after _open_original verifies it.
+    if len(content) != size or sha256(content).hexdigest() != document["sha256"]:
+        raise _document_not_found()
+    return render_preview(BytesIO(content), document.get("format"), evidence)
+
+
+def _open_fragment(
+    engine: Engine,
+    root: Path,
+    run_id: str,
+    document_id: str,
+    evidence_id: str,
+    *,
+    path_segment: bool = False,
+    web_session: UUID | None = None,
+) -> tuple[Evidence, BinaryIO, int, dict[str, object]]:
     run = _load_run(engine, run_id, with_result=True, web_session=web_session)
     document = _stored_document(run, document_id)
     result = _stored_result(run)
@@ -253,7 +299,6 @@ def get_run_fragment(
         raise _fragment_not_found()
     for evidence in result.evidence:
         if evidence.id == evidence_id and evidence.document_id == document_id:
-            stream, _ = open_run_original(root, run.id, document_id, document)
-            stream.close()
-            return evidence
+            stream, size = open_run_original(root, run.id, document_id, document)
+            return evidence, stream, size, document
     raise _fragment_not_found()
