@@ -11,7 +11,7 @@ from PIL import Image
 from doccheck_backend import scanned_report
 from doccheck_backend.api import create_app
 from doccheck_backend.config import Settings
-from doccheck_backend.contracts.locators import PageLocator, ParagraphLocator
+from doccheck_backend.contracts.locators import PageLocator, ParagraphLocator, TableCellLocator
 from doccheck_backend.database import create_database_engine
 from doccheck_backend.grounded_amounts import _contracts, _money, _periods, _stages, format_rubles
 from doccheck_backend.native_observations import NativeDocument, NativeIssue, Observation
@@ -353,6 +353,10 @@ def test_multiple_periods_wrapped_within_same_observation_are_not_truncated():
         "Период: 01.02.2031 — 28.02.2031 по",
         "Период: 01.02.2031 — 28.02.2031 — ?",
         "Период: 01.02.2031 — 28.02.2031 — 31 января",
+        "Период: Февраль 2031 — апр. 2031",
+        "Период: Апрель 2031 — июн. 2031",
+        "Период: Февраль 2031 — апр 2031",
+        "Период: Февраль 2031 — ктбр. 2031",
     ],
 )
 def test_additional_or_incomplete_periods_are_not_truncated(printed):
@@ -399,6 +403,31 @@ def test_explicit_continuation_in_adjacent_docx_paragraph_is_unresolved():
     assert [(p.start, p.end) for p, _ in _periods((period, explanatory))] == [
         ("2031-02-01", "2031-02-28")
     ]
+
+
+def test_docx_table_continuation_requires_adjacent_row_or_column():
+    def cell(row, column, text, table=1):
+        return Observation(
+            text, TableCellLocator(kind="table_cell", table=table, row=row, cell=column)
+        )
+
+    period = cell(1, 1, "Период: 01.02.2031 — 28.02.2031")
+    extra = "и с 01.04.2031 по 30.04.2031"
+    assert _periods((period, cell(1, 2, extra))) == []
+    # Native DOCX traversal visits the second column before the next row.
+    assert _periods((period, cell(1, 2, "примечание"), cell(2, 1, extra))) == []
+    for other in (cell(1, 2, "по договору № A-12"), cell(2, 2, extra), cell(1, 2, extra, 2)):
+        assert [(p.start, p.end) for p, _ in _periods((period, other))] == [
+            ("2031-02-01", "2031-02-28")
+        ]
+
+
+@pytest.mark.parametrize("suffix", ["по договору № A-12", "— услуги связи", "— расходы 2031"])
+def test_month_period_keeps_unrelated_explanations(suffix):
+    source = Observation(
+        f"Период: Февраль 2031 {suffix}", ParagraphLocator(kind="paragraph", paragraph=3)
+    )
+    assert [(p.start, p.end) for p, _ in _periods((source,))] == [("2031-02-01", "2031-02-28")]
 
 
 @pytest.mark.parametrize(
@@ -484,6 +513,25 @@ def test_weak_ocr_continuation_and_service_date_can_veto_scope(
     source = grounded_amounts.ground_document(uuid4(), "e" * 32, path, "png", "b" * 64)
     assert source.period is None and source.amount == "120.00"
     assert source.period_ambiguous if reason == "period" else source.period_date_conflict
+    assert not any(item.kind == "period" for item in source.assertions)
+
+
+def test_weak_ocr_abbreviated_month_end_vetoes_first_month(monkeypatch, tmp_path):
+    from doccheck_backend import grounded_amounts
+
+    path = tmp_path / "synthetic.png"
+    Image.new("RGB", (300, 200), "white").save(path)
+    monkeypatch.setattr(
+        grounded_amounts,
+        "recognize_lines",
+        lambda _: [
+            OcrLine("Период: Февраль 2031", (5, 10, 230, 20), 95),
+            OcrLine("— апр. 2031", (5, 25, 230, 35), 45),
+            OcrLine("Итого: 120,00 руб.", (5, 70, 200, 80), 95),
+        ],
+    )
+    source = grounded_amounts.ground_document(uuid4(), "e" * 32, path, "png", "b" * 64)
+    assert source.period is None and source.amount == "120.00"
     assert not any(item.kind == "period" for item in source.assertions)
 
 

@@ -68,9 +68,11 @@ _ADDITIONAL_PERIOD = re.compile(
     re.I,
 )
 _ADDITIONAL_PERIOD_PREFIX = re.compile(r"^\s*(?:и|или|а\s+также)\s+с(?:\s+|$)", re.I)
+_MONTH_ABBREVIATION = r"(?:янв|фев|мар|апр|июн|июл|авг|сен|сент|окт|ноя|дек)"
 _PERIOD_BOUND_START = re.compile(
     rf"^(?:\?|[0-9]{{1,4}}(?=$|[./-][0-9?]|\s+(?:{'|'.join(_MONTH)}|г(?:ода?)?)\b)"
-    rf"|(?:{'|'.join(_MONTH)})\b|с\b|неразборчив\w*|неизвест\w*)",
+    rf"|(?:{'|'.join(_MONTH)})\b|{_MONTH_ABBREVIATION}(?:\.(?=\s|$)|(?=\s+[0-9]{{4}}\b))"
+    rf"|[а-яё]{{2,10}}\.\s+[0-9]{{4}}\b|с\b|неразборчив\w*|неизвест\w*)",
     re.I,
 )
 _BARE_DATE_RANGE = re.compile(rf"^\s*(?:с\s+)?{_DAY}(?:\s+г\.?)?\s*(?:по\b|до\b|[–—-])", re.I)
@@ -249,6 +251,15 @@ def _period_following(first: Observation, second: Observation) -> bool:
             and isinstance(right, ParagraphLocator)
             and right.paragraph == left.paragraph + 1
         )
+        or (
+            isinstance(left, TableCellLocator)
+            and isinstance(right, TableCellLocator)
+            and left.table == right.table
+            and (
+                (right.row == left.row and right.cell == left.cell + 1)
+                or (right.cell == left.cell and right.row == left.row + 1)
+            )
+        )
     )
 
 
@@ -324,6 +335,11 @@ def _period_readings(
     operation_dates = set()
     unresolved_period = False
     ambiguous_period = False
+    cells = {}
+    for observation in observations:
+        locator = observation.locator
+        if isinstance(locator, TableCellLocator):
+            cells.setdefault((locator.table, locator.row, locator.cell), []).append(observation)
     for i, observation in enumerate(observations):
         raw = observation.raw_text.strip()
         # A second labelled field at the same address is not evidence that the
@@ -331,25 +347,33 @@ def _period_readings(
         if len(list(_PERIOD_FIELD.finditer(raw))) > 1:
             unresolved_period = ambiguous_period = True
             continue
-        # Separate OCR lines do not share a single exact address for both bounds.
-        following = observations[i + 1] if i + 1 < len(observations) else None
-        next_text = following.raw_text.strip() if following else ""
-        additional_line = bool(
-            _additional_pipe_period(next_text)
-            or _additional_period_prefix(next_text)
-            or (
-                re.match(r"^(?:(?:и|или|а\s+также)\b|[,;+/&])", next_text, re.I)
-                and _ADDITIONAL_PERIOD.match(next_text)
-            )
-        )
-        if (
-            following
-            and _period_following(observation, following)
-            and (_period_continuation(next_text) or additional_line)
-            and (_PERIOD_FIELD.search(raw) or _MONTH_PERIOD.search(raw))
-        ):
-            unresolved_period = True
-            ambiguous_period |= additional_line
+        # Look at adjacent table cells even if row-major traversal visits other
+        # columns before reaching the next row of the same column.
+        candidates = list(observations[i + 1 : i + 2])
+        locator = observation.locator
+        if isinstance(locator, TableCellLocator):
+            candidates.extend(cells.get((locator.table, locator.row, locator.cell + 1), ()))
+            candidates.extend(cells.get((locator.table, locator.row + 1, locator.cell), ()))
+        has_continuation = False
+        if _PERIOD_FIELD.search(raw) or _MONTH_PERIOD.search(raw):
+            for following in candidates:
+                if not _period_following(observation, following):
+                    continue
+                next_text = following.raw_text.strip()
+                additional_line = bool(
+                    _additional_pipe_period(next_text)
+                    or _additional_period_prefix(next_text)
+                    or (
+                        re.match(r"^(?:(?:и|или|а\s+также)\b|[,;+/&])", next_text, re.I)
+                        and _ADDITIONAL_PERIOD.match(next_text)
+                    )
+                )
+                if _period_continuation(next_text) or additional_line:
+                    unresolved_period = True
+                    ambiguous_period |= additional_line
+                    has_continuation = True
+                    break
+        if has_continuation:
             continue
         if match := _DATE_RANGE.search(raw):
             full_tail = raw[match.end() :]
@@ -382,9 +406,10 @@ def _period_readings(
             ):
                 unresolved_period = ambiguous_period = True
                 continue
-            if (
-                _period_continuation(tail)
-                or not first_year
+            if _period_continuation(tail):
+                unresolved_period = ambiguous_period = True
+            elif (
+                not first_year
                 or not last_year
                 or (first_year, first_month) > (last_year, last_month)
             ):
