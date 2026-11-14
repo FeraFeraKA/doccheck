@@ -796,3 +796,68 @@ def test_primary_png_contract_conflict_prevents_evidence(uploaded_files, tmp_pat
     assert job.result.documents[1].decision.state == "needs_review"
     assert not job.result.documents[1].decision.evidence_refs
     assert all(item.document_id != uploaded_files[1]["id"] for item in job.result.evidence)
+
+
+@pytest.mark.parametrize("end_day", [30, 31], ids=["wholly-in-scope", "one-day-overlap"])
+def test_primary_month_boundary_never_admits_unallocated_total(
+    uploaded_files, tmp_path, monkeypatch, end_day
+):
+    report_path = tmp_path / uploaded_files[0]["id"]
+    with report_path.open("rb") as source:
+        book = load_workbook(source)
+    book.active["B7"] = "Оплата труда"
+    book.active["A4"] = "Период: 2027-05-01 — 2027-05-30. Этап 2."
+    book.save(report_path)
+    uploaded_files[0]["sha256"] = sha256(report_path.read_bytes()).hexdigest()
+
+    primary_path = tmp_path / uploaded_files[1]["id"]
+    book = Workbook()
+    sheet = book.active
+    interval = "Май 2027" if end_day == 31 else "2027-05-01 — 2027-05-30"
+    for cell, value in {
+        "A1": "Расчетная ведомость по оплате труда",
+        "A2": "Документ: ACT-31",
+        "A3": f"Проект: E2E-31 | Период: {interval}",
+        "A5": "Код статьи",
+        "B5": "Вид начисления",
+        "C5": "Сумма, руб.",
+        "C6": 750.25,
+        "C7": 422.45,
+        "B8": "Итого",
+        "C8": "=SUM(C6:C7)",
+    }.items():
+        sheet[cell] = value
+    book.save(primary_path)
+    _replace_primary(uploaded_files, tmp_path, "xlsx")
+
+    calls = _stub_xlsx_prediction(monkeypatch, "1172.70", "payroll")
+    from bench.e2e_v32_20261114 import run as v32
+
+    request = v32.runtime.api
+
+    def predict_may(path, body=None, timeout=600):
+        response = request(path, body, timeout)
+        if path == "/api/chat":
+            payload = json.loads(response["message"]["content"])
+            payload.update(period_start="2027-05-01", period_end=f"2027-05-{end_day}")
+            response["message"]["content"] = json.dumps(payload)
+        return response
+
+    monkeypatch.setattr(v32.runtime, "api", predict_may)
+
+    job = process(StoredRun(uuid4(), None, uploaded_files), tmp_path)
+
+    assert calls == ["/api/tags", "/api/chat", "/api/ps"]
+    assert job.status == "completed"
+    assert job.result.scope.period_end == "2027-05-30"
+    row = job.result.rows[0]
+    assert row.status == "unverified" and row.expected_value is None
+    primary = job.result.documents[1]
+    if end_day == 31:
+        assert row.observed_evidence_sum is None
+        assert not row.calculation.components
+        assert primary.decision.state == "needs_review"
+        assert primary.decision.reason_code == "period_partially_overlaps_unallocatable_amount"
+    else:
+        assert row.observed_evidence_sum == "1172.70"
+        assert primary.decision.state == "include"
