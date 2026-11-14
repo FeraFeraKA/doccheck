@@ -249,7 +249,7 @@ def test_compact_report_handles_long_label_and_partial_document():
     document.errors = [result.documents[3].errors[0]]
     workbook = load_workbook(BytesIO(export_check_result(result)))
     rows = list(workbook.active.values)
-    assert rows[3][0].endswith(" · RUB")
+    assert any(isinstance(row[0], str) and row[0].endswith(" · RUB") for row in rows)
     assert len(rows[3][0].encode("utf-16-le")) // 2 <= 32_767
     assert any(row[0] == "Прочитан частично" and row[1] == document.name for row in rows)
 

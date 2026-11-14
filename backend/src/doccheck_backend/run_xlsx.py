@@ -1,6 +1,7 @@
 """Write the saved reconciliation result as an Excel report."""
 
 import re
+import textwrap
 from io import BytesIO
 
 from openpyxl import Workbook
@@ -88,6 +89,7 @@ def _source_ids(row: ResultRow) -> str | None:
 def _compact_text(parts: list[str], detail_sheet: str) -> str | None:
     unique = list(dict.fromkeys(filter(None, parts)))
     text = "\n".join(unique)
+    text = _NON_XML_TEXT.sub(lambda match: ascii(match[0])[1:-1], text)
     if len(text.encode("utf-16-le")) // 2 <= 32_767:
         return text or None
     return f"Подробности на листе «{detail_sheet}»."
@@ -303,6 +305,10 @@ def export_check_result(result: CheckResult) -> bytes:
             messages.append(f"По доступным документам: {row.observed_evidence_sum} {row.unit}")
         suffix = f" ({row.indicator_code})" if row.indicator_code else ""
         suffix += f" · {row.unit}"
+        if len(suffix.encode("utf-16-le")) // 2 > 32_000:
+            suffix = f" · {row.unit}"
+        if len(suffix.encode("utf-16-le")) // 2 > 32_000:
+            suffix = " · Единица на листе «Сверка»"
         label = row.label + suffix
         if len(label.encode("utf-16-le")) // 2 > 32_767:
             available = 32_767 - len(("… " + suffix).encode("utf-16-le")) // 2
@@ -353,11 +359,30 @@ def export_check_result(result: CheckResult) -> bytes:
         _append(report, "Замечание", None, None, None, None, issue.message)
     for column, width in enumerate((43, 24, 29, 22, 20, 70), 1):
         report.column_dimensions[get_column_letter(column)].width = width
-    for row in report.iter_rows(min_row=header + 1):
-        text = row[5].value
-        if isinstance(text, str):
-            lines = sum(max(1, (len(part) + 66) // 67) for part in text.splitlines())
-            report.row_dimensions[row[0].row].height = min(409, max(18, lines * 15))
+    widths = (40, 22, 27, 20, 18, 67)
+    for row_number in range(report.max_row, header, -1):
+        values = [report.cell(row_number, column).value for column in range(1, 7)]
+        lines = [
+            [line for part in value.split("\n") for line in textwrap.wrap(part, width) or [""]]
+            if isinstance(value, str)
+            else []
+            for value, width in zip(values, widths, strict=True)
+        ]
+        pages = max((len(cell_lines) + 23) // 24 for cell_lines in lines)
+        if pages > 1:
+            report.insert_rows(row_number + 1, pages - 1)
+        for page in range(max(pages, 1)):
+            height = 1
+            for column, cell_lines in enumerate(lines, 1):
+                portion = cell_lines[page * 24 : (page + 1) * 24]
+                if not portion:
+                    continue
+                cell = report.cell(row_number + page, column)
+                cell.value = values[column - 1] if len(cell_lines) <= 24 else "\n".join(portion)
+                cell.data_type = "s"
+                cell.alignment = Alignment(vertical="top", wrap_text=True)
+                height = max(height, len(portion))
+            report.row_dimensions[row_number + page].height = max(18, height * 15)
     report.freeze_panes = f"A{header + 1}"
     report.print_title_rows = f"1:{header}"
     workbook.active = 0
