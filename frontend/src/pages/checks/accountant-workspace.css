@@ -178,18 +178,18 @@
   justify-content: center;
   border: 1.5px dashed #cddada;
   border-radius: 12px;
-  padding: 20px 12px;
+  padding: 20px;
   text-align: center;
   background: #fbfcfc;
 }
-.upload-empty > svg { color: var(--ui-secondary); }
+.upload-empty > svg { stroke-width: 1.5; }
 .upload-empty p {
   margin-top: 8px;
   font-size: 14px;
   color: var(--ui-muted);
 }
 .upload-empty > button {
-  margin-top: 12px;
+  margin-top: 24px;
 }
 .upload-file-list {
   display: flex;
@@ -222,7 +222,7 @@
   display: block;
   font-size: 14px;
   font-weight: 500;
-  line-height: 1.4;
+  line-height: 20px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -231,31 +231,53 @@
 .upload-file-info > span {
   display: block;
   font-size: 12px;
+  line-height: 16px;
   color: var(--ui-muted);
   margin-top: 4px;
 }
-.upload-remove {
+.upload-file-status {
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  margin-left: 6px;
+  color: #16c231;
+}
+.upload-file-status svg { padding: 4px; stroke-width: 2.5; }
+.checks-content .upload-remove {
+  position: absolute;
+  top: 6px;
+  right: 6px;
   display: grid;
   place-items: center;
   width: 24px;
   height: 24px;
+  padding: 0;
+  border: 0;
   border-radius: 4px;
   color: #8e9e9e;
-  opacity: 1;
+}
+.upload-remove:hover { background: var(--ui-soft); color: var(--ui-ink); }
+@media (min-width: 701px) and (hover: hover) {
+  .upload-file-row:not(:hover):not(:focus-within) .upload-remove { opacity: 0; }
+}
+@media (max-width: 1000px) {
+  .upload-file-status { margin-left: 0; }
+  .upload-file-status svg { padding: 2px; }
 }
 .upload-list-actions {
   display: flex;
-  gap: 12px;
+  gap: 20px;
   align-items: center;
   flex-wrap: wrap;
   font-size: 13px;
   color: var(--ui-secondary);
 }
-.upload-list-actions > button {
+.checks-content .upload-list-actions > button {
   display: flex;
   align-items: center;
   gap: 7px;
+  padding: 0;
+  border: 0;
   color: var(--ui-primary);
 }
 .upload-validation {
@@ -341,14 +363,17 @@
 .accountant-workspace .workspace-button-outline { border-color: #d8dede; background: white; }
 .workspace-button-ghost:hover, .workspace-button-outline:hover { background: var(--ui-soft); }
 .workspace-button-default:hover { background: #28575a; }
-.accountant-workspace .upload-list-actions button,
-.accountant-workspace .upload-remove { border: 0; }
-.accountant-workspace .upload-remove { padding: 0; }
 .accountant-workspace .upload-card h2 { font-family: var(--font-sans); margin-bottom: 0; }
+.upload-page :is(.upload-empty, .upload-navigation) > .workspace-button { line-height: 20px; }
+.upload-page .upload-navigation > .workspace-button > svg { width: 16px; height: 16px; }
 .upload-page .upload-navigation .upload-example { height: auto; text-decoration: none; text-align: center; }
 .upload-navigation > span { font-size: 13px; color: var(--ui-secondary); }
 .upload-page .upload-public-notice h2 { font-size: 20px; }
 .accountant-workspace .upload-empty p, .accountant-workspace .upload-card-header p { color: var(--ui-secondary); }
+
+@media (max-width: 1000px) {
+  .upload-page > .grid > .upload-card h2 { font-size: 25px; }
+}
 
 @media (max-width: 700px) {
   .app-sidebar {
@@ -385,10 +410,20 @@
   .accountant-workspace .page-content h1 {
     font-size: 26px;
   }
+  .upload-page > .grid > .upload-card { border-radius: 18px; }
+  .upload-page > .grid > .upload-card h2 { font-size: 24px; }
+  .upload-page > .grid > .upload-card .upload-card-header p { font-size: 12px; }
+  .upload-empty p { font-size: 13px; }
+  .upload-file-row { border-radius: 10px; }
+  .upload-file-row .file-type-icon svg { width: 25px; height: 32px; }
   .upload-file-info > strong {
+    letter-spacing: 0;
     white-space: normal;
     overflow-wrap: anywhere;
   }
+  .checks-content .upload-remove { top: 2px; right: 2px; width: 20px; height: 20px; }
+  .upload-remove svg { width: 13px; height: 13px; }
+  .upload-list-actions { gap: 14px; font-size: 12px; }
   .app-sidebar .system-status-link { display: none; }
   .app-main .mobile-system-status-link { display: inline-block; margin: 32px 0 0; }
 }
