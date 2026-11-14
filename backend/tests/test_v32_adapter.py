@@ -485,3 +485,48 @@ def test_png_model_quote_never_becomes_source_address(uploaded_files, tmp_path, 
     assert job.result.documents[1].decision.state == "needs_review"
     assert job.result.rows[0].observed_evidence_sum is None
     assert all(item.document_id != uploaded_files[1]["id"] for item in job.result.evidence)
+
+
+def test_native_pdf_kfz_binds_report_and_retains_docx_primary(
+    uploaded_files, tmp_path, monkeypatch
+):
+    from doccheck_backend.contracts.locators import PageLocator
+    from doccheck_backend.native_observations import NativeDocument, Observation
+    from doccheck_backend.v32_adapter import read_native_document
+
+    calls = _stub_ollama(monkeypatch, "1172.70")
+    report = uploaded_files[0]
+    path = tmp_path / report["id"]
+    path.write_bytes(b"%PDF-1.4 input addressed by stubbed native reader")
+    report.update(format="pdf", name="report.pdf", sha256=sha256(path.read_bytes()).hexdigest())
+
+    # The native PDF reader and rendering are tested independently against real PDF
+    # files. Here only its addressed observations and the model response are injected.
+    observations = NativeDocument(
+        observations=tuple(
+            Observation(text, PageLocator(kind="page", page=1, line=index))
+            for index, text in enumerate(
+                [
+                    "Договор № E2E-31.",
+                    "Период: 2027-02-01 — 2027-03-31.",
+                    "Общехозяйственные расходы: 1 250,50 руб.",
+                ],
+                1,
+            )
+        )
+    )
+
+    def read(path, kind):
+        return observations if kind == "pdf" else read_native_document(path, kind)
+
+    monkeypatch.setattr("doccheck_backend.v32_adapter.read_native_document", read)
+    job = process(StoredRun(uuid4(), None, uploaded_files), tmp_path)
+
+    assert calls == ["/api/tags", "/api/chat", "/api/ps"]
+    assert job.status == "completed"
+    assert job.result.scope.period_end == "2027-03-31"
+    (row,) = job.result.rows
+    assert (row.reported_value, row.observed_evidence_sum) == ("1250.50", "1172.70")
+    source = next(item for item in job.result.evidence if item.kind == "reported_value")
+    assert source.locator.line == 3
+    assert source.document_id == report["id"]
