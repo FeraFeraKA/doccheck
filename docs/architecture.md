@@ -74,7 +74,7 @@ PostgreSQL: сохранённый результат → FastAPI → React: т�
 [Перенос экрана сверки, PR #71](https://github.com/VCyberPunk2077/doccheck/pull/71)
 · [Проверки интерфейса](agent-runs/nrt-107-result-parity.md)
 
-## Изменения промпта №3
+## Изменения в открытых PR промпта №3
 
 [PR №83](https://github.com/VCyberPunk2077/doccheck/pull/83) возвращает форму
 в состояние новой отправки после HTTP 202. Для истории используется тот же
