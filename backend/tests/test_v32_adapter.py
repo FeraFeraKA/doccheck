@@ -381,3 +381,107 @@ def test_native_collision_survives_one_model_timeout(
     by_id = {document.id: document for document in job.result.documents}
     assert by_id[clone_id].errors
     assert by_id[original["id"]].decision.reason_code == "source_identity_conflict"
+
+
+def _replace_primary(uploaded_files, tmp_path, format_):
+    path = tmp_path / uploaded_files[1]["id"]
+    uploaded_files[1].update(
+        format=format_,
+        name=f"support.{format_}",
+        sha256=sha256(path.read_bytes()).hexdigest(),
+    )
+
+
+def test_xlsx_primary_anchors_known_total_and_month(uploaded_files, tmp_path, monkeypatch):
+    calls = _stub_ollama(monkeypatch, "1172.70")
+    from bench.e2e_v32_20261114 import run as v32
+
+    report = uploaded_files[0]
+    report_path = tmp_path / report["id"]
+    with report_path.open("rb") as source:
+        book = load_workbook(source)
+    book.active["B7"] = "Оплата труда"
+    book.save(report_path)
+    report["sha256"] = sha256(report_path.read_bytes()).hexdigest()
+
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "Ведомость"
+    entries = {
+        "A1": "Расчетная ведомость по оплате труда",
+        "A2": "Документ: ACT-31",
+        "A3": "Проект: E2E-31 | Период: Февраль 2027",
+        "A5": "Код статьи",
+        "B5": "Вид начисления",
+        "C5": "Сумма, руб.",
+        "C6": 750.25,
+        "C7": 422.45,
+        "B8": "Итого",
+        "C8": "=SUM(C6:C7)",
+    }
+    for cell, value in entries.items():
+        sheet[cell] = value
+    book.save(tmp_path / uploaded_files[1]["id"])
+    _replace_primary(uploaded_files, tmp_path, "xlsx")
+    request = v32.runtime.api
+
+    def predict_payroll(path, body=None, timeout=600):
+        response = request(path, body, timeout)
+        if path == "/api/chat":
+            payload = json.loads(response["message"]["content"])
+            payload["category"] = "payroll"
+            response["message"]["content"] = json.dumps(payload)
+        return response
+
+    monkeypatch.setattr(v32.runtime, "api", predict_payroll)
+    result = process(StoredRun(uuid4(), None, uploaded_files), tmp_path).result
+
+    assert calls == ["/api/tags", "/api/chat", "/api/ps"]
+    assert result.rows[0].observed_evidence_sum == "1172.70"
+    evidence = {item.kind: item for item in result.evidence}
+    assert evidence["amount"].locator.range == "C8"
+    assert evidence["period"].locator.range == "A3"
+    assert evidence["period"].normalized_value.end == "2027-02-28"
+
+
+def test_raster_pdf_report_requires_addressed_scope(uploaded_files, tmp_path, monkeypatch):
+    from test_native_pdf import _write_pdf
+
+    calls = _stub_ollama(monkeypatch, "1172.70")
+    report = uploaded_files[0]
+    path = tmp_path / report["id"]
+    _write_pdf(path, [b"0 0 10 10 re f"])
+    report.update(format="pdf", name="report.pdf", sha256=sha256(path.read_bytes()).hexdigest())
+
+    job = process(StoredRun(uuid4(), None, uploaded_files), tmp_path)
+
+    assert calls == ["/api/tags"]
+    assert job.status == "failed"
+    assert job.error.code == "v32_pdf_scope_unavailable"
+    assert job.result is None
+
+
+def test_png_model_quote_never_becomes_source_address(uploaded_files, tmp_path, monkeypatch):
+    from PIL import Image
+
+    calls = _stub_ollama(monkeypatch, "1172.70")
+    from bench.e2e_v32_20261114 import run as v32
+
+    Image.new("RGB", (30, 30), "white").save(tmp_path / uploaded_files[1]["id"], "PNG")
+    _replace_primary(uploaded_files, tmp_path, "png")
+    request = v32.runtime.api
+
+    def predict_scan(path, body=None, timeout=600):
+        if path == "/api/chat":
+            assert body["messages"][0]["images"]
+            body["messages"][0]["content"] += "E2E-31"
+        return request(path, body, timeout)
+
+    monkeypatch.setattr(v32.runtime, "api", predict_scan)
+    job = process(StoredRun(uuid4(), None, uploaded_files), tmp_path)
+
+    assert calls == ["/api/tags", "/api/chat", "/api/ps"]
+    assert job.status == "completed"
+    assert job.result.documents[1].decision.state == "needs_review"
+    assert job.result.rows[0].observed_evidence_sum is None
+    assert all(item.document_id != uploaded_files[1]["id"] for item in job.result.evidence)
