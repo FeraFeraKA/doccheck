@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { createRoot } from 'react-dom/client';
 
+import { Sources } from './Sources';
 import './preview.css';
 
 const api = '/api/preview/v1';
@@ -26,6 +27,7 @@ function Preview() {
   const [sessionRequired, setSessionRequired] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [openRun, setOpenRun] = useState<string | null>(null);
 
   async function reload(signal?: AbortSignal) {
     try {
@@ -110,6 +112,11 @@ function Preview() {
                         <a href={resultPath + '/findings'}>Результат JSON</a>
                         {' · '}
                         <a href={resultPath + '/exports/xlsx'}>Выгрузка XLSX</a>
+                        {' · '}
+                        <button type="button" aria-expanded={openRun === id} onClick={() => {
+                          setOpenRun(openRun === id ? null : id);
+                        }}>Источники</button>
+                        {openRun === id && <Sources key={id} runPath={resultPath} />}
                       </div>
                     )}
                   </li>
