@@ -88,6 +88,10 @@ function PendingRun({ run }: { run: RunDetails }) {
     </nav>
     <div className="result-header"><h1>{run.title}</h1></div>
     <RunState run={run} />
+    {run.status === 'failed' && run.errorCode === 'scan_scope_required' &&
+      <Link className="workspace-button workspace-button-outline mt-3" to="/checks/new?scope=manual">
+        Выбрать строку КФЗ вручную
+      </Link>}
   </>;
 }
 
@@ -355,7 +359,7 @@ function Reconciliation({ result, storedRunId, runPath, rowJump, onOpenRow }: {
   const filters = [
     ['all', 'Все', rows.length],
     ['discrepancy', 'Расхождения', summary.counts.discrepancy],
-    ['unverified', 'Нет данных', summary.counts.unverified],
+    ['unverified', 'Не проверено', summary.counts.unverified],
     ['verified', 'Подтверждено', summary.counts.verified],
   ] as const;
   return (

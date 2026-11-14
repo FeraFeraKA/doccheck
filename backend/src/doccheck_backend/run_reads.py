@@ -321,7 +321,7 @@ def _document_path(root: Path, run_id: UUID, document_id: str) -> tuple[Path, st
     return path, info
 
 
-def _open_original(
+def open_run_original(
     root: Path, run_id: UUID, document_id: str, document: dict[str, object]
 ) -> tuple[BinaryIO, int]:
     path, expected = _document_path(root, run_id, document_id)
@@ -361,7 +361,7 @@ def get_run_document(
     document = _stored_document(run, document_id)
     name = str(document["name"]).replace("\\", "/").rsplit("/", 1)[-1]
     safe_name = "".join(char for char in name if char.isprintable()).strip(" .") or document_id
-    stream, size = _open_original(root, run.id, document_id, document)
+    stream, size = open_run_original(root, run.id, document_id, document)
     return stream, size, safe_name
 
 
@@ -414,7 +414,7 @@ def _preview_original(
     document = _stored_document(run, document_id)
     if document["size"] > MAX_PREVIEW_BYTES:
         raise RunReadError(413, "preview_unavailable", "Файл слишком большой для предпросмотра")
-    stream, size = _open_original(root, run.id, document_id, document)
+    stream, size = open_run_original(root, run.id, document_id, document)
     return document.get("format"), _read_verified_original(stream, size, document)
 
 
@@ -476,6 +476,6 @@ def _open_fragment(
         raise _fragment_not_found()
     for evidence in result.evidence:
         if evidence.id == evidence_id and evidence.document_id == document_id:
-            stream, size = _open_original(root, run.id, document_id, document)
+            stream, size = open_run_original(root, run.id, document_id, document)
             return evidence, stream, size, document
     raise _fragment_not_found()

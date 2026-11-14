@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { CheckDetail } from '../../src/pages/checks';
 import { NewCheck } from '../../src/pages/checks/NewCheck';
 import type { InitialRunPack } from '../../src/pages/checks/NewCheck';
 import { discardPreparedRun, prepareRunTransfer, RunUploadHttpError, startPreparedRun } from '../../src/pages/checks/createRun';
@@ -35,7 +36,7 @@ afterEach(() => {
 
 function WizardRoute({ initialPack }: { initialPack?: InitialRunPack }) {
   const { search } = useLocation();
-  const editing = Boolean(search);
+  const editing = new URLSearchParams(search).has('from');
   return <NewCheck key={editing ? 'editing' : 'new'} initialPack={editing ? initialPack : undefined} />;
 }
 
@@ -82,6 +83,8 @@ it('берёт файлы после чтения, ждёт подтвержде
 
   renderWizard();
   selectPacket();
+  expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+  expect(screen.queryByRole('group', { name: 'Строка КФЗ' })).not.toBeInTheDocument();
   const submit = screen.getByRole('button', { name: 'Запустить проверку' });
   expect(screen.getByRole('status')).toHaveTextContent('Чтение файлов');
   expect(submit).toBeDisabled();
@@ -98,6 +101,7 @@ it('берёт файлы после чтения, ждёт подтвержде
   expect(key).toMatch(/^[a-f0-9-]{36}$/);
   expect(packet.report?.name).toBe('report.pdf');
   expect(packet.documents.map((file) => file.name)).toEqual(['B.xlsx', 'A.docx']);
+  expect(packet.scanScope).toBeUndefined();
   pendingUpload.resolve({ upload_id: 'first-upload' });
   await waitFor(() => expect(submit).toBeEnabled());
 
@@ -112,6 +116,50 @@ it('берёт файлы после чтения, ждёт подтвержде
   expect(within(queue).queryByRole('link', { name: 'Проверка КФЗ №saved-run' })).not.toBeInTheDocument();
   expect(screen.queryByText('report.pdf')).not.toBeInTheDocument();
   expect(discard).not.toHaveBeenCalled();
+});
+
+it('загружает пакет с явным выбором строки только после заполнения реквизитов', async () => {
+  prepareTransfer.mockReturnValue(vi.fn().mockResolvedValue({ upload_id: 'manual-upload' }));
+  startRun.mockResolvedValue(accepted('retry-run'));
+  vi.stubGlobal('fetch', vi.fn<typeof fetch>().mockImplementation(async (url) => {
+    if (String(url) === '/api/v0/runs/ambiguous-scan') {
+      return Response.json({
+        run_id: 'ambiguous-scan', status: 'failed', created_at: '2031-02-01T00:00:00Z',
+        progress: null, error: { code: 'scan_scope_required', message: 'Не удалось выбрать строку.' },
+      });
+    }
+    return Response.json({ items: [], next_cursor: null });
+  }));
+  render(<MemoryRouter initialEntries={['/checks/ambiguous-scan']}>
+    <Routes>
+      <Route path="/checks/:id" element={<CheckDetail view="table" />} />
+      <Route path="/checks/new" element={<NewCheck />} />
+    </Routes>
+  </MemoryRouter>);
+  fireEvent.click(await screen.findByRole('link', { name: 'Выбрать строку КФЗ вручную' }));
+  selectPacket();
+  const fields = screen.getByRole('group', { name: 'Строка КФЗ' });
+  const submit = screen.getByRole('button', { name: 'Запустить проверку' });
+  expect(submit).toBeDisabled();
+  for (const [label, value] of [
+    ['Номер договора', ' СИНТ-31 '],
+    ['Начало периода', '2031-02-01'],
+    ['Конец периода', '2031-02-28'],
+    ['Этап', '2'],
+    ['Страница', '3'],
+  ]) {
+    expect(prepareTransfer).not.toHaveBeenCalled();
+    fireEvent.change(within(fields).getByLabelText(label), { target: { value } });
+  }
+  await waitFor(() => expect(submit).toBeEnabled());
+  expect(prepareTransfer.mock.calls[0][0].scanScope).toEqual({
+    contractNumber: 'СИНТ-31', periodStart: '2031-02-01', periodEnd: '2031-02-28', stage: 2, page: 3,
+  });
+  fireEvent.click(submit);
+  expect(startRun).toHaveBeenCalledExactlyOnceWith('manual-upload', expect.any(AbortSignal));
+  expect(await screen.findByRole('heading', { name: 'Проверка КФЗ №retry-run' })).toBeVisible();
+  selectPacket();
+  expect(screen.queryByRole('group', { name: 'Строка КФЗ' })).not.toBeInTheDocument();
 });
 
 it('повторяет передачу того же пакета, а смена файлов освобождает сохранённый комплект', async () => {

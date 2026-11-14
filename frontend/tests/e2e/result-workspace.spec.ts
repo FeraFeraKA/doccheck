@@ -151,7 +151,7 @@ test('results keep the selected row and its evidence together when filtering', a
   await expect(table.getByRole('button', { name: 'Синтетическая статья A' })).toHaveAttribute('aria-pressed', 'true');
   await table.getByRole('button', { name: 'Синтетическая статья A' }).click();
   await expect(panel.getByRole('region', { name: 'Подробности: Синтетическая статья A' })).toBeVisible();
-  await panel.getByRole('button', { name: 'Нет данных 1' }).click();
+  await panel.getByRole('button', { name: 'Не проверено 1' }).click();
   await expect(table.getByRole('row')).toHaveCount(2);
   await expect(table.getByRole('button', { name: 'Синтетическая статья B' })).toHaveAttribute('aria-pressed', 'true');
   await panel.getByRole('button', { name: 'Следующее расхождение' }).click();

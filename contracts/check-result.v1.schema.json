@@ -167,6 +167,7 @@
             "manifest",
             "user_declaration",
             "dataset_fixture",
+            "uploaded_package",
             "none"
           ],
           "title": "Basis",
@@ -1072,14 +1073,48 @@
             }
           },
           "then": {
+            "anyOf": [
+              {
+                "properties": {
+                  "calculation": {
+                    "properties": {
+                      "components": {
+                        "minItems": 1
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "unit": {
+                    "const": "RUB"
+                  },
+                  "expected_value": {
+                    "const": "0.00"
+                  },
+                  "completeness": {
+                    "properties": {
+                      "basis": {
+                        "const": "uploaded_package"
+                      }
+                    }
+                  },
+                  "calculation": {
+                    "properties": {
+                      "components": {
+                        "maxItems": 0
+                      }
+                    }
+                  }
+                }
+              }
+            ],
             "properties": {
               "calculation": {
                 "properties": {
                   "operation": {
                     "const": "sum"
-                  },
-                  "components": {
-                    "minItems": 1
                   }
                 },
                 "required": [
@@ -1242,6 +1277,19 @@
           ],
           "default": null,
           "title": "Is Aggregate"
+        },
+        "parent_row_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Row Id"
         }
       },
       "required": [
