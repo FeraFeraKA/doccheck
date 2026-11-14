@@ -273,6 +273,7 @@
   .checks-overview .overview-check-title { min-width: 0; }
   .checks-overview .overview-check-title a { overflow-wrap: anywhere; }
   .checks-overview .overview-table .overview-result { grid-column: 1; grid-row: 2; padding-left: 58px; }
+  .checks-overview .overview-finding { grid-column: 1; grid-row: 3; padding-left: 58px; }
   .checks-overview .overview-open-cell { grid-column: 2; grid-row: 1; align-self: center; }
   .checks-overview .overview-empty { padding: 32px 16px; text-align: center; }
 }

@@ -13,12 +13,13 @@ interface Snapshot {
 }
 
 export function useRunHistory({
-  enabled = true, cursor, finding, loader = loadRunHistory,
+  enabled = true, cursor, finding, loader = loadRunHistory, onPage,
 }: {
   enabled?: boolean;
   cursor?: string;
   finding?: FindingFilter;
   loader?: typeof loadRunHistory;
+  onPage?: (page: CheckHistory) => void;
 } = {}) {
   const [revision, setRevision] = useState(0);
   const [snapshot, setSnapshot] = useState<Snapshot>();
@@ -30,7 +31,10 @@ export function useRunHistory({
     async function update() {
       try {
         const page = await loader(controller.signal, cursor, finding);
-        if (!controller.signal.aborted) setSnapshot({ cursor, finding, loader, page, error: false });
+        if (!controller.signal.aborted) {
+          setSnapshot({ cursor, finding, loader, page, error: false });
+          onPage?.(page);
+        }
       } catch {
         if (!controller.signal.aborted) setSnapshot((previous) => ({
           cursor, finding, loader,
@@ -47,7 +51,7 @@ export function useRunHistory({
       controller.abort();
       clearTimeout(timer);
     };
-  }, [enabled, cursor, finding, loader, revision]);
+  }, [enabled, cursor, finding, loader, onPage, revision]);
 
   const current = snapshot?.cursor === cursor && snapshot?.finding === finding && snapshot?.loader === loader
     ? snapshot : undefined;

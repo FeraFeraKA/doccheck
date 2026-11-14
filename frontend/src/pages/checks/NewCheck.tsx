@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { classes } from '../../shared/lib/classes';
 import { Button } from '../../shared/ui/Button';
@@ -6,6 +6,7 @@ import { UploadFileList } from './UploadFiles';
 import { WorkspaceIcon } from './WorkspaceIcon';
 import { prepareRunUpload, RunUploadHttpError } from './createRun';
 import { runStatusLabels } from './checkData';
+import type { CheckHistory } from './checkData';
 import { runTitle } from './runTitle';
 import { useRunHistory } from './useRunHistory';
 import { demoRunPath } from './demoData';
@@ -46,8 +47,12 @@ function uploadErrorMessage(error: unknown): string {
 const publicDemo = import.meta.env.VITE_DOCCHECK_PUBLIC_DEMO === '1';
 
 export function NewCheck() {
-  const history = useRunHistory({ enabled: !publicDemo });
   const [receipts, setReceipts] = useState<string[]>([]);
+  const clearListedReceipts = useCallback(({ entries }: CheckHistory) => {
+    const listed = new Set(entries.map(({ id }) => id));
+    setReceipts((previous) => previous.filter((id) => !listed.has(id)));
+  }, []);
+  const history = useRunHistory({ enabled: !publicDemo, onPage: clearListedReceipts });
   const nextFileId = useRef(0);
   const active = useRef<AbortController | null>(null);
   const attempt = useRef<ReturnType<typeof prepareRunUpload> | null>(null);
@@ -59,6 +64,7 @@ export function NewCheck() {
   const canStart = report.length === 1 && documents.length > 0;
 
   useEffect(() => () => active.current?.abort(), []);
+
 
   function changeFiles(group: FileGroup, next: SelectedFile[]) {
     attempt.current = null;

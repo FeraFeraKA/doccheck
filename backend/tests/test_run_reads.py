@@ -387,7 +387,7 @@ def test_history_finding_filters_use_saved_counts_before_pagination(client):
             client,
             run_id,
             status="completed",
-            result={"summary": {"counts": counts}, "report_number": "8/1", "synthetic": True},
+            result={"summary": {"counts": counts}, "synthetic": True},
         )
 
     cases = [("discrepancy", mixed), ("unverified", mixed), ("verified", complete)]
@@ -396,7 +396,7 @@ def test_history_finding_filters_use_saved_counts_before_pagination(client):
         assert page.status_code == 200
         assert page.json()["next_cursor"] is None
         assert [item["run_id"] for item in page.json()["items"]] == [expected]
-        assert page.json()["items"][0]["report_number"] == "8/1"
+        assert page.json()["items"][0]["report_number"] is None
         assert page.json()["items"][0]["synthetic"] is True
 
     history = client.get(RUNS).json()["items"]

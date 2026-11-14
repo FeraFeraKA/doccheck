@@ -195,7 +195,7 @@ function HistoryTable({ entries, hasEntries, sort, filtered, reset }: {
               <span className={classes('overview-chip', tone)}>{runStatusLabels[entry.status]}</span>
               {entry.error && <p className="text-xs">{entry.error}</p>}
             </td>
-            <td>{entry.counts ? <ul className="space-y-1 text-[13px]">
+            <td className="overview-finding">{entry.counts ? <ul className="space-y-1 text-[13px]">
               {entry.counts.verified > 0 && <li>Подтверждено: {entry.counts.verified}</li>}
               {entry.counts.discrepancy > 0 && <li>Расхождения: {entry.counts.discrepancy}</li>}
               {entry.counts.unverified > 0 && <li>Не проверено: {entry.counts.unverified}</li>}
