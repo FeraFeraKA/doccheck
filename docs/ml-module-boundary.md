@@ -2,8 +2,9 @@
 
 Граница отдельного модуля — пакет `doccheck-ml 0.1.0`, результат
 `doccheck-ml-identity/1`, политика `identity-v5.0-prefix-guard`.
-Текущий адаптер v3.2 использует отдельный конвейер и не вызывает этот модуль.
-[Адаптер v3.2](../backend/src/doccheck_backend/v32_adapter.py) ·
+Текущий обработчик v3.2 использует `QwenReader` из этого пакета для
+локальной модели, но не вызывает описанный ниже `process_documents`.
+[Обработчик v3.2](../backend/src/doccheck_backend/v32_processor.py) ·
 [Контракт результата](result-source-contract.md)
 
 ## Вызов и вход
