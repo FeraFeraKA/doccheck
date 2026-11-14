@@ -14,6 +14,7 @@ import { ResultTable } from './ResultTable';
 import { formatDecimal, formatLocation, statusLabels } from './reviewResult';
 import type { ReviewResult } from './reviewResult';
 import { useCheckData } from './useCheckData';
+import { isRunId } from './runStatusApi';
 import './result-workspace.css';
 import './result-focus.css';
 
@@ -136,6 +137,7 @@ function ResultContent({ id, view, result, run, synthetic, stored }: ResultConte
   }, [location.search, location.key, result.rows]);
   const { summary, scope } = result;
   const runPath = '/checks/' + encodeURIComponent(id);
+  const exportRunId = stored && isRunId(id) ? id : undefined;
   const tone = resultTone(summary.counts);
   const syntheticLabel = id === demoJob.run_id ? 'Синтетическая сверка · готовый пример'
     : synthetic ? 'Синтетический результат · сохранённая проверка' : undefined;
@@ -145,7 +147,8 @@ function ResultContent({ id, view, result, run, synthetic, stored }: ResultConte
       <ResultHeader title={run.title} runPath={runPath} view={view} scope={scope}
         conclusion={resultHeadline[tone]} tone={tone} syntheticLabel={syntheticLabel} />
       {stored && <div className="stored-run-status mt-3 text-[13px]"><RunState run={run} /></div>}
-      {(view === 'table' || view === 'conclusion') && <ResultSummary id={id} runPath={runPath} result={result} stored={stored}
+      {(view === 'table' || view === 'conclusion') && <ResultSummary runPath={runPath} result={result}
+        exportRunId={view === 'conclusion' ? exportRunId : undefined}
         onOpenRow={view === 'table' ? (rowId) => setRowJump({ id: rowId, locationKey: location.key }) : undefined} />}
       {view === 'table' && <>
         <div className="mt-6">
@@ -161,6 +164,7 @@ function ResultContent({ id, view, result, run, synthetic, stored }: ResultConte
       {(view === 'documents' || view === 'exceptions') && <ResultDocuments
         key={view} result={result} runPath={runPath} storedRunId={stored ? id : undefined}
         exceptions={view === 'exceptions'} synthetic={synthetic}
+        exportRunId={view === 'documents' ? exportRunId : undefined}
         rowEvidenceIds={resultRowEvidenceIds} formatAddress={formatSourceChoice}
       />}
       {view === 'log' && <CheckLog synthetic={synthetic} />}
