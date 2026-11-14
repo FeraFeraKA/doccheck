@@ -19,7 +19,7 @@ from doccheck_backend.config import Settings
 from doccheck_backend.contracts import CheckJob
 from doccheck_backend.contracts.result import Issue, Scope
 from doccheck_backend.database import create_database_engine
-from doccheck_backend.models import Run
+from doccheck_backend.models import HostedClaim, Run
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +80,10 @@ def run_document_worker(
             # Any previous processing row has lost its owning PostgreSQL session.
             connection.execute(
                 update(Run)
-                .where(Run.status == "processing")
+                .where(
+                    Run.status == "processing",
+                    ~select(HostedClaim.run_id).where(HostedClaim.run_id == Run.id).exists(),
+                )
                 .values(
                     status="failed",
                     result=None,
@@ -108,7 +111,10 @@ def _claim(connection: Connection) -> StoredRun | None:
     with Session(connection) as session, session.begin():
         run = session.scalar(
             select(Run)
-            .where(Run.status == "queued")
+            .where(
+                Run.status == "queued",
+                ~select(HostedClaim.run_id).where(HostedClaim.run_id == Run.id).exists(),
+            )
             .order_by(Run.created_at, Run.id)
             .with_for_update(skip_locked=True)
             .limit(1)
@@ -120,28 +126,52 @@ def _claim(connection: Connection) -> StoredRun | None:
         return StoredRun(run.id, None if run.scope == {} else run.scope, run.documents)
 
 
-def _process(run: StoredRun, upload_root: Path, process: RunProcessor) -> CheckJob:
-    run_id = str(run.id)
-    try:
-        # Snapshot the identity before calling code that owns the processing step.
-        scope = None if run.scope is None else Scope.model_validate(run.scope)
-        report_document_id = run.report_document_id
-        documents = {doc["id"]: doc["sha256"] for doc in run.documents}
-        formats = {doc["id"]: doc["format"] for doc in run.documents}
-        returned = process(run, upload_root / run_id)
-        outcome = CheckJob.model_validate(returned.model_dump(mode="json"))
-        if outcome.run_id != run_id or outcome.status in ("queued", "processing"):
+@dataclass(frozen=True)
+class RunIdentity:
+    run_id: str
+    scope: Scope | None
+    report_document_id: str
+    documents: dict
+    formats: dict
+
+    @classmethod
+    def from_run(cls, run: StoredRun) -> "RunIdentity":
+        return cls(
+            str(run.id),
+            None if run.scope is None else Scope.model_validate(run.scope),
+            run.report_document_id,
+            {doc["id"]: doc["sha256"] for doc in run.documents},
+            {doc["id"]: doc["format"] for doc in run.documents},
+        )
+
+    def validate(
+        self,
+        returned: CheckJob,
+        *,
+        synthetic: bool = False,
+        allow_inferred_row: bool = False,
+    ) -> CheckJob:
+        payload = returned.model_dump(mode="json")
+        if synthetic and payload["result"] is not None:
+            payload["result"]["synthetic"] = True
+        outcome = CheckJob.model_validate(payload)
+        if outcome.run_id != self.run_id or outcome.status in ("queued", "processing"):
             raise ValueError("processor must return a terminal outcome for the claimed run")
+        actual_scope = outcome.result.scope if outcome.result is not None else None
+        if (
+            allow_inferred_row
+            and not synthetic
+            and actual_scope is not None
+            and self.scope is not None
+            and self.scope.report_row_locator is None
+        ):
+            # Local trusted OCR can return a discovered address without
+            # changing the selected contract, period, or report identity.
+            actual_scope = actual_scope.model_copy(update={"report_row_locator": None})
         if outcome.result is not None and (
-            outcome.result.scope.report_document_id != report_document_id
-            or (
-                scope is not None
-                and outcome.result.scope.model_copy(
-                    update={"report_row_locator": None} if scope.report_row_locator is None else {}
-                )
-                != scope
-            )
-            or {doc.id: doc.sha256 for doc in outcome.result.documents} != documents
+            outcome.result.scope.report_document_id != self.report_document_id
+            or (self.scope is not None and actual_scope != self.scope)
+            or {doc.id: doc.sha256 for doc in outcome.result.documents} != self.documents
         ):
             raise ValueError("result must match the uploaded scope and document IDs")
         if outcome.error is not None:
@@ -152,12 +182,17 @@ def _process(run: StoredRun, upload_root: Path, process: RunProcessor) -> CheckJ
             )
         if outcome.result is not None:
             for document in outcome.result.documents:
-                if document.format is not None and document.format != formats[document.id]:
+                if document.format is not None and document.format != self.formats[document.id]:
                     raise ValueError("result document format must match the upload manifest")
-            # CheckResult checks locator kinds against its document formats. Matching those
-            # formats to the manifest also ties addresses to the original uploaded bytes.
             _validate_jsonb_text(outcome.result.model_dump(mode="json"))
         return outcome
+
+
+def _process(run: StoredRun, upload_root: Path, process: RunProcessor) -> CheckJob:
+    run_id = str(run.id)
+    try:
+        identity = RunIdentity.from_run(run)
+        return identity.validate(process(run, upload_root / run_id), allow_inferred_row=True)
     except Exception as exc:
         # Do not log exception text, document data or adapter payloads.
         logger.error("Document run %s: processing failed (%s)", run_id, type(exc).__name__)
@@ -209,6 +244,9 @@ def main() -> int:
         settings = Settings.from_env()
     except ValueError as exc:
         logger.error("%s", exc)
+        return 1
+    if settings.hosted_worker_digest is not None:
+        logger.error("The local database worker must not use the hosted queue")
         return 1
     try:
         process = getattr(import_module(module), name)

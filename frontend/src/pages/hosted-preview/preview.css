@@ -1,0 +1,27 @@
+body {
+  margin: 0;
+  background: #f7f8f9;
+  color: #243147;
+  font: 1rem system-ui, sans-serif;
+}
+
+main {
+  width: min(calc(100% - 2rem), 42rem);
+  margin: 4rem auto;
+}
+
+h1 { margin-bottom: 0.25rem; }
+
+form { display: grid; gap: 0.5rem; max-width: 25rem; }
+
+button,
+input {
+  font: inherit;
+  padding: 0.6rem;
+  border: 1px solid #9ba8b8;
+  border-radius: 0.25rem;
+}
+
+button { width: fit-content; cursor: pointer; }
+
+li { margin-bottom: 0.75rem; overflow-wrap: anywhere; }

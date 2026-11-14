@@ -2,10 +2,11 @@
 
 import json
 import os
-from hashlib import sha256
+from hashlib import file_digest, sha256
 from pathlib import Path
 from shutil import rmtree
-from tempfile import mkdtemp
+from stat import S_ISREG
+from tempfile import TemporaryDirectory, mkdtemp
 from uuid import UUID, uuid4
 from zipfile import BadZipFile, ZipFile
 
@@ -16,7 +17,7 @@ from starlette.datastructures import FormData, UploadFile
 
 from doccheck_backend.contracts.locators import Locator
 from doccheck_backend.contracts.result import Scope
-from doccheck_backend.models import Run
+from doccheck_backend.models import HostedClaim, Run
 
 MAX_FILE_SIZE = 50 * 1024**2
 MAX_PACKAGE_SIZE = 250 * 1024**2
@@ -138,7 +139,18 @@ def _sync_directory(path: Path) -> None:
         os.close(fd)
 
 
-def store_run(engine: Engine, root: Path, key: UUID, form: FormData) -> UUID:
+def store_run(
+    engine: Engine,
+    root: Path,
+    key: UUID,
+    form: FormData,
+    *,
+    hosted_synthetic: bool = False,
+    hosted_viewer: UUID | None = None,
+    restore_hosted_originals: bool = False,
+) -> UUID:
+    if (hosted_viewer is not None or restore_hosted_originals) and not hosted_synthetic:
+        raise ValueError("Hosted options require synthetic admission")
     if set(form) - {*SCOPE_FIELDS, "report", "documents"}:
         raise input_error("Неизвестное поле")
     (report,) = _get_files(form, "report", 1)
@@ -189,14 +201,29 @@ def store_run(engine: Engine, root: Path, key: UUID, form: FormData) -> UUID:
                 .returning(Run.id)
             )
             if connection.execute(query).scalar_one_or_none() is None:
-                existing, existing_digest = connection.execute(
-                    select(Run.id, Run.request_digest).where(Run.idempotency_key == key)
+                existing, existing_digest, previous_documents = connection.execute(
+                    select(Run.id, Run.request_digest, Run.documents)
+                    .where(Run.idempotency_key == key)
+                    .with_for_update()
                 ).one()
                 if existing_digest != digest:
                     raise UploadError(
                         409, "idempotency_conflict", "Ключ уже связан с другим пакетом"
                     )
+                admission = connection.execute(
+                    select(HostedClaim.viewer_id).where(HostedClaim.run_id == existing)
+                ).one_or_none()
+                if hosted_synthetic != (admission is not None) or (
+                    admission is not None and admission.viewer_id != hosted_viewer
+                ):
+                    raise UploadError(409, "idempotency_conflict", "Ключ связан с другой очередью")
+                if restore_hosted_originals:
+                    _restore_hosted_dir(root, existing, staging, previous_documents, documents)
                 return existing
+            if hosted_synthetic:
+                connection.execute(
+                    insert(HostedClaim).values(run_id=run_id, attempt=0, viewer_id=hosted_viewer)
+                )
             _sync_directory(staging)
             staging.rename(root / str(run_id))
             # An uncertain commit must not delete bytes that a committed run can reference.
@@ -209,3 +236,47 @@ def store_run(engine: Engine, root: Path, key: UUID, form: FormData) -> UUID:
     finally:
         if staging.exists():
             rmtree(staging)
+
+
+def _restore_hosted_dir(
+    root: Path, run_id: UUID, staged: Path, previous: list[dict], current: list[dict]
+) -> None:
+    """Restore byte-identical originals under saved IDs after ephemeral storage loss."""
+    if len(previous) != len(current):
+        raise ValueError("Hosted package manifest differs from saved originals")
+    for old, new in zip(previous, current, strict=True):
+        identifier = old["id"]
+        if UUID(hex=identifier).hex != identifier or any(
+            old[key] != new[key] for key in ("sha256", "size", "name", "format", "role")
+        ):
+            raise ValueError("Hosted package manifest differs from saved originals")
+    destination = root / str(run_id)
+    if destination.is_symlink() or (destination.exists() and not destination.is_dir()):
+        raise ValueError("Hosted package directory is not a regular directory")
+    if destination.is_dir():
+        for old, new in zip(previous, current, strict=True):
+            original = destination / old["id"]
+            if not _matches_original(original, old):
+                (staged / new["id"]).replace(original)
+        _sync_directory(destination)
+        return
+    # Work via unique staged names first, then switch atomically into place.
+    with TemporaryDirectory(prefix=".restore-", dir=root) as directory:
+        restored = Path(directory) / "originals"
+        restored.mkdir(mode=0o700)
+        for old, new in zip(previous, current, strict=True):
+            (staged / new["id"]).rename(restored / old["id"])
+        _sync_directory(restored)
+        restored.rename(destination)
+        _sync_directory(root)
+
+
+def _matches_original(path: Path, item: dict) -> bool:
+    try:
+        info = path.lstat()
+        if not S_ISREG(info.st_mode) or info.st_size != item["size"]:
+            return False
+        with path.open("rb") as stream:
+            return file_digest(stream, "sha256").hexdigest() == item["sha256"]
+    except FileNotFoundError:
+        return False

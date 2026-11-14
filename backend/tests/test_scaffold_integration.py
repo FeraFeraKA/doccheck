@@ -11,6 +11,7 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Mapping
 from uuid import uuid4
 
 import httpx
@@ -57,7 +58,9 @@ def running_process(
 
 
 @contextmanager
-def running_api(database_url: str, expected_health: int = 200) -> Iterator[httpx.Client]:
+def running_api(
+    database_url: str, expected_health: int = 200, *, environment: Mapping[str, str] | None = None
+) -> Iterator[httpx.Client]:
     with socket.socket() as port_socket:
         port_socket.bind(("127.0.0.1", 0))
         port = port_socket.getsockname()[1]
@@ -71,7 +74,9 @@ def running_api(database_url: str, expected_health: int = 200) -> Iterator[httpx
         str(port),
         "--no-access-log",
     ]
-    with running_process(arguments, process_environment(database_url)) as process:
+    with running_process(
+        arguments, {**process_environment(database_url), **(environment or {})}
+    ) as process:
         with httpx.Client(
             base_url=f"http://127.0.0.1:{port}", timeout=5, trust_env=False
         ) as client:
