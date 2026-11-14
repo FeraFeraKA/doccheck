@@ -2,6 +2,51 @@ import { expect, test } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import example from '../../../contracts/check-result.v1.synthetic.json' with { type: 'json' };
 
+test('fullscreen keeps a square PNG fragment visible when vertical overflow first appears', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1100 });
+  await page.goto('/checks/synthetic-example');
+  const png = await page.evaluate(() => {
+    const image = document.createElement('canvas');
+    image.width = 800;
+    image.height = 800;
+    return image.toDataURL('image/png').split(',')[1];
+  });
+  const id = 'square-preview';
+  const path = `**/api/v0/runs/${id}`;
+  const evidence = { ...example.result.evidence[0], locator: { kind: 'page', page: 1, bbox: [.2, .72, .5, .8] } };
+  await page.route(path, (route) => route.fulfill({ json: {
+    run_id: id, status: 'completed_with_issues', created_at: '2026-11-14T00:00:00Z', error: null,
+    progress: { processed_documents: 4, total_documents: 4 },
+  } }));
+  await page.route(`${path}/findings`, (route) => route.fulfill({ json: {
+    ...example.result, run_id: id,
+    documents: example.result.documents.map((item) => item.id === 'report'
+      ? { ...item, format: 'png', name: 'synthetic-report.png' } : item),
+    evidence: example.result.evidence.map((item) => item.id === evidence.id ? evidence : item),
+  } }));
+  await page.route(`${path}/documents/report/fragments?evidence_id=${evidence.id}`, (route) =>
+    route.fulfill({ json: evidence }));
+  await page.route(`${path}/documents/report`, (route) =>
+    route.fulfill({ body: Buffer.from(png, 'base64'), contentType: 'application/octet-stream' }));
+
+  await page.goto('/checks/' + id);
+  await page.getByRole('button', { name: 'Просмотреть источник' }).click();
+  const viewport = page.getByRole('region', { name: 'Просмотр документа: synthetic-report.png' });
+  const box = viewport.locator('.source-viewer-highlight');
+  await expect(box).toBeInViewport({ ratio: 1 });
+  const scroll = () => viewport.evaluate((element) => ({
+    top: element.scrollTop, max: element.scrollHeight - element.clientHeight,
+  }));
+  expect(await scroll()).toEqual({ top: 0, max: 0 });
+  await page.getByRole('button', { name: 'Развернуть источник на весь экран' }).click();
+  await expect(box).toBeInViewport({ ratio: 1 });
+  expect((await scroll()).max).toBeGreaterThan(0);
+  expect((await scroll()).top).toBeGreaterThan(0);
+  await page.getByRole('button', { name: 'Свернуть источник в боковую панель' }).click();
+  await expect(box).toBeInViewport({ ratio: 1 });
+  expect(await scroll()).toEqual({ top: 0, max: 0 });
+});
+
 for (const [width, height] of [[1440, 1100], [768, 844], [390, 600]]) {
   test(`the compact PNG drawer uses its available space and locates evidence at ${width}×${height}`, async ({ page }) => {
     await page.setViewportSize({ width, height });
