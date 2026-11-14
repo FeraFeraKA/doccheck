@@ -32,6 +32,12 @@ def _line(text: str, top: int, confidence: float = 99) -> OcrLine:
         ([], None),
         ([_line("Суммы КФЗ: руб.", 70, confidence=20)], None),
         ([_line("Суммы КФЗ: руб.", 70), _line("Суммы: EUR", 95)], None),
+        ([_line("Суммы КФЗ: руб.", 70), _line("USD/4ac", 95)], None),
+        ([_line("Суммы КФЗ: руб.", 70), _line("usd/4ac", 95)], None),
+        ([_line("Суммы КФЗ: руб.", 70), _line("U5D/4ac", 95)], None),
+        ([_line("Суммы КФЗ: руб.", 70), _line("U S D / 4ac", 95)], None),
+        ([_line("Суммы КФЗ: руб.", 70), _line("USD∕4ac", 95)], None),
+        ([_line("Суммы КФЗ: руб.", 70), _line("руб./4ac", 95)], None),
         ([_line("Стоимость договора: 12,34 руб.", 70)], None),
         ([_line("Сметная стоимость работ: 12,34 руб.", 70)], None),
         ([_line("тыс.", 70), _line("руб.", 95)], None),
@@ -41,12 +47,16 @@ def _line(text: str, top: int, confidence: float = 99) -> OcrLine:
         ([_line("руб.", 70), _line("Суммы: USD", 95, confidence=20)], None),
     ],
 )
-def test_simple_scan_exposes_only_unambiguous_ruble_amounts(monkeypatch, unit_lines, expected):
+@pytest.mark.parametrize("contract", ["SYN/2026", "USD/2026"])
+def test_simple_scan_exposes_only_unambiguous_ruble_amounts(
+    monkeypatch, unit_lines, expected, contract
+):
     line = "Оплата труда 12,34"
     lines = [
-        _line("Договор № SYN-01", 10),
+        _line(f"Договор № {contract}", 10),
         _line("Отчетный период: 01.01.2026 — 31.01.2026", 40),
         *unit_lines,
+        _line("Дата 01/02/2026", 115),
         _line(line, 140),
     ]
     monkeypatch.setattr(scanned_report, "recognize_lines", lambda *_args, **_kwargs: lines)
@@ -56,7 +66,7 @@ def test_simple_scan_exposes_only_unambiguous_ruble_amounts(monkeypatch, unit_li
         Image.new("RGB", (600, 400), "white"),
         1,
         None,
-        "SYN-01",
+        contract,
         ("2026-01-01", "2026-01-31"),
     )
     assert reading is not None
@@ -78,7 +88,7 @@ def test_simple_scan_exposes_only_unambiguous_ruble_amounts(monkeypatch, unit_li
     )
     scope = Scope(
         report_document_id=document_id,
-        contract_number="SYN-01",
+        contract_number=contract,
         period_start="2026-01-01",
         period_end="2026-01-31",
         report_row_locator=None,
@@ -98,6 +108,57 @@ def test_simple_scan_exposes_only_unambiguous_ruble_amounts(monkeypatch, unit_li
         assert reason.evidence_refs == [observed.id]
     else:
         assert [(item.normalized_value, item.unit) for item in evidence] == [(expected, "RUB")]
+
+
+def test_simple_scan_rejects_unit_marker_after_first_monetary_row(monkeypatch):
+    lines = [
+        _line("Договор № SYN/2026", 10),
+        _line("Отчетный период: 01.01.2026 — 31.01.2026", 40),
+        _line("Суммы КФЗ: руб.", 70),
+        _line("Оплата труда 12,34", 110),
+        _line("USD/4ac", 150),
+        _line("Страховые взносы 3,21", 190),
+    ]
+    monkeypatch.setattr(scanned_report, "recognize_lines", lambda *_args, **_kwargs: lines)
+    monkeypatch.setattr(
+        scanned_report,
+        "recognize_crop",
+        lambda _image, box, **_kwargs: lines[3].text if box[1] == 110 else lines[5].text,
+    )
+    reading = scanned_report.read_report_row(
+        Image.new("RGB", (600, 400), "white"),
+        1,
+        None,
+        "SYN/2026",
+        ("2026-01-01", "2026-01-31"),
+    )
+    assert reading is not None and len(reading.cells) == 2
+    assert all(cell.amount is None and cell.unit_unverified for cell in reading.cells)
+    document_id = uuid4().hex
+    report = SourceDocument(
+        id=document_id,
+        name="synthetic.png",
+        sha256="f" * 64,
+        format="png",
+        role="report",
+        parse_status="parsed",
+        decision=FileDecision(
+            state="include", reason_code="test", message="test", evidence_refs=[]
+        ),
+        errors=[],
+    )
+    scope = Scope(
+        report_document_id=document_id,
+        contract_number="SYN/2026",
+        period_start="2026-01-01",
+        period_end="2026-01-31",
+        report_row_locator=None,
+    )
+    rows, evidence, _ = _rows(uuid4(), scope, report, None, reading, [report], {})
+    assert len(rows) == 2 and all(
+        row.status == "unverified" and row.reported_value is None for row in rows
+    )
+    assert not any(item.kind == "reported_value" and item.unit == "RUB" for item in evidence)
 
 
 @pytest.mark.parametrize(
@@ -124,6 +185,7 @@ def test_simple_scan_exposes_only_unambiguous_ruble_amounts(monkeypatch, unit_li
         ([_line("Суммы КФЗ: руб.", 70)], [_line("Оплата труда", 10), _line("AUD", 40, 15)], False),
         ([_line("Суммы КФЗ: руб.", 70)], [_line("Оплата труда", 10), _line("код AUD", 40)], False),
         ([_line("Суммы КФЗ: руб.", 70)], [_line("Оплата труда USD/hour", 10)], False),
+        ([_line("Суммы КФЗ: руб.", 70)], [_line("USD/4ac", 10)], False),
         ([_line("Суммы КФЗ: руб.", 70)], [_line("Оплата труда CAD/hr", 10)], False),
         ([_line("Суммы КФЗ: руб.", 70)], [_line("Оплата труда: руб./час", 10)], False),
         ([_line("Суммы КФЗ: руб.", 70)], [_line("Оплата труда: руб.／час", 10)], False),
@@ -337,6 +399,62 @@ def test_real_ocr_detects_rate_with_slash(rate):
     lines = scanned_report.recognize_lines(image, mode=6)
     assert any(scanned_report._UNIT_RATE.search(line.text) for line in lines)
     assert not scanned_report._confirmed_rubles([_line("Суммы КФЗ: руб.", 5)], lines)
+
+
+@pytest.mark.parametrize(
+    ("rate", "after_first_row"),
+    [(None, False), ("USD/час", False), ("USD/4ac", False), ("USD/4ac", True)],
+)
+def test_real_ocr_simple_report_preserves_contract_and_rejects_rate(rate, after_first_row):
+    require_raster_ocr()
+    image = Image.new("RGB", (1400, 520), "white")
+    draw = ImageDraw.Draw(image)
+    font = ImageFont.truetype("DejaVuSans.ttf", 36)
+    for y, line in (
+        (20, "Договор № SYN/2026"),
+        (85, "Отчетный период: 01.01.2026 — 31.01.2026"),
+        (150, "Суммы КФЗ: руб."),
+        (215, "Дата 01/02/2026"),
+        (270, "Оплата труда 12,34" if after_first_row else "Оплата труда"),
+        (325, rate or "Синтетический отчет"),
+        (380, "Страховые взносы 3,21" if after_first_row else "Оплата труда 12,34"),
+    ):
+        draw.text((40, y), line, fill="black", font=font)
+    observations = scanned_report.recognize_lines(image, mode=6)
+    if rate:
+        assert any(scanned_report._UNIT_SLASH_PREFIX.search(line.text) for line in observations)
+    period = ("2026-01-01", "2026-01-31")
+    reading = scanned_report.read_report_row(image, 1, None, "SYN/2026", period)
+    assert reading is not None and len(reading.cells) == (2 if after_first_row else 1)
+
+    run_id, document_id = uuid4(), uuid4().hex
+    report = SourceDocument(
+        id=document_id,
+        name="synthetic.png",
+        sha256="e" * 64,
+        format="png",
+        role="report",
+        parse_status="parsed",
+        decision=FileDecision(
+            state="include", reason_code="test", message="test", evidence_refs=[]
+        ),
+        errors=[],
+    )
+    scope = Scope(
+        report_document_id=document_id,
+        contract_number="SYN/2026",
+        period_start=period[0],
+        period_end=period[1],
+        report_row_locator=None,
+    )
+    rows, evidence, _ = _rows(run_id, scope, report, None, reading, [report], {})
+    assert len(rows) == (2 if after_first_row else 1)
+    if rate:
+        assert all(row.status == "unverified" and row.reported_value is None for row in rows)
+        assert not any(item.kind == "reported_value" and item.unit == "RUB" for item in evidence)
+    else:
+        assert rows[0].reported_value == "12.34"
+        assert any(item.kind == "reported_value" and item.unit == "RUB" for item in evidence)
 
 
 def test_real_ocr_reads_an_explicit_ruble_multilevel_report(tmp_path):

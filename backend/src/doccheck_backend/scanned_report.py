@@ -66,6 +66,11 @@ _UNIT_RATE = re.compile(
     r"(?<![\w-])(?:[A-Za-zА-Яа-яЁё?]{3,7}\.?|[$€£¥₽])\s*/\s*[A-Za-zА-Яа-яЁё?]+",
     re.I,
 )
+_UNIT_SLASH_PREFIX = re.compile(
+    r"(?<![\w-])(?:[A-Za-zА-Яа-яЁё?][A-Za-zА-Яа-яЁё0-9?]{1,9}"
+    r"|(?:[A-Za-zА-Яа-яЁё?]\s+){1,6}[A-Za-zА-Яа-яЁё?]|[$€£¥₽])\s*\.?\s*/",
+    re.I,
+)
 _AMBIGUOUS_SLASH = re.compile(r"(?<!\d)/|/(?!\d)")
 _UNIT_SLASHES = str.maketrans({"／": "/", "⁄": "/", "∕": "/", "\\": "/"})
 _UNIT_CONTEXT = re.compile(
@@ -235,17 +240,31 @@ def _confirmed_rubles(header: Sequence[OcrLine], table_header: Sequence[OcrLine]
     """Require an explicit unit for report values and veto conflicting markers."""
     # OCR can split a heading and its unit into separate lines. The whole table
     # heading must be checked, not just lines containing a label such as "cost".
+    # Contract identifiers may themselves contain slashes and currency-like codes.
+    header_without_contract = [
+        OcrLine(_CONTRACT.sub("", line.text.translate(_UNIT_SLASHES)), line.box, line.confidence)
+        for line in header
+    ]
+    table_without_contract = [
+        OcrLine(_CONTRACT.sub("", line.text.translate(_UNIT_SLASHES)), line.box, line.confidence)
+        for line in table_header
+    ]
     if any(
         _STANDALONE_UNIT_CODE.fullmatch(line.text)
-        or _UNIT_RATE.search(line.text.translate(_UNIT_SLASHES))
-        for line in (*header, *table_header)
+        or _UNIT_RATE.search(line.text)
+        or _UNIT_SLASH_PREFIX.search(line.text)
+        for line in (*header_without_contract, *table_without_contract)
     ) or any(
         _UPPERCASE_UNIT_CODE.search(line.text)
-        or _AMBIGUOUS_SLASH.search(re.sub(r"\s*/\s*", "/", line.text.translate(_UNIT_SLASHES)))
-        for line in table_header
+        or _AMBIGUOUS_SLASH.search(re.sub(r"\s*/\s*", "/", line.text))
+        for line in table_without_contract
     ):
         return False
-    declarations = [line for line in (*header, *table_header) if _unit_declaration(line)]
+    declarations = [
+        line
+        for line in (*header_without_contract, *table_without_contract)
+        if _unit_declaration(line)
+    ]
     if any(
         _OTHER_CURRENCY.search(line.text)
         or _UNKNOWN_UNIT_CODE.search(line.text)
@@ -296,7 +315,10 @@ def _simple_table(
     if not amounts:
         return None
     first_row = min(line.box[1] for candidates in amounts.values() for line in candidates)
-    rubles = _confirmed_rubles([line for line in lines if line.box[3] <= first_row])
+    rubles = _confirmed_rubles(
+        [line for line in lines if line.box[3] <= first_row],
+        [line for line in lines if line.box[3] > first_row],
+    )
     result = []
     for code, candidates in amounts.items():
         if len(candidates) != 1:
