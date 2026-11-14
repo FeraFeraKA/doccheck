@@ -26,9 +26,8 @@ test('synthetic document decisions, addresses and row links work without the doc
   await file.press('Enter');
   const dialog = page.getByLabel('Источник документа', { exact: true }).and(page.locator('.source-workspace-panel[open]'));
   await expect(dialog.getByText(/^Оригинал (в готовом примере|документа) недоступен\.$/)).toBeVisible();
-  await dialog.getByRole('combobox', { name: 'Адрес доказательства' }).selectOption('amount-2');
-  await expect(dialog.getByRole('combobox', { name: 'Адрес доказательства' }).locator('option:checked'))
-    .toHaveText('Лист «Синтетика», C7');
+  await expect(dialog.getByRole('combobox', { name: 'Документы комплекта' })).toHaveValue('ledger');
+  await expect(dialog.getByRole('combobox')).toHaveCount(1);
   await page.keyboard.press('Escape');
   await expect(file).toBeFocused();
 
@@ -76,7 +75,8 @@ test('stored exception without an address requests only its own original', async
   const file = table.getByRole('button', { name: example.result.documents[3].name });
   await file.click();
   const dialog = page.getByLabel('Источник документа', { exact: true }).and(page.locator('.source-workspace-panel[open]'));
-  await expect(dialog.getByText('Адрес фрагмента отсутствует.')).toBeVisible();
+  await expect(dialog.getByRole('combobox', { name: 'Документы комплекта' })).toHaveValue('unreadable');
+  await expect(dialog.getByRole('combobox', { name: 'Адрес доказательства' })).toHaveCount(0);
   await expect(dialog.getByRole('alert')).toBeVisible();
   expect([...new Set(originals)]).toEqual([`/api/v0/runs/${id}/documents/unreadable`]);
   await page.keyboard.press('Escape');
@@ -154,12 +154,14 @@ test('diagnostics return keyboard focus and the documents route restores selecte
   const documents = source.getByLabel('Документы комплекта');
   await expect(documents).toHaveValue('report');
   await expect(page.getByRole('button', { name: 'Закрыть просмотр источника' })).toBeFocused();
-  await documents.selectOption('ledger');
-  await source.getByLabel('Адрес доказательства').selectOption('amount-2');
-  await expect(page).toHaveURL(/document=ledger&evidence=amount-2/);
+  await expect(source.getByText('Страница 1', { exact: true })).toBeVisible();
   await page.reload();
+  await expect(documents).toHaveValue('report');
+  await expect(source.getByText('Страница 1', { exact: true })).toBeVisible();
+  await documents.selectOption('ledger');
   await expect(documents).toHaveValue('ledger');
-  await expect(source.getByLabel('Адрес доказательства')).toHaveValue('amount-2');
+  await expect(page).toHaveURL(/document=ledger$/);
+  await expect(source.getByRole('combobox')).toHaveCount(1);
   await page.keyboard.press('Escape');
   await expect(page).toHaveURL(/\/documents$/);
 });
@@ -182,13 +184,11 @@ test('a selected report row survives a reload and keeps its page', async ({ page
   await page.route(`**/api/v0/runs/${id}/documents/${report.id}/page-preview?*`, (route) =>
     route.fulfill({ status: 404, json: { code: 'page_not_found' } }));
 
-  await page.goto(`/checks/${id}/documents#exceptions`);
-  await page.getByRole('button', { name: 'Открыть просмотр документов' }).click();
-  const picker = page.getByRole('combobox', { name: 'Адрес доказательства' });
-  await picker.selectOption({ label: 'Строка КФЗ · Страница 2, строка 4' });
-  await expect(page).toHaveURL(/document=report&anchor=report-row#exceptions$/);
+  await page.goto(`/checks/${id}/documents?document=report&anchor=report-row#exceptions`);
+  const address = page.getByText('Строка КФЗ · Страница 2, строка 4', { exact: true });
+  await expect(address).toBeVisible();
   await page.reload();
-  await expect(picker.locator('option:checked')).toHaveText('Строка КФЗ · Страница 2, строка 4');
+  await expect(address).toBeVisible();
   await expect(page.getByRole('link', { name: 'Открыть страницу 2 PDF (в новой вкладке)' })).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(page).toHaveURL(/\/documents#exceptions$/);

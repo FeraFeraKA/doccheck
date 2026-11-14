@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { getPdfPage } from './documentPreviewApi';
 import { ReaderArrow } from './ReaderArrow';
+import { SourcePreviewSkeleton } from './SourcePreviewSkeleton';
 
 export function PdfReader({ runId, documentId, startPage, sourceId, fallback, renderPage }: {
   runId: string;
@@ -57,7 +58,7 @@ export function PdfReader({ runId, documentId, startPage, sourceId, fallback, re
         onClick={() => go(startPage)}>{sourceId === null ? 'К началу' : 'К источнику'}</button>
     </div>}
     {!current
-      ? <div className="source-viewer-placeholder"><p role="status">Загрузка страницы PDF…</p></div>
+      ? <SourcePreviewSkeleton />
       : current.url
         ? renderPage(current.url, page)
         : <>

@@ -1,0 +1,20 @@
+.check-skeleton-block {
+  display: block;
+  max-width: 100%;
+  border-radius: 6px;
+  background: var(--ui-soft);
+}
+
+.check-skeleton-title { height: 35px; }
+.check-skeleton-tab { height: 44px; }
+
+.check-loading .check-skeleton-table { overflow: clip; }
+.checks-content .check-loading tbody tr { cursor: auto; }
+.checks-content .check-loading .check-skeleton-table tbody td { height: 64px; }
+.check-loading .reconcile-search .check-skeleton-block { background: var(--ui-line); }
+.check-loading .check-header-controls > .check-skeleton-block { margin-inline-start: auto; }
+
+@media (max-width: 700px) {
+  .check-skeleton-title { height: 30px; }
+  .check-skeleton-tab { height: 37px; }
+}

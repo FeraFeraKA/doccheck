@@ -102,10 +102,9 @@ for (const sameAddress of [true, false]) {
       const button = reportButtons.nth(index);
       await button.focus();
       await button.press(index === 0 ? 'Enter' : 'Space');
-      const picker = page.getByRole('combobox', { name: 'Доказательство' });
-      await expect(picker).toHaveValue(id);
-      await expect(picker.locator('option:checked')).toContainText(`Непроверенное чтение ${index + 1}`);
-      await expect(page.locator('.source-workspace-notice').filter({ hasText: `Непроверенное чтение ${index + 1}` }))
+      const panel = page.getByRole('region', { name: 'Источник документа', exact: true });
+      await expect(panel.getByRole('combobox', { name: 'Доказательство' })).toHaveCount(0);
+      await expect(panel.locator('.source-workspace-notice').filter({ hasText: `Непроверенное чтение ${index + 1}` }))
         .toContainText(index === 0 ? '150,50' : '151,50');
       await expect(button).toHaveAttribute('aria-pressed', 'true');
       await expect.poll(() => requested.includes(id)).toBe(true);
@@ -114,7 +113,8 @@ for (const sameAddress of [true, false]) {
       await expect(button).toHaveAttribute('aria-pressed', 'false');
     }
     await reason.getByRole('button', { name: /synthetic-ledger\.xlsx/ }).press('Enter');
-    await expect(page.getByRole('combobox', { name: 'Доказательство' })).toHaveValue(context.id);
+    await expect(page.getByRole('region', { name: 'Источник документа', exact: true })
+      .getByRole('combobox', { name: 'Документы комплекта' })).toHaveValue(context.document_id);
     await expect.poll(() => requested.includes(context.id)).toBe(true);
   });
 }
@@ -196,10 +196,13 @@ test('distinguishes unverified readings at the same XLSX cell', async ({ page })
       conclusion: 'Одно значение не проверено.' },
   };
   await stubRun(page, id, result);
+  const requested: string[] = [];
   await page.route((url) => url.pathname.startsWith(`/api/v0/runs/${id}/documents/report`), (route) => {
     const url = new URL(route.request().url());
     if (url.pathname.endsWith('/fragments')) {
-      const source = result.evidence.find((item) => item.id === url.searchParams.get('evidence_id'));
+      const evidenceId = url.searchParams.get('evidence_id');
+      const source = result.evidence.find((item) => item.id === evidenceId);
+      if (source && evidenceId) requested.push(evidenceId);
       return source ? route.fulfill({ json: source }) : route.fulfill({ status: 404 });
     }
     if (url.pathname.endsWith('/fragment-preview')) return route.fulfill({ json: { text: null, highlight: null } });
@@ -215,14 +218,20 @@ test('distinguishes unverified readings at the same XLSX cell', async ({ page })
   const detail = table.getByRole('region', { name: 'Подробности: Синтетическая статья A' });
   const sources = detail.getByRole('list', { name: 'Источники значения КФЗ' }).getByRole('button');
   await expect(sources).toHaveCount(2);
-  await sources.first().click();
-  const picker = page.getByRole('combobox', { name: 'Доказательство' });
-  await expect(picker.locator('option[value="report-a"]')).toContainText('Непроверенное чтение 1');
-  await expect(picker.locator('option[value="alternate-xlsx"]')).toContainText('Непроверенное чтение 2');
-  const reading = page.locator('.source-workspace-notice').filter({ hasText: 'Непроверенное чтение' });
-  await expect(reading).toContainText('150,50');
-  await picker.selectOption('alternate-xlsx');
-  await expect(reading).toContainText('151,50');
+  for (const [index, evidenceId] of ['report-a', 'alternate-xlsx'].entries()) {
+    const button = sources.nth(index);
+    const value = index === 0 ? '150,50' : '151,50';
+    await expect(button).toContainText(`Непроверенное чтение ${index + 1}`);
+    await expect(button).toContainText(value);
+    await button.click();
+    const panel = page.getByRole('region', { name: 'Источник документа', exact: true });
+    await expect(panel.getByRole('combobox', { name: 'Доказательство' })).toHaveCount(0);
+    await expect(panel.locator('.source-workspace-notice').filter({ hasText: `Непроверенное чтение ${index + 1}` }))
+      .toContainText(value);
+    await expect.poll(() => requested.includes(evidenceId)).toBe(true);
+    await panel.getByRole('button', { name: 'Закрыть просмотр источника' }).click();
+    await expect(button).toBeFocused();
+  }
   await expect(table.getByTitle('Открыть значение в КФЗ')).toHaveCount(0);
 });
 

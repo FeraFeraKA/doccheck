@@ -17,6 +17,7 @@ import { useCheckData } from './useCheckData';
 import { runQueuePath, runTitle } from './runTitle';
 import { isRunId } from './runStatusApi';
 import { RunArchiveAction } from './RunArchiveAction';
+import { CheckResultSkeleton } from './CheckLoadingSkeletons';
 import './result-workspace.css';
 import './result-focus.css';
 
@@ -42,34 +43,53 @@ export function CheckDetail({ view, loadRun = loadCheckRun }: {
   ) => Promise<RunDetails | null>;
 }) {
   const { id = '' } = useParams();
-  const { state, retry } = useCheckData(id, loadRun);
-
-  return (
-    <>
-      {(state.phase !== 'ready' || !state.data) && (
-        <nav className="result-breadcrumb" aria-label="Путь к проверке">
-          <Link to="/checks">← Все проверки</Link>
-        </nav>
-      )}
-      {state.phase === 'loading' && <p role="status">Загрузка проверки…</p>}
-      {state.phase === 'failed' && <section className="checks-card">
-        <p role="alert">Не удалось получить состояние проверки.</p>
-        <button type="button" onClick={retry}>Повторить</button>
-      </section>}
-      {state.phase === 'ready' && (state.data
-        ? <RunContent key={id} id={id} view={view} run={state.data} />
-        : <CheckNotFound />)}
-    </>
-  );
+  return <CheckDetailContent key={id} id={id} view={view} loadRun={loadRun} />;
 }
 
-function RunContent({ id, view, run }: { id: string; view: CheckView; run: RunDetails }) {
-  const { result, status } = run;
-  const hasStoredResult = status === 'completed' || status === 'completed_with_issues';
-  if (status === 'queued' || status === 'processing') return <Navigate to={runQueuePath(id)} replace />;
-  if (result) return <ResultContent id={id} view={view} result={result} run={run} synthetic stored={false} />;
-  if (hasStoredResult) return <StoredFindings id={id} view={view} run={run} />;
-  return <PendingRun run={run} />;
+function CheckDetailContent({ id, view, loadRun }: {
+  id: string;
+  view: CheckView;
+  loadRun: typeof loadCheckRun;
+}) {
+  const { state, retry } = useCheckData(id, loadRun);
+  const run = state.phase === 'ready' ? state.data : null;
+  const processing = run?.status === 'queued' || run?.status === 'processing';
+  const hasStoredResult = run != null && run.result === null
+    && (run.status === 'completed' || run.status === 'completed_with_issues');
+  const { state: findings, retry: retryFindings } = useCheckData(hasStoredResult ? id : undefined, loadStoredFindings);
+
+  if (state.phase === 'loading' || processing || (hasStoredResult && findings.phase === 'loading')) {
+    return <>
+      <CheckResultSkeleton view={view} />
+      {processing && <Navigate to={runQueuePath(id)} replace />}
+    </>;
+  }
+
+  if (!run) return <>
+    <nav className="result-breadcrumb" aria-label="Путь к проверке">
+      <Link to="/checks">← Все проверки</Link>
+    </nav>
+    {state.phase === 'failed' ? <section className="checks-card">
+      <p role="alert">Не удалось получить состояние проверки.</p>
+      <button type="button" onClick={retry}>Повторить</button>
+    </section> : <CheckNotFound />}
+  </>;
+
+  if (run.result) {
+    return <ResultContent id={id} view={view} result={run.result} run={run} synthetic stored={false} />;
+  }
+  if (!hasStoredResult) return <PendingRun run={run} />;
+  if (findings.phase === 'ready' && findings.data) {
+    const { result, synthetic } = findings.data;
+    return <ResultContent id={id} view={view} result={result} run={run} synthetic={synthetic} stored />;
+  }
+
+  return <><PendingRun run={run} /><section className="checks-card">
+    {findings.phase === 'failed'
+      ? <p role="alert">Не удалось загрузить результат сверки.</p>
+      : <p role="status">Результат проверки недоступен.</p>}
+    <button type="button" onClick={retryFindings}>Повторить загрузку результата</button>
+  </section></>;
 }
 
 function RunState({ run }: { run: RunDetails }) {
@@ -98,24 +118,6 @@ async function loadStoredFindings(id: string, signal: AbortSignal) {
     if (error instanceof FindingsHttpError && error.status === 409) return null;
     throw error;
   }
-}
-
-function StoredFindings({ id, view, run }: { id: string; view: CheckView; run: RunDetails }) {
-  const { state, retry } = useCheckData(id, loadStoredFindings);
-
-  if (state.phase === 'loading') return <><PendingRun run={run} /><p role="status">Загрузка результата сверки…</p></>;
-  if (state.phase === 'failed') return <><PendingRun run={run} /><section className="checks-card">
-    <p role="alert">Не удалось загрузить результат сверки.</p>
-    <button type="button" onClick={retry}>Повторить загрузку результата</button>
-  </section></>;
-
-  if (state.data === null) return <><PendingRun run={run} /><section className="checks-card">
-    <p role="status">Результат проверки недоступен.</p>
-    <button type="button" onClick={retry}>Повторить загрузку результата</button>
-  </section></>;
-
-  const { result, synthetic } = state.data;
-  return <ResultContent id={id} view={view} result={result} run={run} synthetic={synthetic} stored />;
 }
 
 interface ResultContentProps {
@@ -277,8 +279,7 @@ function Reconciliation({ result, storedRunId, runPath, rowJump, onOpenRow }: {
   function openSource(id: string, trigger: HTMLElement, selectedRowId = selectedId) {
     closeFocus(false);
     const selected = rows.find((item) => item.id === selectedRowId) ?? row;
-    const linkedIssue = summary.primary_issues.find((item) => item.id === selected?.root_issue_id);
-    sourceWorkspace.openEvidence(id, trigger, selected, [...new Set(resultRowEvidenceIds(selected, linkedIssue))]);
+    sourceWorkspace.openEvidence(id, trigger, selected);
   }
 
   useLayoutEffect(() => {

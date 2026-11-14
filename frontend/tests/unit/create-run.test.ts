@@ -2,6 +2,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import {
   InvalidRunUploadResponse,
+  prepareRunTransfer,
   prepareRunUpload,
   RunUploadHttpError,
 } from '../../src/pages/checks/createRun';
@@ -39,6 +40,39 @@ function stubFetch() {
 }
 
 afterEach(() => vi.unstubAllGlobals());
+
+it('обновляет процент по отправленным байтам и ждёт ответ после завершения передачи', async () => {
+  const request = Object.assign(new EventTarget(), {
+    upload: new EventTarget(),
+    open: vi.fn(),
+    setRequestHeader: vi.fn(),
+    getResponseHeader: () => null,
+    send: vi.fn(),
+    responseURL: postUrl + '/uploads',
+    status: 201,
+    response: { upload_id: 'saved-upload' },
+  });
+  vi.stubGlobal('location', new URL(origin + '/checks/new'));
+  vi.stubGlobal('XMLHttpRequest', class {
+    constructor() { return request; }
+  });
+  const progress = vi.fn();
+  const confirmed = vi.fn();
+  const transfer = prepareRunTransfer(upload(), key)(undefined, progress).then(confirmed);
+
+  request.upload.dispatchEvent(Object.assign(new Event('progress'), { lengthComputable: false, loaded: 100, total: 0 }));
+  expect(progress).not.toHaveBeenCalled();
+  request.upload.dispatchEvent(Object.assign(new Event('progress'), { lengthComputable: true, loaded: 57, total: 101 }));
+  expect(progress).toHaveBeenCalledExactlyOnceWith(56);
+  request.upload.dispatchEvent(new Event('load'));
+  expect(progress.mock.calls).toEqual([[56], [100]]);
+  await Promise.resolve();
+  expect(confirmed).not.toHaveBeenCalled();
+
+  request.dispatchEvent(new Event('load'));
+  await transfer;
+  expect(confirmed).toHaveBeenCalledExactlyOnceWith({ upload_id: 'saved-upload' });
+});
 
 it('отправляет multipart с файлами в заданном порядке и читает подтверждение 202', async () => {
   const fetchMock = stubFetch().mockResolvedValueOnce(accepted());

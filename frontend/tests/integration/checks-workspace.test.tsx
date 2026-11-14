@@ -176,9 +176,10 @@ it('показывает абзац и ячейку таблицы DOCX в сп�
           ...first,
           reasons: [...first.reasons, {
             code: 'synthetic_docx',
-            message: 'Адреса в синтетическом DOCX',
-            evidence_refs: ['docx-paragraph', 'docx-cell'],
+            message: 'Основание из синтетического DOCX',
+            evidence_refs: ['docx-paragraph'],
           }],
+          completeness: { ...first.completeness, evidence_refs: [...first.completeness.evidence_refs, 'docx-cell'] },
         }, ...otherRows],
         evidence: [...demo.result.evidence, {
           id: 'docx-paragraph',
@@ -199,15 +200,17 @@ it('показывает абзац и ячейку таблицы DOCX в сп�
     <Routes><Route path="/checks/:id" element={<CheckDetail view="table" loadRun={loadRun} />} /></Routes>
   </MemoryRouter>);
 
-  fireEvent.click(await screen.findByRole('button', { name: /^150,50\s*₽$/ }));
-  const select = await screen.findByRole('combobox', { name: 'Доказательство' });
-  for (const [id, location] of [
-    ['docx-paragraph', 'Абзац 3'],
-    ['docx-cell', 'Таблица 1, строка 2, ячейка 4'],
-  ]) {
-    expect(within(select).getByRole('option', { name: 'synthetic.docx · ' + location })).toBeVisible();
-    fireEvent.change(select, { target: { value: id } });
-    expect(select).toHaveValue(id);
+  fireEvent.click(await screen.findByRole('button', { name: 'Синтетическая статья A' }));
+  const sources = [
+    { label: 'Источники причины: Основание из синтетического DOCX', location: 'Абзац 3' },
+    { label: 'Источники основания полноты', location: 'Таблица 1, строка 2, ячейка 4' },
+  ];
+  for (const { label, location } of sources) {
+    const links = screen.getByRole('list', { name: label });
+    fireEvent.click(within(links).getByRole('button', { name: (name) => name.includes('synthetic.docx · ' + location) }));
+    const panel = screen.getByRole('region', { name: 'Источник документа' });
+    expect(within(panel).getByLabelText('Документы комплекта')).toHaveValue('synthetic-docx');
+    expect(within(panel).getByText(location, { exact: true })).toBeVisible();
   }
 });
 
@@ -262,10 +265,9 @@ it('показывает доказательства слагаемых при 
   expect(within(first).queryByRole('button', { name: /^Сумма · .*C7$/ })).not.toBeInTheDocument();
   expect(within(second).getByRole('button', { name: /^Договор · .*A2$/ })).toBeVisible();
   fireEvent.click(secondAmount);
-  const select = await screen.findByRole('combobox', { name: 'Доказательство' });
-  expect(within(select).getByRole('option', { name: /Лист «Синтетика», C6/ })).toBeVisible();
-  expect(within(select).getByRole('option', { name: /Лист «Синтетика», C7/ })).toBeVisible();
-  expect(select).toHaveValue('amount-2');
+  const panel = screen.getByRole('region', { name: 'Источник документа' });
+  expect(within(panel).getByText('Лист «Синтетика», C7', { exact: true })).toBeVisible();
+  expect(within(panel).getAllByRole('combobox')).toHaveLength(1);
   expect(firstAmount).toHaveAttribute('aria-pressed', 'false');
   expect(secondAmount).toHaveAttribute('aria-pressed', 'true');
 });
