@@ -2,6 +2,60 @@ import { expect, test } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import example from '../../../contracts/check-result.v1.synthetic.json' with { type: 'json' };
 
+const visibleFragmentCases = [
+  { width: 1440, imageHeight: 800, bbox: [.2, .72, .5, .8] },
+  { width: 1920, imageHeight: 920, bbox: [.2, .44, .5, .48] },
+];
+for (const { width, imageHeight, bbox } of visibleFragmentCases) {
+  test(`fullscreen keeps the visible 800×${imageHeight} PNG fragment in view`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 1100 });
+    await page.goto('/checks/synthetic-example');
+    const png = await page.evaluate((height) => {
+      const image = document.createElement('canvas');
+      image.width = 800;
+      image.height = height;
+      return image.toDataURL('image/png').split(',')[1];
+    }, imageHeight);
+    const id = 'square-preview';
+    const path = `**/api/v0/runs/${id}`;
+    const evidence = { ...example.result.evidence[0], locator: { kind: 'page', page: 1, bbox } };
+    await page.route(path, (route) => route.fulfill({ json: {
+      run_id: id, status: 'completed_with_issues', created_at: '2026-11-14T00:00:00Z', error: null,
+      progress: { processed_documents: 4, total_documents: 4 },
+    } }));
+    await page.route(`${path}/findings`, (route) => route.fulfill({ json: {
+      ...example.result, run_id: id,
+      documents: example.result.documents.map((item) => item.id === 'report'
+        ? { ...item, format: 'png', name: 'synthetic-report.png' } : item),
+      evidence: example.result.evidence.map((item) => item.id === evidence.id ? evidence : item),
+    } }));
+    await page.route(`${path}/documents/report/fragments?evidence_id=${evidence.id}`, (route) =>
+      route.fulfill({ json: evidence }));
+    await page.route(`${path}/documents/report`, (route) =>
+      route.fulfill({ body: Buffer.from(png, 'base64'), contentType: 'application/octet-stream' }));
+
+    await page.goto('/checks/' + id);
+    await page.getByRole('button', { name: 'Просмотреть источник' }).click();
+    const viewport = page.getByRole('region', { name: 'Просмотр документа: synthetic-report.png' });
+    const box = viewport.locator('.source-viewer-highlight');
+    await expect(box).toBeInViewport({ ratio: 1 });
+    const scroll = () => viewport.evaluate((element) => ({
+      top: element.scrollTop, max: element.scrollHeight - element.clientHeight,
+    }));
+    const before = await scroll();
+    expect(before.top).toBe(0);
+    if (imageHeight === 800) expect(before.max).toBe(0);
+    else expect(before.max).toBeGreaterThan(0);
+    await page.getByRole('button', { name: 'Развернуть источник на весь экран' }).click();
+    await expect(box).toBeInViewport({ ratio: 1 });
+    expect((await scroll()).max).toBeGreaterThan(0);
+    expect((await scroll()).top).toBeGreaterThan(0);
+    await page.getByRole('button', { name: 'Свернуть источник в боковую панель' }).click();
+    await expect(box).toBeInViewport({ ratio: 1 });
+    expect((await scroll()).max).toBe(before.max);
+  });
+}
+
 for (const [width, height] of [[1440, 1100], [768, 844], [390, 600]]) {
   test(`the compact PNG drawer uses its available space and locates evidence at ${width}×${height}`, async ({ page }) => {
     await page.setViewportSize({ width, height });
@@ -71,6 +125,15 @@ for (const [width, height] of [[1440, 1100], [768, 844], [390, 600]]) {
     const expand = drawer.getByRole('button', { name: 'Развернуть источник на весь экран' });
     const collapse = drawer.getByRole('button', { name: 'Свернуть источник в боковую панель' });
     const highlight = drawer.getByRole('button', { name: 'Подсветка' });
+    if (width === 1440) {
+      await viewport.evaluate((element) => { element.scrollTop = 0; });
+      await expect(box).not.toBeInViewport();
+      await expand.press('Enter');
+      expect(await scrollRatio()).toBe(0);
+      await expect(box).not.toBeInViewport();
+      await collapse.click();
+      await drawer.getByRole('button', { name: 'К фрагменту' }).click();
+    }
     await highlight.click();
     await expand.press('Enter');
     await expect(collapse).toHaveAttribute('aria-pressed', 'true');

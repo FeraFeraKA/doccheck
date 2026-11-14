@@ -2,10 +2,21 @@ import { useLayoutEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import './source-drawer.css';
 
+function visibleFragment(viewport: HTMLElement) {
+  const fragment = viewport.querySelector('.source-viewer-highlight');
+  if (!fragment) return null;
+  const mark = fragment.getBoundingClientRect();
+  const { top, left } = viewport.getBoundingClientRect();
+  return mark.width > 0 && mark.height > 0
+    && mark.left >= left - 1 && mark.right <= left + viewport.clientWidth + 1
+    && mark.top >= top - 1 && mark.bottom <= top + viewport.clientHeight + 1
+    ? fragment : null;
+}
+
 export function SourceDrawer({ children, onClose }: { children: ReactNode; onClose: () => void }) {
   const drawer = useRef<HTMLDialogElement>(null);
   const [fullscreen, setFullscreen] = useState(false);
-  const pendingScroll = useRef<{ viewport: HTMLElement; x: number; y: number } | null>(null);
+  const pendingScroll = useRef<{ viewport: HTMLElement; x: number; y: number; fragment: Element | null } | null>(null);
   const fullscreenLabel = fullscreen
     ? 'Свернуть источник в боковую панель'
     : 'Развернуть источник на весь экран';
@@ -27,10 +38,13 @@ export function SourceDrawer({ children, onClose }: { children: ReactNode; onClo
   function toggleFullscreen() {
     const viewport = drawer.current?.querySelector<HTMLElement>('.source-viewer-viewport');
     if (viewport) {
+      const maxX = viewport.scrollWidth - viewport.clientWidth;
+      const maxY = viewport.scrollHeight - viewport.clientHeight;
       pendingScroll.current = {
         viewport,
-        x: viewport.scrollLeft / Math.max(1, viewport.scrollWidth - viewport.clientWidth),
-        y: viewport.scrollTop / Math.max(1, viewport.scrollHeight - viewport.clientHeight),
+        x: viewport.scrollLeft / Math.max(1, maxX),
+        y: viewport.scrollTop / Math.max(1, maxY),
+        fragment: visibleFragment(viewport),
       };
     }
     setFullscreen((value) => !value);
@@ -40,9 +54,19 @@ export function SourceDrawer({ children, onClose }: { children: ReactNode; onClo
     const position = pendingScroll.current;
     pendingScroll.current = null;
     if (!position?.viewport.isConnected) return;
-    const { viewport, x, y } = position;
+    const { viewport, x, y, fragment } = position;
     viewport.scrollLeft = x * (viewport.scrollWidth - viewport.clientWidth);
     viewport.scrollTop = y * (viewport.scrollHeight - viewport.clientHeight);
+    // Preserve a visible selection without overriding a deliberate scroll away.
+    if (!fragment?.isConnected || visibleFragment(viewport)) return;
+    const bounds = viewport.getBoundingClientRect();
+    const mark = fragment.getBoundingClientRect();
+    if (mark.left < bounds.left - 1 || mark.right > bounds.left + viewport.clientWidth + 1) {
+      viewport.scrollLeft += mark.left + (mark.width - viewport.clientWidth) / 2 - bounds.left;
+    }
+    if (mark.top < bounds.top - 1 || mark.bottom > bounds.top + viewport.clientHeight + 1) {
+      viewport.scrollTop += mark.top + (mark.height - viewport.clientHeight) / 2 - bounds.top;
+    }
   }, [fullscreen]);
 
   return <dialog ref={drawer} className="source-drawer" aria-labelledby="source-drawer-title" data-fullscreen={fullscreen}
