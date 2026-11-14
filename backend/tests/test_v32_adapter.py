@@ -890,3 +890,45 @@ def test_primary_month_boundary_never_admits_unallocated_total(
     else:
         assert row.observed_evidence_sum == "1172.70"
         assert primary.decision.state == "include"
+
+
+@pytest.mark.parametrize(("issue", "expected"), [("ocr_no_text", True), ("ocr_read_error", False)])
+def test_primary_raster_pdf_keeps_only_usable_ocr_evidence(
+    uploaded_files, tmp_path, monkeypatch, issue, expected
+):
+    from dataclasses import replace
+
+    from test_local_ocr import _box
+    from test_native_pdf import _write_pdf
+
+    from doccheck_backend.native_observations import NativeDocument, NativeIssue
+
+    _stub_ollama(monkeypatch, "1172.70")
+    from bench.e2e_v32_20261114 import run as v32
+
+    _write_pdf(tmp_path / uploaded_files[1]["id"], [b"", b"0 0 10 10 re f"])
+    _replace_primary(uploaded_files, tmp_path, "pdf")
+    request = v32.runtime.api
+    monkeypatch.setattr(v32.runtime, "native_text", lambda _: None)
+
+    def predict_scan(path, body=None, timeout=600):
+        if path == "/api/chat":
+            body["messages"][0]["content"] += "E2E-31"
+        return request(path, body, timeout)
+
+    monkeypatch.setattr(v32.runtime, "api", predict_scan)
+    found = _box("Договор № E2E-31.", 0.06, 0.09, 0.36)
+    found = replace(found, locator=found.locator.model_copy(update={"page": 2}))
+    monkeypatch.setattr(
+        "doccheck_backend.v32_adapter.read_scan",
+        lambda *_: NativeDocument((found,), (NativeIssue(issue, page=1),)),
+    )
+    job = process(StoredRun(uuid4(), None, uploaded_files), tmp_path)
+    refs = job.result.documents[1].decision.evidence_refs
+    evidence = [item for item in job.result.evidence if item.id in refs]
+
+    assert job.result.documents[1].decision.state == "needs_review"
+    assert len(evidence) == int(expected)
+    if expected:
+        assert evidence[0].locator.page == 2
+        assert evidence[0].normalized_value == "E2E-31"

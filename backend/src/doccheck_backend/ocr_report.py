@@ -124,7 +124,8 @@ def _value_source(source: Observation, start: int, end: int, family: str) -> Obs
 
 
 def _contract_value_source(match: re.Match[str], source: Observation) -> Observation | None:
-    return _value_source(source, *match.span(1), "contract-number")
+    start, end = match.span(1)
+    return _value_source(source, start, end - int(match[1].endswith(".")), "contract-number")
 
 
 def _has_intervening_text(
@@ -275,6 +276,11 @@ def _bare_date_fragments(observations: tuple[Observation, ...], location: Observ
                     yield value
 
 
+def _contract_token(text: str) -> str:
+    # A full stop can occur inside an identifier. Only trim final punctuation.
+    return text.strip().removesuffix(".")
+
+
 def select_scan_contract(
     positioned: tuple[Observation, ...],
     visible: tuple[Observation, ...] | None = None,
@@ -295,14 +301,16 @@ def select_scan_contract(
         )
     contracts: dict[str, list[tuple[Observation, Observation | None]]] = {}
     for reading, source in _row_readings(visible, _CONTRACT, "contract", context=positioned):
-        contracts.setdefault(reading[1], []).append(
+        contracts.setdefault(_contract_token(reading[1]), []).append(
             (source, _contract_value_source(reading, source))
         )
     if len(contracts) != 1:
         return None
     contract, sources = next(iter(contracts.items()))
     for reading, location in _row_readings(positioned, _CONTRACT, "contract"):
-        if reading[1] != contract and any(_same_region(source, location) for source, _ in sources):
+        if _contract_token(reading[1]) != contract and any(
+            _same_region(source, location) for source, _ in sources
+        ):
             return None
     locations = _preferred_value_locations(sources)
     if require_one_location and any(
@@ -310,7 +318,7 @@ def select_scan_contract(
     ):
         return None
     for item in positioned:
-        value = item.raw_text.strip()
+        value = _contract_token(item.raw_text)
         if value == contract or not _CONTRACT_TOKEN.fullmatch(value):
             continue
         if any(_same_region(location, item) for location in locations):

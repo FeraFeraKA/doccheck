@@ -422,3 +422,13 @@ def test_split_bare_cutoff_contradiction_requires_contiguous_date(scanned_stage)
 
     assert parse_scan_report((*case, day, month, year)) is None
     assert parse_scan_report((*case, day, intervening, month, year)) is not None
+
+
+def test_scanned_contract_drops_sentence_dot_without_changing_internal_dots(scanned_stage):
+    contract = _box("Договор № E2E.31.", 0.06, 0.09, 0.36)
+    other = _box("E2E.31", 0.27, 0.09, 0.34, confidence=0.72)
+
+    scope = parse_scan_report((contract, *scanned_stage[1:], other))
+    assert scope is not None
+    assert scope.contract == "E2E.31"
+    assert scope.contract_source.raw_text.endswith(".")
