@@ -9,12 +9,23 @@ from hashlib import file_digest, sha256
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
+
+from doccheck_backend.contracts import CheckResult
+from doccheck_backend.run_xlsx import export_check_result
 
 _LOCAL_ORIGIN = "http://127.0.0.1:18743"
 _JOB = re.compile(r"[0-9a-f-]{36}")
 _TERMINAL = {"completed", "completed_with_issues", "failed"}
 _MAX_RELAY_PAYLOAD = 3_500_000
+
+
+class _NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_opener = build_opener(_NoRedirect())
 
 
 def request(
@@ -26,7 +37,7 @@ def request(
     if payload is not None:
         headers["Content-Type"] = "application/json"
     req = Request(origin + route, data=payload, headers=headers, method=method)
-    with urlopen(req, timeout=25) as response:
+    with _opener.open(req, timeout=25) as response:
         content = response.read()
         return content if binary else json.loads(content)
 
@@ -49,7 +60,7 @@ def manifest_hashes(state: Path) -> set[str]:
     return hashes
 
 
-def wait_for_local(job: str) -> str:
+def start_local(job: str) -> str:
     # The bridge retries transport without running the same public job again.
     # It does not use the private pilot or the general-purpose upload endpoint.
     submitted = request(_LOCAL_ORIGIN, "/api/v0/trial", method="POST", payload=b"")
@@ -85,9 +96,7 @@ def build_result(local_id: str, hosted_id: str, hashes: set[str]) -> dict | None
         if sha256(source).hexdigest() != doc["sha256"]:
             raise ValueError("A returned synthetic source changed")
         originals[doc["id"]] = base64.b64encode(source).decode("ascii")
-    export = request(_LOCAL_ORIGIN, endpoint + "/exports/xlsx", binary=True)
-    if not export.startswith(b"PK"):
-        raise ValueError("Invalid workbook")
+    export = export_check_result(CheckResult.model_validate(findings))
     return {
         "status": status,
         "findings": findings,
@@ -116,7 +125,7 @@ def loop(origin: str, token: str, hashes: set[str]) -> None:
                         method="POST",
                         payload=b"",
                     )
-                    local_id = wait_for_local(hosted_id)
+                    local_id = start_local(hosted_id)
                 result = build_result(local_id, hosted_id, hashes)
                 if result is None and time.monotonic() - queued_at > 180:
                     result = {"status": "failed"}
@@ -157,6 +166,9 @@ def main() -> None:
         url.scheme != "https"
         or not (url.hostname or "").endswith(".chatgpt.site")
         or url.path
+        or url.query
+        or url.fragment
+        or url.username is not None
     ):
         parser.error("Use the exact deployed HTTPS Sites origin")
     token = (args.state / "relay-token").read_text(encoding="utf-8").strip()
