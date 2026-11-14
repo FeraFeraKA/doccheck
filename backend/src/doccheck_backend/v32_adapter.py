@@ -213,8 +213,10 @@ def _pdf_report_headers(observations: tuple[Observation, ...]) -> list[str]:
     return [
         item.raw_text
         for item in observations
-        if isinstance(item.locator, PageLocator) and item.locator.page == 1
-        and item.locator.bbox is not None and item.locator.bbox[1] < 0.35
+        if isinstance(item.locator, PageLocator)
+        and item.locator.page == 1
+        and item.locator.bbox is not None
+        and item.locator.bbox[1] < 0.35
     ]
 
 

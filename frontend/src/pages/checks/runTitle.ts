@@ -1,4 +1,4 @@
-export function runTitle(_id: string, reportNumber?: string, reportName?: string) {
+export function runTitle(reportNumber?: string, reportName?: string) {
   const number = reportNumber?.trim();
   if (number) return `КФЗ №${number}`;
   const name = reportName?.trim();

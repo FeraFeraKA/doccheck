@@ -44,7 +44,7 @@ export async function loadFollowedRun(
   function toEntry(run: RunState): HistoryEntry {
     return {
       id: run.run_id,
-      title: runTitle(run.run_id, run.report_number, run.report_name),
+      title: runTitle(run.report_number, run.report_name),
       status: run.status,
       reportName: run.report_name,
       reportNumber: run.report_number,
@@ -95,7 +95,7 @@ export async function loadRunHistory(
   return {
     entries: page.items.map((run) => ({
       id: run.run_id,
-      title: runTitle(run.run_id, run.report_number, run.report_name),
+      title: runTitle(run.report_number, run.report_name),
       status: run.status,
       createdAt: run.created_at,
       counts: run.counts,
@@ -127,7 +127,7 @@ export async function loadDemoRun(id: string): Promise<RunDetails | null> {
 
 function toRunDetails(run: RunState): RunDetails {
   return {
-    title: runTitle(run.run_id, run.report_number, run.report_name),
+    title: runTitle(run.report_number, run.report_name),
     status: run.status,
     progress: run.progress === null ? undefined : {
       processed: run.progress.processed_documents,

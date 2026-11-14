@@ -629,6 +629,9 @@ def read_report_row(
                 )
             )
     return ReportReading(
-        cells, {*_GROUP_HEADER, "total"} <= groups.keys(), tuple(details), stage,
+        cells,
+        {*_GROUP_HEADER, "total"} <= groups.keys(),
+        tuple(details),
+        stage,
         number=_scan_report_number(image, lines),
     )

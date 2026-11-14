@@ -147,6 +147,7 @@ function ResultContent({ id, view, result, run, synthetic, stored }: ResultConte
   const exportRunId = stored && isRunId(id) ? id : undefined;
   const testData = synthetic ? 'Тестовые данные' : undefined;
   const report = result.documents.find(({ role }) => role === 'report');
+  const title = result.reportNumber || (stored && report) ? runTitle(result.reportNumber, report?.name) : run.title;
   const localRunId = import.meta.env.VITE_DOCCHECK_PUBLIC_DEMO === '1' ? undefined : exportRunId;
   const conclusionActions = localRunId
     ? <RunArchiveAction runId={localRunId} initialArchivedAt={archivedAt} onChange={setArchivedAt} />
@@ -154,7 +155,7 @@ function ResultContent({ id, view, result, run, synthetic, stored }: ResultConte
 
   function renderHeader(documentFilters?: ReactNode) {
     return <>
-      <ResultHeader title={result.reportNumber || (stored && report) ? runTitle(id, result.reportNumber, report?.name) : run.title}
+      <ResultHeader title={title}
         runPath={runPath} view={view} scope={scope} testData={testData}
         documentFilters={documentFilters}
         editPackPath={localRunId && '/checks/new?from=' + encodeURIComponent(localRunId)} />

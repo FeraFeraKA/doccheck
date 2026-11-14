@@ -50,7 +50,7 @@ export function RunQueue({ entries = [], receipts, loading, error, onRetry }: Ru
   const items: RunQueueItemProps[] = [
     ...pendingReceipts.filter(({ id }) => id !== followedId).map((receipt): RunQueueItemProps => ({
       ...receipt,
-      title: runTitle(receipt.id, undefined, receipt.reportName),
+      title: runTitle(undefined, receipt.reportName),
       label: 'В очереди',
       tone: 'neutral',
       progress: null,
@@ -91,7 +91,7 @@ function FollowedRun({ id, listed }: { id: string; listed?: HistoryEntry }) {
   if (!state.data) return <li className="queue-message">Проверка не найдена.</li>;
   const entry = {
     ...listed, ...state.data,
-    title: runTitle(id, state.data.reportNumber ?? listed?.reportNumber, state.data.reportName ?? listed?.reportName),
+    title: runTitle(state.data.reportNumber ?? listed?.reportNumber, state.data.reportName ?? listed?.reportName),
     documentCount: state.data.documentCount ?? listed?.documentCount,
     synthetic: state.data.synthetic ?? listed?.synthetic,
   };
