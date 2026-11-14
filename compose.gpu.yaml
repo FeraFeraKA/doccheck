@@ -1,0 +1,69 @@
+services:
+  worker:
+    profiles: [synthetic]
+
+  model-prepare:
+    image: doccheck-document-worker:v32-cuda
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: document-runtime
+    user: "0:0"
+    environment:
+      HF_HUB_OFFLINE: "0"
+      HF_HUB_DISABLE_TELEMETRY: "1"
+      HF_HOME: /tmp/huggingface
+    command: ["python", "/app/prepare-v32-model.py"]
+    volumes:
+      - qwen-base:/models/qwen
+    networks: [model-download]
+
+  document-worker:
+    profiles: !reset []
+    image: doccheck-document-worker:v32-cuda
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: document-runtime
+    environment:
+      DOCCHECK_QWEN_MODEL_DIR: /models/qwen
+      DOCCHECK_QWEN_ADAPTER_PATH: /models/lora/${DOCCHECK_LORA_FILENAME:-adapters.safetensors}
+    command: ["python", "-m", "doccheck_backend.run_worker", "--v32", "--require-cuda"]
+    gpus:
+      - driver: nvidia
+        count: 1
+    volumes:
+      - qwen-base:/models/qwen:ro
+      - type: bind
+        source: "${DOCCHECK_LORA_DIR:-./data/models/lora}"
+        target: /models/lora
+        read_only: true
+        bind:
+          create_host_path: false
+    depends_on:
+      model-prepare:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "test", "-f", "/dev/shm/doccheck-v32-ready"]
+      interval: 3s
+      timeout: 3s
+      start_period: 180s
+      retries: 20
+
+  api:
+    depends_on:
+      document-worker:
+        condition: service_healthy
+
+  frontend:
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/health"]
+      interval: 2s
+      timeout: 4s
+      retries: 20
+
+networks:
+  model-download:
+
+volumes:
+  qwen-base:

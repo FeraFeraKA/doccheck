@@ -48,9 +48,18 @@ _SCAN_SCOPE_REQUIRED = Issue(
     code="scan_scope_required",
     message="Не удалось однозначно выбрать строку КФЗ по скану и первичным документам.",
 )
+_MODEL_UNAVAILABLE = Issue(
+    code="v32_model_unavailable",
+    message="Локальная Qwen с LoRA недоступна. Проверьте журнал обработчика.",
+)
 _PUBLIC_RUN_FAILURES = {
     error.code: error
-    for error in (_PDF_SCAN_UNREADABLE, _PDF_SCAN_SCOPE_UNCONFIRMED, _SCAN_SCOPE_REQUIRED)
+    for error in (
+        _PDF_SCAN_UNREADABLE,
+        _PDF_SCAN_SCOPE_UNCONFIRMED,
+        _SCAN_SCOPE_REQUIRED,
+        _MODEL_UNAVAILABLE,
+    )
 }
 
 
@@ -82,6 +91,7 @@ def run_document_worker(
     *,
     once: bool = False,
     poll_seconds: float = 0.5,
+    on_ready: Callable[[], object] | None = None,
 ) -> bool:
     """Run the sequential queue with a supplied adapter. Return False if it is already owned."""
     with engine.connect() as connection:
@@ -111,6 +121,8 @@ def run_document_worker(
                 )
             )
 
+        if on_ready is not None:
+            on_ready()
         while True:
             run = _claim(connection)
             if run is not None:
@@ -235,8 +247,14 @@ def main() -> int:
     processors = parser.add_mutually_exclusive_group(required=True)
     processors.add_argument("--processor", help="Trusted local adapter as module:callable")
     processors.add_argument("--v32", action="store_true", help="Local DocCheck v3.2 with Qwen LoRA")
+    parser.add_argument("--require-cuda", action="store_true", help="Load v3.2 on CUDA at startup")
     parser.add_argument("--once", action="store_true", help="Process at most one run and exit")
     args = parser.parse_args()
+    if args.require_cuda and not args.v32:
+        parser.error("--require-cuda requires --v32")
+    readiness = Path("/dev/shm/doccheck-v32-ready") if args.require_cuda else None
+    if readiness is not None:
+        readiness.unlink(missing_ok=True)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     if args.processor is not None:
         module, separator, name = args.processor.partition(":")
@@ -258,10 +276,15 @@ def main() -> int:
         if args.v32:
             from doccheck_backend.v32_processor import create_processor
 
-            process = create_processor()
+            process = create_processor(require_cuda=args.require_cuda)
         else:
             process = getattr(import_module(module), name)
     except Exception as exc:
+        if args.require_cuda:
+            logger.error(
+                "v3.2 startup failed. Check NVIDIA CUDA, the Qwen model directory, "
+                "and the LoRA .safetensors file with its adapter_config.json."
+            )
         logger.error("Configured document processor could not be loaded (%s)", type(exc).__name__)
         return 1
     if not callable(process):
@@ -276,6 +299,7 @@ def main() -> int:
             process,
             once=args.once,
             poll_seconds=settings.worker_poll_seconds,
+            on_ready=readiness.touch if readiness is not None else None,
         )
         if not owned:
             logger.error("Another document worker owns this queue")
@@ -287,6 +311,8 @@ def main() -> int:
         logger.error("Database operation failed; document worker stopped")
         return 1
     finally:
+        if readiness is not None:
+            readiness.unlink(missing_ok=True)
         engine.dispose()
 
 
