@@ -42,6 +42,7 @@
   @apply fixed flex flex-col;
   inset: 0 auto 0 0;
   width: 240px;
+  overflow-y: auto;
   background: var(--ui-sidebar);
   color: var(--ui-ink);
   padding: 30px 0 22px;
@@ -87,14 +88,6 @@
 .brand-symbol, .app-sidebar svg { flex-shrink: 0; }
 .brand-name { display: inline-flex; gap: 4px; white-space: nowrap; }
 .brand-name .brand-dot { margin-left: 0; }
-.sidebar-toggle {
-  @apply grid place-items-center;
-  width: 42px;
-  height: 42px;
-  margin: 16px 11px 0;
-  border-radius: 6px;
-}
-.sidebar-toggle:hover, .sidebar-toggle:focus-visible { background: #d2dfe0; }
 .nav-item svg {
   width: 21px;
   height: 21px;
@@ -282,9 +275,25 @@
   padding: 10px 21px;
 }
 .app-main .mobile-system-status-link { display: none; }
+.app-sidebar .sidebar-mobile-trigger { display: none; }
+
+@media (min-width: 1650px) {
+  .app-main { padding: 42px 48px; }
+}
+
+@media (max-width: 1250px) {
+  .brand { padding: 0 20px; font-size: 25px; }
+  .nav-item { padding: 17px 20px; font-size: 13px; }
+  .app-main { padding: 28px 24px; }
+}
 
 @media (min-width: 701px) {
-  .app-sidebar { width: 64px; overflow: hidden; pointer-events: none; }
+  .app-sidebar {
+    width: 64px;
+    overflow-x: hidden;
+    scrollbar-width: none;
+    pointer-events: none;
+  }
   .app-sidebar::before {
     content: '';
     position: absolute;
@@ -293,17 +302,26 @@
     pointer-events: auto;
   }
   .app-sidebar :is(a, button) { position: relative; pointer-events: auto; }
-  .app-content { margin-left: 64px; }
   .app-sidebar[data-expanded="true"] {
     width: 220px;
     box-shadow: 4px 0 16px #16373517;
+    transition: width 175ms ease, box-shadow 175ms ease;
   }
+  .app-content { margin-left: 64px; }
   .app-sidebar .brand { padding-inline: 16px; }
   .app-sidebar :is(.nav-item, .system-status-link) { padding-inline: 21px; white-space: nowrap; }
-  .app-sidebar > nav { margin-top: 14px; }
-  .app-sidebar[data-expanded="false"] :is(.brand-name, .nav-item span, .system-status-link span) {
-    visibility: hidden;
-  }
+  .app-sidebar :is(.brand-name, .nav-item span, .system-status-link span) { opacity: 0; transition: opacity 175ms ease; }
+  .app-sidebar[data-expanded="true"] :is(.brand-name, .nav-item span, .system-status-link span) { opacity: 1; }
+}
+
+@media (min-width: 701px) and (hover: none), (max-width: 700px) {
+  .app-sidebar > .brand:not(.sidebar-mobile-trigger) { display: none; }
+  .app-sidebar .sidebar-mobile-trigger { display: flex; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-sidebar[data-expanded="true"],
+  .app-sidebar :is(.brand-name, .nav-item span, .system-status-link span) { transition: none; }
 }
 
 .accountant-workspace .workspace-button {
@@ -337,6 +355,7 @@
     position: relative;
     width: 100%;
     padding: 20px 16px 12px;
+    overflow-y: visible;
     display: block;
     border-bottom: 1px solid #cbd9d9;
   }
@@ -344,9 +363,8 @@
     padding: 0 4px;
     font-size: 24px;
   }
-  .sidebar-toggle { position: absolute; top: 15px; right: 13px; margin: 0; }
-  .app-sidebar > nav { display: none; margin: 8px -16px 0; }
-  .app-sidebar[data-expanded="true"] > nav { display: flex; }
+  .app-sidebar > nav { display: none; margin: 20px -16px 0; }
+  .app-sidebar[data-mobile-open="true"] > nav { display: flex; }
   .nav-item {
     flex: 1;
     justify-content: center;
