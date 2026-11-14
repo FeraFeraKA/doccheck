@@ -155,7 +155,7 @@ class HostedClient:
                     pass
             except HTTPError:
                 raise
-            except (TimeoutError, URLError):
+            except (TimeoutError, URLError, http.client.HTTPException):
                 # A response may be lost after the server commits. Reuse the exact result.
                 with self.request("PUT", f"/claims/{lease}/result", body=body):
                     pass
@@ -207,10 +207,12 @@ def main() -> int:
             if args.once or error.code in (401, 403, 404):
                 return 1
             claimed = False
-        except (OSError, ValueError, _TransientDownloadError):
+        except (OSError, ValueError, http.client.HTTPException, _TransientDownloadError):
             _LOG.error("Hosted worker request failed")
             if args.once:
                 return 1
+            # A claim may have committed before its response was lost. Poll
+            # again after the usual delay and let the unreceived lease expire.
             claimed = False
         if args.once:
             return 0
