@@ -159,14 +159,15 @@ function ResultContent({ id, view, result, run, synthetic, stored }: ResultConte
       {view === 'table' && <>
         <div className="mt-4">
           {result.rows.length > 0
-            ? <Reconciliation result={result} storedRunId={stored ? id : undefined} rowJump={rowJump?.locationKey === location.key ? rowJump : linkedRowJump} />
+            ? <Reconciliation result={result} storedRunId={stored ? id : undefined} runPath={runPath}
+                rowJump={rowJump?.locationKey === location.key ? rowJump : linkedRowJump}
+                onOpenRow={(rowId) => setRowJump({ id: rowId, locationKey: location.key })} />
             : <section className="checks-card"><h2>Показатели</h2><p>Показатели отсутствуют.</p></section>}
         </div>
-        <AdditionalChecks result={result} runPath={runPath}
-          onOpenRow={(rowId) => setRowJump({ id: rowId, locationKey: location.key })} />
+        {result.rows.length === 0 && <AdditionalChecks result={result} runPath={runPath} onOpenRow={() => {}} />}
       </>}
       {(view === 'documents' || view === 'exceptions') && <ResultDocuments
-        key={view + (new URLSearchParams(location.search).has('document') ? location.search : '')} result={result} runPath={runPath} storedRunId={stored ? id : undefined}
+        key={view} result={result} runPath={runPath} storedRunId={stored ? id : undefined}
         exceptions={view === 'exceptions'} synthetic={synthetic}
         exportRunId={view === 'documents' ? exportRunId : undefined}
         renderHeader={renderHeader} rowEvidenceIds={resultRowEvidenceIds}
@@ -192,10 +193,12 @@ function resultRowEvidenceIds(
   ];
 }
 
-function Reconciliation({ result, storedRunId, rowJump }: {
+function Reconciliation({ result, storedRunId, runPath, rowJump, onOpenRow }: {
   result: ReviewResult;
   storedRunId?: string;
   rowJump?: { id: string };
+  runPath: string;
+  onOpenRow: (id: string) => void;
 }) {
   const { rows, evidence, documents, summary } = result;
   const [filter, setFilter] = useState('all');
@@ -506,6 +509,9 @@ function Reconciliation({ result, storedRunId, rowJump }: {
       </div>
     </section>
     </dialog>
+    <AdditionalChecks result={result} runPath={runPath} onOpenRow={onOpenRow}
+      onOpenDocument={(id, trigger) => sourceWorkspace.openDocument(id, trigger)}
+      onOpenEvidence={(id, trigger) => sourceWorkspace.openEvidence(id, trigger)} />
     </>
   );
 }

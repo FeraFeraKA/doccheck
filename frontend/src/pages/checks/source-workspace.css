@@ -170,3 +170,16 @@
   .accountant-workspace .app-content:has(.source-workspace) { margin-right: 0; }
   .source-workspace { display: none; }
 }
+
+.source-fragment-text {
+  flex: 0 0 auto;
+  max-height: min(25dvh, 12rem);
+  overflow: auto;
+  padding: .5rem;
+  border-top: 1px solid var(--ui-line);
+  font-size: .8125rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.source-fragment-text mark { background: var(--ui-lime); color: var(--ui-ink); }

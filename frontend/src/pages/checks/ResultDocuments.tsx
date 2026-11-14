@@ -48,12 +48,19 @@ export function ResultDocuments({
     result, storedRunId,
     initialDocumentId: params.get('document') ?? undefined,
     initialEvidenceId: params.get('evidence') ?? undefined,
+    onSelectionChange(documentId, evidenceId) {
+      const next = new URLSearchParams(params);
+      next.set('document', documentId);
+      if (evidenceId) next.set('evidence', evidenceId);
+      else next.delete('evidence');
+      setParams(next, { replace: true, preventScrollReset: true });
+    },
     onClose() {
       if (!params.has('document') && !params.has('evidence')) return;
       const next = new URLSearchParams(params);
       next.delete('document');
       next.delete('evidence');
-      setParams(next, { replace: true });
+      setParams(next, { replace: true, preventScrollReset: true });
     },
   });
   const documents = exceptions

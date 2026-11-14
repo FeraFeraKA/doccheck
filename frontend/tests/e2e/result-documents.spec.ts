@@ -114,3 +114,28 @@ test('reading filters separate partial, pending and legacy states without changi
   await expect(partial.getByText('Включён', { exact: true })).toBeVisible();
   await expect(table.getByText('Не удалось прочитать')).toBeVisible();
 });
+
+test('diagnostics return keyboard focus and the documents route restores selected evidence', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/checks/synthetic-example');
+  const diagnostics = page.getByRole('region', { name: 'Дополнительные проверки' });
+  const excludedDocument = diagnostics.getByRole('button', { name: 'synthetic-ledger-copy.xlsx' });
+  const source = page.getByRole('region', { name: 'Источник документа', exact: true });
+  await excludedDocument.press('Enter');
+  await expect(source.getByLabel('Документы комплекта')).toHaveValue('ledger-copy');
+  await page.keyboard.press('Escape');
+  await expect(excludedDocument).toBeFocused();
+
+  await page.goto('/checks/synthetic-example/documents?document=report&evidence=report-a');
+  const documents = source.getByLabel('Документы комплекта');
+  await expect(documents).toHaveValue('report');
+  await expect(page.getByRole('button', { name: 'Скрыть источник документа' })).toBeFocused();
+  await documents.selectOption('ledger');
+  await source.getByLabel('Адрес доказательства').selectOption('amount-2');
+  await expect(page).toHaveURL(/document=ledger&evidence=amount-2/);
+  await page.reload();
+  await expect(documents).toHaveValue('ledger');
+  await expect(source.getByLabel('Адрес доказательства')).toHaveValue('amount-2');
+  await page.keyboard.press('Escape');
+  await expect(page).toHaveURL(/\/documents$/);
+});

@@ -228,6 +228,9 @@ test('source pane opens the stored original at a mobile width', async ({ page })
       : route.fulfill({ body: 'synthetic XLSX transport fixture', contentType: 'application/octet-stream' });
   });
 
+  await page.route(`**/api/v0/runs/${id}/documents/ledger/fragment-preview?evidence_id=amount-2`, (route) =>
+    route.fulfill({ json: { text: 'Итого 60,25', highlight: { start_byte: 11, end_byte: 16 } } }));
+
   await page.goto(`/checks/${id}`);
   await page.getByRole('button', { name: 'Просмотреть источник' }).click();
   const preview = page.getByRole('region', { name: 'Просмотр источника' });
@@ -247,6 +250,7 @@ test('source pane opens the stored original at a mobile width', async ({ page })
   expect(ledgerRequests).toEqual([]);
   await page.getByRole('button', { name: 'Просмотреть источник' }).click();
   await expect(preview.getByText(/Лист «Синтетика», C7/)).toBeVisible();
+  await expect(preview.locator('mark')).toHaveText('60,25');
   await expect(preview.getByRole('link', { name: 'Скачать оригинал' })).toBeVisible();
   expect([...new Set(ledgerRequests)].sort()).toEqual([
     `/api/v0/runs/${id}/documents/ledger`,

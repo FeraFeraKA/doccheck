@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import './source-drawer.css';
 import { formatLocation } from './reviewResult';
 import {
-  getSourceEvidence, getSourceOriginal, InvalidSourceResponseError, SourceHttpError,
+  getSourceEvidence, getSourceFragmentPreview, getSourceOriginal, InvalidSourceResponseError, SourceHttpError,
 } from './sourceApi';
 import type { SourceEvidence } from './sourceApi';
 
@@ -199,16 +199,45 @@ function SelectedDocumentSource({ runId, document, evidenceId, active, compact, 
     {embeddedPdf && <iframe className="source-viewer-pdf" title={`Просмотр документа: ${document.name}`} src={embeddedPdf} />}
     {original.status === 'ready' && format !== 'png' && !embeddedPdf && <div className="source-viewer-placeholder">
       {format === 'pdf' && <p>Страница открывается в PDF-просмотрщике браузера.</p>}
-      {(format === 'xlsx' || format === 'docx') && (
-        <p>Для просмотра по адресу откройте скачанный файл в офисном приложении.</p>
-      )}
+      {(format === 'xlsx' || format === 'docx') && <p>Для просмотра по адресу откройте скачанный файл в офисном приложении.</p>}
       {format !== 'pdf' && format !== 'png' && format !== 'xlsx' && format !== 'docx' && (
         <p>Предпросмотр этого формата недоступен.</p>
       )}
     </div>}
+    {compact && format !== 'png' && address && evidenceId !== null &&
+      <SourceFragmentText key={evidenceId} runId={runId} documentId={documentId} evidenceId={evidenceId} />}
     {(original.status !== 'ready' || format !== 'png') && (fragment || retry) && <div className="source-viewer-footer">
       {fragment}{retry}
     </div>}
+  </section>;
+}
+
+function SourceFragmentText({ runId, documentId, evidenceId }: {
+  runId: string;
+  documentId: string;
+  evidenceId: string;
+}) {
+  const [preview, setPreview] = useState<RequestState<Awaited<ReturnType<typeof getSourceFragmentPreview>>>>({ status: 'loading' });
+  useEffect(() => {
+    const controller = new AbortController();
+    void getSourceFragmentPreview(runId, documentId, evidenceId, controller.signal)
+      .then((value) => {
+        if (!controller.signal.aborted) setPreview({ status: 'ready', value });
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setPreview({ status: 'error', message: 'Не удалось загрузить текст фрагмента.' });
+      });
+    return () => controller.abort();
+  }, [runId, documentId, evidenceId]);
+
+  return <section className="source-fragment-text" aria-label="Текст исходного фрагмента">
+    {preview.status === 'loading' && <p role="status">Загрузка текста фрагмента…</p>}
+    {preview.status === 'error' && <p role="status">{preview.message}</p>}
+    {preview.status === 'ready' && (preview.value
+      ? <p>{preview.value.match
+        ? <>{preview.value.match[0]}<mark>{preview.value.match[1]}</mark>{preview.value.match[2]}</>
+        : preview.value.text}</p>
+      : <p>Текст фрагмента недоступен.</p>)}
   </section>;
 }
 

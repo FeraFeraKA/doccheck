@@ -47,10 +47,12 @@ export function UnverifiedIndicators({ rows, onOpenRow }: {
   </section>;
 }
 
-export function AdditionalChecks({ result, runPath, onOpenRow }: {
+export function AdditionalChecks({ result, runPath, onOpenRow, onOpenDocument, onOpenEvidence }: {
   result: ReviewResult;
   runPath: string;
   onOpenRow: (id: string) => void;
+  onOpenDocument?: (id: string, trigger: HTMLElement) => void;
+  onOpenEvidence?: (id: string, trigger: HTMLElement) => void;
 }) {
   const files = result.documents.filter(({ decision, errors }) => decision.state !== 'include' || errors.length > 0);
   const rowIssueIds = new Set(result.rows.map(({ root_issue_id }) => root_issue_id));
@@ -64,8 +66,11 @@ export function AdditionalChecks({ result, runPath, onOpenRow }: {
       const source = evidenceById.get(id);
       if (!source) return null;
       const search = new URLSearchParams({ document: source.document_id, evidence: id });
-      return <Link key={id} className="block underline" to={runPath + '/documents?' + search}>
-        {documentsById.get(source.document_id)} · {formatLocation(source.locator)}
+      const text = `${documentsById.get(source.document_id)} · ${formatLocation(source.locator)}`;
+      return onOpenEvidence ? <button key={id} type="button" className="block text-left underline"
+        onClick={(event) => onOpenEvidence(id, event.currentTarget)}>{text}</button>
+        : <Link key={id} className="block underline" to={runPath + '/documents?' + search}>
+        {text}
       </Link>;
     });
   }
@@ -78,7 +83,9 @@ export function AdditionalChecks({ result, runPath, onOpenRow }: {
           <th scope="col">Решение</th><th scope="col">Причина</th></tr></thead>
         <tbody>{files.map((file) => <tr key={file.id}>
           <td>{decisionTypes[file.decision.reason_code] ?? 'Проверка документа'}</td>
-          <td><Link className="underline" to={runPath + '/documents?' + new URLSearchParams({ document: file.id })}>{file.name}</Link></td>
+          <td>{onOpenDocument ? <button type="button" className="text-left underline"
+            onClick={(event) => onOpenDocument(file.id, event.currentTarget)}>{file.name}</button>
+            : <Link className="underline" to={runPath + '/documents?' + new URLSearchParams({ document: file.id })}>{file.name}</Link>}</td>
           <td>{documentDecisionLabels[file.decision.state]}</td><td>{file.decision.message}
             {file.errors.filter(({ message }) => message !== file.decision.message)
               .map((error) => <p key={error.id}>{error.message}</p>)}

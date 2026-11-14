@@ -19,7 +19,7 @@ interface Selection {
 }
 
 export function useSourceWorkspace({
-  result, storedRunId, initialDocumentId, initialEvidenceId, onClose, onEvidenceChange,
+  result, storedRunId, initialDocumentId, initialEvidenceId, onClose, onEvidenceChange, onSelectionChange,
 }: {
   result: ReviewResult;
   storedRunId?: string;
@@ -27,6 +27,7 @@ export function useSourceWorkspace({
   initialEvidenceId?: string;
   onClose?: () => void;
   onEvidenceChange?: (id: string | undefined) => void;
+  onSelectionChange?: (documentId: string, evidenceId?: string) => void;
 }) {
   const { documents, evidence } = result;
   const report = documents.find(({ role }) => role === 'report');
@@ -48,7 +49,7 @@ export function useSourceWorkspace({
   });
   const [open, setOpen] = useState(Boolean(initialSelection));
   const [selection, setSelection] = useState<Selection | undefined>(initialSelection);
-  const [focusRequest, setFocusRequest] = useState(0);
+  const [focusRequest, setFocusRequest] = useState(initialSelection ? 1 : 0);
   const toggle = useRef<HTMLButtonElement>(null);
   const trigger = useRef<HTMLElement | null>(null);
   const defaultDocumentId = report?.id ?? documents[0]?.id;
@@ -56,6 +57,7 @@ export function useSourceWorkspace({
   function show(next: Selection | undefined, from?: HTMLElement) {
     trigger.current = from ?? toggle.current;
     setSelection(next);
+    if (next) onSelectionChange?.(next.documentId, next.evidenceId);
     setFocusRequest((previous) => previous + 1);
     setOpen(true);
   }
@@ -89,6 +91,7 @@ export function useSourceWorkspace({
     const source = evidenceById.get(evidenceId);
     if (!source) return;
     onEvidenceChange?.(evidenceId);
+    onSelectionChange?.(source.document_id, evidenceId);
     setSelection({ ...selection, documentId: source.document_id, evidenceId,
       rowEvidenceIds: selection?.rowEvidenceIds ?? [] });
   }
@@ -107,6 +110,7 @@ export function useSourceWorkspace({
     const previous = selection?.documentId === id ? selected : undefined;
     const source = previous ?? rowSources.find(({ document_id }) => document_id === id) ?? evidenceByDocument.get(id)?.[0];
     onEvidenceChange?.(source?.id);
+    onSelectionChange?.(id, source?.id);
     setSelection({ ...selection, documentId: id, evidenceId: source?.id, rowEvidenceIds: selection?.rowEvidenceIds ?? [] });
   }
 
