@@ -53,6 +53,8 @@
 }
 .checks-content .result-history-link:hover { background: var(--ui-soft); }
 
+.checks-content .result-summary { margin-top: 20px; }
+
 .checks-content .result-summary .result-summary-title {
   margin: 0;
   padding: .125rem .5rem;

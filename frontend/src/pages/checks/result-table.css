@@ -1,5 +1,5 @@
 /* Result workspace layout from CheckDetail and workspace.css upstream. */
-.result-reconciliation .reconcile-commandbar {
+.result-reconciliation:has(.result-table-pane) .reconcile-commandbar {
   position: relative;
   min-height: 0;
   padding: 0;
