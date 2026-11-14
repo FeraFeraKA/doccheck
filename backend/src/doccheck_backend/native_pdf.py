@@ -7,6 +7,7 @@ from zlib import error as DecompressionError
 
 import pdfplumber
 from pdfminer.layout import LTChar, LTPage
+from pdfminer.pdfdocument import PDFPasswordIncorrect
 from pdfminer.pdfexceptions import PDFException
 from pdfminer.pdffont import PDFType3Font
 from pdfminer.pdfinterp import PDFPageInterpreter
@@ -210,6 +211,14 @@ def read_pdf(path: Path) -> NativeDocument:
                     issues.extend(result.issues)
                 finally:
                     page.close()
+    except PdfminerException as error:
+        # pdfplumber wraps its PDFDocument initialization error as its sole argument.
+        code = (
+            "encrypted_pdf"
+            if len(error.args) == 1 and isinstance(error.args[0], PDFPasswordIncorrect)
+            else "native_read_error"
+        )
+        issues.append(NativeIssue(code))
     except _PDF_ERRORS:
         issues.append(NativeIssue("native_read_error"))
     if not observations and not issues:
