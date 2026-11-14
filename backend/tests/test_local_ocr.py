@@ -66,3 +66,48 @@ def test_provider_rejects_a_box_in_wrong_frame(tmp_path, monkeypatch):
     result = read_scan(tmp_path / "input.png", "png")
     assert not result.observations
     assert result.issues[0].code == "ocr_read_error"
+
+
+def test_ocr_normalizes_pixel_boxes_in_original_png_frame(monkeypatch, tmp_path):
+    import sys
+    from types import SimpleNamespace
+
+    from PIL import Image
+
+    from doccheck_backend.local_ocr import read_paddle
+
+    pixels = SimpleNamespace(__getitem__=lambda *_: None)
+
+    class ImageArray:
+        def __getitem__(self, index):
+            assert index == (slice(None), slice(None), slice(None, None, -1))
+            return pixels
+
+    monkeypatch.setitem(
+        sys.modules,
+        "numpy",
+        SimpleNamespace(asarray=lambda image: ImageArray(), ascontiguousarray=lambda frame: frame),
+    )
+
+    def predict(frame):
+        assert frame is pixels
+        return [
+            {
+                "rec_texts": ["Исходный текст"],
+                "rec_boxes": [[20, 30, 80, 45]],
+                "rec_scores": [0.93],
+            }
+        ]
+
+    monkeypatch.setattr(
+        "doccheck_backend.local_ocr._paddle", lambda: SimpleNamespace(predict=predict)
+    )
+    source = tmp_path / "source.png"
+    Image.new("RGB", (200, 100)).save(source)
+    document = read_paddle(source, "png")
+
+    assert not document.issues
+    (item,) = document.observations
+    assert item.locator.page == 1
+    assert item.locator.bbox == (0.1, 0.3, 0.4, 0.45)
+    assert item.confidence == 0.93
