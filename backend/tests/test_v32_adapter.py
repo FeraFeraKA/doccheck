@@ -906,6 +906,9 @@ def test_only_trusted_local_worker_can_add_omitted_requested_row(
     [
         ("cover", 2, "completed"),
         ("conflicting_contract", 2, "failed"),
+        ("conflicting_dated_contract", 2, "failed"),
+        ("matching_dated_dotted_contract", 2, "completed"),
+        ("unsupported_contract_suffix", 2, "failed"),
         ("native_money", 2, "failed"),
         ("cover", 1, "failed"),
     ],
@@ -929,8 +932,9 @@ def test_mixed_pdf_ocr_scope_requires_a_nonconflicting_raster_page(
     report.update(
         format="pdf", name="report.pdf", sha256=sha256(report_path.read_bytes()).hexdigest()
     )
+    contract = "E2E.31" if native_text == "matching_dated_dotted_contract" else "E2E-31"
     observations = (
-        _box("Договор № E2E-31", 0.06, 0.09, 0.36),
+        _box(f"Договор № {contract}", 0.06, 0.09, 0.36),
         _box("Начало 2 этапа", 0.06, 0.12, 0.14),
         _box('"22" октября 2026 г.', 0.18, 0.12, 0.28),
         _box("Окончание 2 этапа", 0.06, 0.15, 0.15),
@@ -944,6 +948,9 @@ def test_mixed_pdf_ocr_scope_requires_a_nonconflicting_raster_page(
     if native_text != "cover":
         text = {
             "conflicting_contract": "Договор № OTHER-44",
+            "conflicting_dated_contract": "Договор № OTHER-44 от 01.01.2027",
+            "matching_dated_dotted_contract": "Договор № E2E.31 от 01.01.2027 г.",
+            "unsupported_contract_suffix": "Договор № OTHER-44, примечание",
             "native_money": "Оплата труда: 111,10 руб.",
         }[native_text]
 
@@ -962,5 +969,6 @@ def test_mixed_pdf_ocr_scope_requires_a_nonconflicting_raster_page(
     assert job.status == expected
     if expected == "completed":
         assert job.result.scope.report_row_locator.page == 2
+        assert job.result.scope.contract_number == contract
     else:
         assert job.error.code == "v32_pdf_scope_ambiguous"
