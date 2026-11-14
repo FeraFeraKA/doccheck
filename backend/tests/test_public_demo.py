@@ -17,6 +17,10 @@ _UNUSED_DB = "postgresql+psycopg://unused:unused@127.0.0.1:1/unused"
     [
         ("POST", _RUNS),
         ("GET", _RUNS),
+        ("POST", f"{_RUNS}/uploads"),
+        ("POST", f"{_RUNS}/uploads/upload/start"),
+        ("DELETE", f"{_RUNS}/uploads/upload"),
+        ("GET", f"{_RUNS}/run/pack"),
         ("GET", f"{_RUNS}/run"),
         ("GET", f"{_RUNS}/run/findings"),
         ("GET", f"{_RUNS}/run/exports/xlsx"),

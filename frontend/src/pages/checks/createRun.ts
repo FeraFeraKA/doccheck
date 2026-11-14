@@ -18,6 +18,21 @@ export interface RunUpload {
   synthetic?: boolean;
 }
 
+interface RunTransfer {
+  report?: File;
+  documents: readonly File[];
+  sourceRunId?: string;
+  retainedDocumentIds?: readonly string[];
+  scanScope?: ScanScope;
+}
+
+export interface RetainedDocument {
+  id: string;
+  name: string;
+  size: number;
+  role: 'report' | 'supporting';
+}
+
 export interface AcceptedRun {
   run_id: string;
   status: 'queued';
@@ -32,6 +47,11 @@ const errorCodes = [
   'unsupported_media_type',
   'unsupported_file_format',
   'service_unavailable',
+  'upload_expired',
+  'upload_not_found',
+  'run_not_found',
+  'document_not_found',
+  'result_pending',
 ] as const;
 
 type UploadErrorCode = typeof errorCodes[number];
@@ -97,27 +117,31 @@ function hasExpectedLocation(value: string | null, requestUrl: URL, path: string
   }
 }
 
+function appendScanScope(form: FormData, scope: ScanScope) {
+  const { contractNumber, periodStart, periodEnd, page, stage } = scope;
+  form.append('contract_number', contractNumber);
+  form.append('period_start', periodStart);
+  form.append('period_end', periodEnd);
+  form.append('report_row_locator', JSON.stringify({
+    kind: 'page',
+    page,
+    fragment_id: 'kfz-stage-' + stage + '-' + periodStart.slice(0, 4),
+  }));
+}
+
 /** Один снимок пакета и UUID на осознанную отправку. Для повтора вызовите ту же функцию. */
 export function prepareRunUpload(upload: RunUpload, idempotencyKey: string) {
   const form = new FormData();
   form.append('report', upload.report);
   for (const document of upload.documents) form.append('documents', document);
-  if (upload.scanScope) {
-    const { contractNumber, periodStart, periodEnd, page, stage } = upload.scanScope;
-    form.append('contract_number', contractNumber);
-    form.append('period_start', periodStart);
-    form.append('period_end', periodEnd);
-    form.append('report_row_locator', JSON.stringify({
-      kind: 'page',
-      page,
-      fragment_id: 'kfz-stage-' + stage + '-' + periodStart.slice(0, 4),
-    }));
-  }
+  if (upload.scanScope) appendScanScope(form, upload.scanScope);
   if (upload.synthetic) form.append('synthetic', 'true');
 
   return async (signal?: AbortSignal, onProgress?: (percent: number) => void): Promise<AcceptedRun> => {
     const requestUrl = new URL(runsPath, globalThis.location.origin);
-    if (onProgress) return sendWithProgress(requestUrl, form, idempotencyKey, signal, onProgress);
+    if (onProgress) {
+      return sendWithProgress(requestUrl, form, idempotencyKey, signal, onProgress, acceptResponse);
+    }
     const response = await fetch(requestUrl.href, {
       method: 'POST',
       body: form,
@@ -128,6 +152,67 @@ export function prepareRunUpload(upload: RunUpload, idempotencyKey: string) {
 
     return acceptResponse(response.status, await readJson(response), response.headers.get('Location'), requestUrl);
   };
+}
+
+export function prepareRunTransfer(upload: RunTransfer, idempotencyKey: string) {
+  const form = new FormData();
+  if (upload.report) form.append('report', upload.report);
+  for (const document of upload.documents) form.append('documents', document);
+  if (upload.sourceRunId) form.append('source_run_id', upload.sourceRunId);
+  for (const id of upload.retainedDocumentIds ?? []) form.append('retained_document_id', id);
+  if (upload.scanScope) appendScanScope(form, upload.scanScope);
+
+  function acceptTransfer(status: number, value: unknown): { upload_id: string } {
+    if (status < 200 || status >= 300) throw new RunUploadHttpError(status, parseUploadError(value));
+    if (status !== 201 || !isRecord(value) || !isRunId(value.upload_id)) {
+      throw new InvalidRunUploadResponse();
+    }
+    return { upload_id: value.upload_id };
+  }
+
+  return async (signal?: AbortSignal, onProgress?: (percent: number) => void) => {
+    const url = new URL(runsPath + '/uploads', globalThis.location.origin);
+    if (onProgress) return sendWithProgress(url, form, idempotencyKey, signal, onProgress, acceptTransfer);
+    const response = await fetch(url.href, {
+      method: 'POST', body: form, headers: { 'Idempotency-Key': idempotencyKey }, signal,
+      redirect: 'error',
+    });
+    return acceptTransfer(response.status, await readJson(response));
+  };
+}
+
+export async function startPreparedRun(uploadId: string, signal?: AbortSignal): Promise<AcceptedRun> {
+  if (!isRunId(uploadId)) throw new TypeError('Invalid upload ID');
+  const url = new URL(`${runsPath}/uploads/${uploadId}/start`, globalThis.location.origin);
+  const response = await fetch(url.href, { method: 'POST', signal, redirect: 'error' });
+  return acceptResponse(response.status, await readJson(response), response.headers.get('Location'), url);
+}
+
+export async function discardPreparedRun(uploadId: string, signal?: AbortSignal): Promise<void> {
+  if (!isRunId(uploadId)) throw new TypeError('Invalid upload ID');
+  const response = await fetch(`${runsPath}/uploads/${uploadId}`, {
+    method: 'DELETE', signal, redirect: 'error',
+  });
+  if (!response.ok && response.status !== 404) {
+    throw new RunUploadHttpError(response.status, parseUploadError(await readJson(response)));
+  }
+}
+
+export async function getEditableRunPack(runId: string, signal: AbortSignal) {
+  if (!isRunId(runId)) throw new TypeError('Invalid run ID');
+  const response = await fetch(`${runsPath}/${runId}/pack`, { signal, cache: 'no-store', redirect: 'error' });
+  const value = await readJson(response);
+  if (!response.ok) throw new RunUploadHttpError(response.status, parseUploadError(value));
+  if (!isRecord(value) || !Array.isArray(value.documents) || !value.documents.every(isRetainedDocument)) {
+    throw new InvalidRunUploadResponse();
+  }
+  return { runId, documents: value.documents };
+}
+
+function isRetainedDocument(value: unknown): value is RetainedDocument {
+  return isRecord(value) && isRunId(value.id) && typeof value.name === 'string'
+    && typeof value.size === 'number' && Number.isSafeInteger(value.size) && value.size > 0
+    && (value.role === 'report' || value.role === 'supporting');
 }
 
 function acceptResponse(status: number, value: unknown, location: string | null, requestUrl: URL): AcceptedRun {
@@ -141,9 +226,14 @@ function acceptResponse(status: number, value: unknown, location: string | null,
   return { run_id: value.run_id, status: 'queued', location: path };
 }
 
-function sendWithProgress(
-  url: URL, form: FormData, key: string, signal: AbortSignal | undefined, onProgress: (percent: number) => void,
-): Promise<AcceptedRun> {
+function sendWithProgress<T>(
+  url: URL,
+  form: FormData,
+  key: string,
+  signal: AbortSignal | undefined,
+  onProgress: (percent: number) => void,
+  accept: (status: number, value: unknown, location: string | null, url: URL) => T,
+): Promise<T> {
   return new Promise((resolve, reject) => {
     signal?.throwIfAborted();
     const request = new XMLHttpRequest();
@@ -160,7 +250,7 @@ function sendWithProgress(
     request.addEventListener('load', () => {
       try {
         if (request.responseURL !== url.href) throw new InvalidRunUploadResponse();
-        resolve(acceptResponse(request.status, request.response, request.getResponseHeader('Location'), url));
+        resolve(accept(request.status, request.response, request.getResponseHeader('Location'), url));
       } catch (error) {
         reject(error);
       }

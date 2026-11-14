@@ -79,7 +79,6 @@ def test_selects_the_only_ruled_row_from_explicit_report_period(tmp_path):
         locator,
         SYNTHETIC_CONTRACT,
         TARGET,
-        allow_header_subperiod=True,
     )
 
     assert reading is not None and reading.complete
@@ -116,7 +115,6 @@ def test_locates_target_page_from_visible_year_band_and_matching_primary_docs(tm
         locator,
         SYNTHETIC_CONTRACT,
         TARGET,
-        allow_header_subperiod=True,
     )
 
     assert reading is not None and reading.complete
@@ -135,6 +133,21 @@ def test_same_year_stages_remain_ambiguous_when_only_header_has_period(tmp_path)
     support = _ground_support(tmp_path, (JANUARY, FEBRUARY))
 
     assert _select_scan_scope(REPORT_ID, _read_scan(path), support) is None
+
+
+@pytest.mark.parametrize("header", [TARGET, "Январь 2034 г. — Февраль 2034 г.", None])
+def test_manual_stage_requires_the_printed_row_period(tmp_path, header):
+    january = ScanRow(3, 2034, SYNTHETIC_AMOUNTS, JANUARY)
+    february = ScanRow(4, 2034, DISTRACTOR_AMOUNTS, FEBRUARY)
+    path = write_scanned_kfz(tmp_path / "report.png", ((january, february),), period=header)
+    image = next(render_pages(path))
+    locator = PageLocator(kind="page", page=1, fragment_id="kfz-stage-3-2034")
+
+    assert read_report_row(image, 1, locator, SYNTHETIC_CONTRACT, FEBRUARY) is None
+    assert read_report_row(image, 1, locator, SYNTHETIC_CONTRACT, TARGET) is None
+    reading = read_report_row(image, 1, locator, SYNTHETIC_CONTRACT, JANUARY)
+    assert reading is not None and reading.complete
+    assert str(next(cell.amount for cell in reading.cells if cell.code == "total")) == "2085.00"
 
 
 def test_two_distinct_row_periods_are_selected_only_with_unique_support(tmp_path):
@@ -165,7 +178,6 @@ def test_two_distinct_row_periods_are_selected_only_with_unique_support(tmp_path
         locator,
         SYNTHETIC_CONTRACT,
         FEBRUARY,
-        allow_header_subperiod=True,
     )
     assert reading is not None and reading.complete
     assert str(next(cell.amount for cell in reading.cells if cell.code == "total")) == "4180.00"

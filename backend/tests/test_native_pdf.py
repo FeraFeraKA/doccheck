@@ -1,9 +1,15 @@
 from pathlib import Path
+from uuid import uuid4
 
 import pypdfium2
 import pytest
+from PIL import Image
 
+from doccheck_backend import grounded_amounts
+from doccheck_backend.contracts.locators import PageLocator
+from doccheck_backend.native_observations import NativeDocument, NativeIssue, Observation
 from doccheck_backend.native_reader import read_native_document
+from doccheck_backend.page_ocr import OcrLine
 
 
 def _stream(data, extra=b""):
@@ -18,7 +24,7 @@ def _stream(data, extra=b""):
     )
 
 
-def _write_pdf(path, streams, *, attrs=b"", form=None, font=b"Courier", cmap=None):
+def _write_pdf(path, streams, *, attrs=b"", form=None, font=b"Courier", cmap=None, image=None):
     page_part = b" ".join(f"{index} 0 R".encode() for index in range(4, 4 + len(streams)))
     objects = [
         b"<< /Type /Catalog /Pages 2 0 R >>",
@@ -27,11 +33,18 @@ def _write_pdf(path, streams, *, attrs=b"", form=None, font=b"Courier", cmap=Non
     ]
     first_stream = 4 + len(streams)
     if cmap is not None:
-        cmap_index = first_stream + len(streams) + int(form is not None)
+        cmap_index = first_stream + len(streams) + int(form is not None) + int(image is not None)
         objects[2] = objects[2][:-2] + f"/ToUnicode {cmap_index} 0 R >>".encode()
     resources = b"/Font << /F1 3 0 R >>"
-    if form is not None:
-        resources += f" /XObject << /FormA {first_stream + len(streams)} 0 R >>".encode()
+    rendered = [
+        (name, obj) for name, obj in (("FormA", form), ("ImageA", image)) if obj is not None
+    ]
+    if rendered:
+        xobjects = b" ".join(
+            f"/{name} {i} 0 R".encode()
+            for i, (name, _) in enumerate(rendered, start=first_stream + len(streams))
+        )
+        resources += b" /XObject << " + xobjects + b" >>"
     for index in range(len(streams)):
         objects.append(
             b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] "
@@ -42,8 +55,7 @@ def _write_pdf(path, streams, *, attrs=b"", form=None, font=b"Courier", cmap=Non
             + f" /Contents {first_stream + index} 0 R >>".encode()
         )
     objects.extend(_stream(data) for data in streams)
-    if form is not None:
-        objects.append(form)
+    objects.extend(obj for _, obj in rendered)
     if cmap is not None:
         objects.append(_stream(cmap))
 
@@ -261,6 +273,66 @@ def test_pdf_without_native_text_and_invalid_pdf_have_distinct_diagnostics(tmp_p
     broken.write_bytes(b"Not a PDF")
     assert [i.code for i in read_native_document(empty, "pdf").issues] == ["no_native_text"]
     assert [i.code for i in read_native_document(broken, "pdf").issues] == ["native_read_error"]
+
+
+def test_pdf_with_visible_image_uses_visual_reading_even_with_native_text(monkeypatch, tmp_path):
+    raster = _stream(
+        b"\x80",
+        b"/Type /XObject /Subtype /Image /Width 1 /Height 1 "
+        b"/BitsPerComponent 8 /ColorSpace /DeviceGray",
+    )
+    pdf = _write_pdf(
+        tmp_path / "hybrid.pdf",
+        [
+            b"BT /F1 12 Tf 20 140 Td (Intermediate total: 100.00) Tj ET "
+            b"q 160 0 0 30 20 50 cm /ImageA Do Q"
+        ],
+        image=raster,
+    )
+    native = read_native_document(pdf, "pdf")
+    assert [issue.code for issue in native.issues] == ["raster_pdf_content"]
+    assert len(native.observations) == 1
+
+    monkeypatch.setattr(
+        grounded_amounts,
+        "recognize_lines",
+        lambda _: [
+            OcrLine("Сумма: 100,00 руб.", (20, 30, 220, 46), 98),
+            OcrLine("Итого к оплате: 120,00 руб.", (20, 90, 260, 105), 98),
+        ],
+    )
+    result = grounded_amounts.ground_document(uuid4(), "a" * 32, pdf, "pdf", "b" * 64)
+    assert result.amount == "120.00"
+    assert [(item.method, item.normalized_value) for item in result.assertions] == [
+        ("ocr", "120.00")
+    ]
+
+
+def test_ambiguous_visual_purpose_cannot_revert_to_partial_text(monkeypatch, tmp_path):
+    address = PageLocator(kind="page", page=1, bbox=(0.1, 0.1, 0.8, 0.2))
+    native = NativeDocument(
+        (Observation("Работы отнесены к общепроизводственным расходам.", address),),
+        (NativeIssue("clipped_pdf_text", locator=address),),
+    )
+    monkeypatch.setattr(grounded_amounts, "read_native_document", lambda *_: native)
+    monkeypatch.setattr(
+        grounded_amounts, "render_pages", lambda *_: iter([Image.new("L", (500, 500))])
+    )
+    monkeypatch.setattr(
+        grounded_amounts,
+        "recognize_lines",
+        lambda _: [
+            OcrLine("Работы отнесены к общепроизводственным расходам.", (20, 30, 300, 46), 98),
+            OcrLine("Оказаны общехозяйственные услуги.", (20, 90, 300, 105), 98),
+            OcrLine("Итого: 120,00 руб.", (20, 150, 180, 164), 98),
+        ],
+    )
+    result = grounded_amounts.ground_document(
+        uuid4(), "a" * 32, tmp_path / "mixed.pdf", "pdf", "b" * 64
+    )
+    assert result.amount == "120.00"
+    assert result.category is None
+    assert not any(item.kind == "article" for item in result.assertions)
 
 
 def test_pdf_that_requires_password_has_a_distinct_file_diagnostic():

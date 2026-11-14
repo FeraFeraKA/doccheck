@@ -49,10 +49,10 @@ for (const width of [390, 768]) {
       route.fulfill({ body: pixelPng, contentType: 'application/octet-stream' }));
 
     await page.goto('/checks/' + id);
-    await page.getByText('Основания выбранного показателя', { exact: true }).click();
     await page.getByRole('button', { name: 'На весь экран' }).click();
     await expect(page.getByRole('dialog', { name: 'Полноэкранная сверка' })).toBeVisible();
-    const source = page.getByRole('button', { name: 'Просмотреть источник' });
+    const source = page.getByRole('row').filter({ hasText: 'Синтетическая статья A' })
+      .getByRole('button', { name: /^150,50\s*₽$/ });
     await source.click();
     const drawer = page.getByLabel('Источник документа', { exact: true }).and(page.locator('.source-workspace-panel[open]'));
     await expect(drawer.getByRole('img', { name: 'synthetic-report.png' })).toBeVisible();

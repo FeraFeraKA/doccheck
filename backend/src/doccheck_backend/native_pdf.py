@@ -171,6 +171,14 @@ def _read_page(page: _TextPage) -> NativeDocument:
         )
         observations.append(Observation(text, locator))
 
+    if observations and any(
+        image["x0"] < right
+        and left < image["x1"]
+        and image["top"] < bottom
+        and top < image["bottom"]
+        for image in page.images
+    ):
+        issues.append(NativeIssue("raster_pdf_content", page=page.page_number))
     if not observations and not issues:
         issues.append(NativeIssue("no_native_text", page=page.page_number))
     return NativeDocument(tuple(observations), tuple(issues))

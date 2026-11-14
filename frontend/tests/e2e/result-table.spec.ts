@@ -3,7 +3,6 @@ import { expect, test } from '@playwright/test';
 test('the result disclosure keeps each component and its source address selectable', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/checks/synthetic-example');
-  await page.getByText('Основания выбранного показателя', { exact: true }).click();
 
   const table = page.getByRole('table', { name: 'Показатели КФЗ' });
   await expect(table.getByRole('button', { name: 'Как рассчитано' })).toHaveCount(0);
@@ -24,7 +23,8 @@ test('the result disclosure keeps each component and its source address selectab
   await amounts.nth(1).click();
   await expect(amounts.nth(1)).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByRole('combobox', { name: 'Доказательство' })).toHaveValue('amount-2');
-  await expect(page.locator('.source-address-card')).toContainText('C7');
+  await expect(page.getByLabel('Доказательство').locator('option:checked')).toContainText('C7');
+  await page.getByRole('button', { name: 'Закрыть просмотр источника' }).click();
   await row.press('Space');
   await expect(details).toHaveCount(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);

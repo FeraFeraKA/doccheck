@@ -122,9 +122,17 @@ def test_scanned_table_requires_matching_year_and_identifies_missing_columns(mon
     monkeypatch.setattr(
         scanned_report,
         "recognize_lines",
-        lambda *_: [OcrLine("Договор № EX-26", (10, 10, 200, 50), 99)],
+        lambda *_: [
+            OcrLine("Договор № EX-26", (10, 10, 200, 50), 99),
+            OcrLine("Отчетный период: 01.01.2026 — 31.05.2026", (10, 60, 600, 85), 99),
+        ],
     )
-    monkeypatch.setattr(scanned_report, "_row_band", lambda *_: (290, 360, "2026"))
+    monkeypatch.setattr(
+        scanned_report,
+        "_row_band",
+        lambda _, locator, *_args: (290, 360, "2026") if locator else None,
+    )
+    monkeypatch.setattr(scanned_report, "recognize_crop", lambda *_args, **_kwargs: "")
     monkeypatch.setattr(
         scanned_report, "_headers", lambda *_: {"0200": scanned_report.HeaderGroup(2, 3, 220)}
     )
@@ -175,6 +183,41 @@ def test_final_ruble_total_has_priority_over_intermediate_amount():
     total, _ = _money(document, template=False, format_="pdf")
     assert total.amount == Decimal("120.00")
     assert total.locator == document.observations[1].locator
+
+
+@pytest.mark.parametrize(
+    ("last_line", "confidence", "expected"),
+    [
+        ("Итого к оплате: 120,00 руб.", 42, None),
+        ("Итого к оплате: 120,00 руб.", 90, "120.00"),
+        ("Примечание к акту", 42, "100.00"),
+    ],
+)
+def test_faint_total_prevents_using_intermediate_ocr_amount(
+    monkeypatch, tmp_path, last_line, confidence, expected
+):
+    from doccheck_backend import grounded_amounts
+
+    image = Image.new("RGB", (300, 200), "white")
+    monkeypatch.setattr(grounded_amounts, "render_pages", lambda *_: iter([image]))
+    monkeypatch.setattr(
+        grounded_amounts,
+        "recognize_lines",
+        lambda *_: [
+            OcrLine("Сумма: 100,00 руб.", (10, 20, 200, 35), 99),
+            OcrLine(last_line, (10, 60, 200, 75), confidence),
+        ],
+    )
+    path = tmp_path / "synthetic.png"
+    image.save(path)
+    result = grounded_amounts.ground_document(uuid4(), "a" * 32, path, "png", "b" * 64)
+    assert result.amount == expected
+    assert [item.normalized_value for item in result.assertions if item.kind == "amount"] == (
+        [] if expected is None else [expected]
+    )
+    assert [issue.code for issue in result.issues] == (
+        ["unreadable_amount_line"] if expected is None else []
+    )
 
 
 def test_own_document_number_points_to_own_header(monkeypatch, tmp_path):

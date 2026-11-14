@@ -1,56 +1,75 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import { classes } from '../../shared/lib/classes';
 import { Button } from '../../shared/ui/Button';
-import { UploadFileList } from './UploadFiles';
-import { WorkspaceIcon } from './WorkspaceIcon';
-import { prepareRunUpload, RunUploadHttpError } from './createRun';
-import type { ScanScope } from './createRun';
 import type { CheckHistory } from './checkData';
+import { prepareRunTransfer, RunUploadHttpError, startPreparedRun } from './createRun';
+import type { ScanScope } from './createRun';
+import { RunProgressBar } from './RunProgressBar';
 import { RunQueue } from './RunQueue';
-import type { QueueReceipt, DemoTransfer } from './RunQueue';
+import type { QueueReceipt } from './RunQueue';
+import { uploadFileInfo, UploadFileList, UploadSpinner } from './UploadFiles';
+import type { UploadFile } from './UploadFiles';
+import { usePreparedRun } from './usePreparedRun';
 import { useRunHistory } from './useRunHistory';
-import { demoRunPath, demoUploadFiles, loadDemoUpload } from './demoData';
+import { formats, useRunUploadFiles } from './useRunUploadFiles';
+import type { FileGroup, InitialRunPack } from './useRunUploadFiles';
+import { WorkspaceIcon } from './WorkspaceIcon';
 
-type FileGroup = 'report' | 'documents';
+export type { RetainedDocument } from './createRun';
+export type { InitialRunPack } from './useRunUploadFiles';
 
-const formats = ['.pdf', '.docx', '.xlsx', '.png'];
-const mib = 1024 ** 2;
-const maxFileSize = 50 * mib;
-const maxPackageSize = 250 * mib;
-const maxDocuments = 100;
 const initialScanScope: ScanScope = {
   contractNumber: '', periodStart: '', periodEnd: '', page: NaN, stage: NaN,
 };
 
-interface SelectedFile {
-  id: number;
-  file: File;
+function validScanScope(scope: ScanScope) {
+  return scope.contractNumber.trim().length > 0
+    && /^\d{4}-\d{2}-\d{2}$/.test(scope.periodStart)
+    && /^\d{4}-\d{2}-\d{2}$/.test(scope.periodEnd)
+    && scope.periodStart <= scope.periodEnd
+    && scope.periodStart.slice(0, 4) === scope.periodEnd.slice(0, 4)
+    && Number.isInteger(scope.page) && scope.page >= 1 && scope.page <= 12
+    && Number.isSafeInteger(scope.stage) && scope.stage >= 1;
 }
 
-function newIdempotencyKey(): string {
-  if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
-
-  // Random bytes remain available when randomUUID requires a secure context.
-  const bytes = crypto.getRandomValues(new Uint8Array(16));
-  bytes[6] = (bytes[6] & 0x0f) | 0x40;
-  bytes[8] = (bytes[8] & 0x3f) | 0x80;
-  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
-  return [hex.slice(0, 8), hex.slice(8, 12), hex.slice(12, 16), hex.slice(16, 20), hex.slice(20)].join('-');
-}
-
-function uploadErrorMessage(error: unknown): string {
+function uploadErrorMessage(error: unknown, fallback: string): string {
   if (error instanceof RunUploadHttpError) {
     if (error.status === 413) return 'Пакет превышает предел загрузки.';
-    if (error.status === 409) return 'Этот ключ уже использован для другого пакета. Измените выбор файлов перед отправкой.';
     if (error.status < 500 && error.details) return error.details.message;
   }
-  return 'Не удалось подтвердить приём пакета. Повторите отправку с теми же файлами.';
+  return fallback;
+}
+
+function readyPacket(
+  report: UploadFile[], documents: UploadFile[], sourceRunId?: string, scanScope?: ScanScope,
+): Parameters<typeof prepareRunTransfer>[0] | null {
+  if (report.length !== 1 || documents.length === 0) return null;
+  const items = [...report, ...documents];
+  if (items.some((item) => 'file' in item && item.state !== 'ready')) return null;
+  const reportFile = 'file' in report[0] ? report[0].file : undefined;
+  const documentFiles = documents.flatMap((item) => 'file' in item ? [item.file] : []);
+  const scope = scanScope ? { scanScope: { ...scanScope, contractNumber: scanScope.contractNumber.trim() } } : {};
+  if (!sourceRunId) return reportFile ? { report: reportFile, documents: documentFiles, ...scope } : null;
+  return {
+    report: reportFile,
+    documents: documentFiles,
+    sourceRunId,
+    retainedDocumentIds: items.flatMap((item) => 'retained' in item ? [item.retained.id] : []),
+    ...scope,
+  };
+}
+
+function transferLabel(reading: boolean, uploading: boolean, percent: number | undefined, starting: boolean) {
+  if (starting) return 'Запуск проверки…';
+  if (uploading) return percent === 100 ? 'Ожидаем подтверждения загрузки…' : 'Загрузка файлов…';
+  if (reading) return 'Чтение файлов…';
+  return '';
 }
 
 const publicDemo = import.meta.env.VITE_DOCCHECK_PUBLIC_DEMO === '1';
 
-export function NewCheck() {
+export function NewCheck({ initialPack }: { initialPack?: InitialRunPack } = {}) {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const manualScope = params.get('scope') === 'manual';
@@ -59,245 +78,177 @@ export function NewCheck() {
   const restoreUploadFocus = useRef(false);
   const [announceAccepted, setAnnounceAccepted] = useState(false);
   const [receipts, setReceipts] = useState<QueueReceipt[]>([]);
-  const [demoTransfer, setDemoTransfer] = useState<DemoTransfer>();
-  const demoAttempt = useRef<{ key: string; send?: ReturnType<typeof prepareRunUpload> }>(null);
   const clearListedReceipts = useCallback(({ entries }: CheckHistory) => {
     const listed = new Set(entries.map(({ id }) => id));
     setReceipts((previous) => previous.filter(({ id }) => !listed.has(id)));
   }, []);
   const history = useRunHistory({ enabled: !publicDemo, onPage: clearListedReceipts });
-  const nextFileId = useRef(0);
   const active = useRef<AbortController | null>(null);
-  const attempt = useRef<ReturnType<typeof prepareRunUpload> | null>(null);
-  const [report, setReport] = useState<SelectedFile[]>([]);
-  const [documents, setDocuments] = useState<SelectedFile[]>([]);
-  const [errors, setErrors] = useState({ report: '', documents: '' });
+  const { report, documents, errors, withinLimits, takeFiles, removeFile, clearFiles } = useRunUploadFiles(initialPack);
   const [submitError, setSubmitError] = useState('');
-  const [isSending, setIsSending] = useState(false);
-  const busyDemo = isSending && demoTransfer !== undefined;
+  const [starting, setStarting] = useState(false);
   const [scanScope, setScanScope] = useState(initialScanScope);
-  const requireScanScope = manualScope && /\.(pdf|png)$/i.test(report[0]?.file.name ?? '');
-  const validScanScope = scanScope.contractNumber.trim().length > 0
-    && /^\d{4}-\d{2}-\d{2}$/.test(scanScope.periodStart)
-    && /^\d{4}-\d{2}-\d{2}$/.test(scanScope.periodEnd)
-    && scanScope.periodStart <= scanScope.periodEnd
-    && scanScope.periodStart.slice(0, 4) === scanScope.periodEnd.slice(0, 4)
-    && Number.isInteger(scanScope.page) && scanScope.page >= 1 && scanScope.page <= 12
-    && Number.isSafeInteger(scanScope.stage) && scanScope.stage >= 1;
-  const canStart = report.length === 1 && documents.length > 0
-    && (!requireScanScope || validScanScope);
+  const requireScanScope = manualScope && report.length === 1 && /\.(pdf|png)$/i.test(uploadFileInfo(report[0]).name);
+  const sourceRunId = initialPack?.runId;
+  const packet = useMemo(() => {
+    if (publicDemo || !withinLimits || (requireScanScope && !validScanScope(scanScope))) return null;
+    return readyPacket(report, documents, sourceRunId, requireScanScope ? scanScope : undefined);
+  }, [report, documents, sourceRunId, withinLimits, requireScanScope, scanScope]);
+  const prepared = usePreparedRun(packet);
+  const transfer = prepared.state?.phase === 'uploading' ? prepared.state : null;
+  const ready = prepared.state?.phase === 'ready';
+  const reading = [...report, ...documents].some((item) => 'file' in item && item.state === 'reading');
+  const status = transferLabel(reading, Boolean(transfer), transfer?.percent, starting);
+  const transferError = prepared.state?.phase === 'failed'
+    ? uploadErrorMessage(prepared.state.error, 'Не удалось подтвердить приём пакета.') : '';
 
   useEffect(() => () => active.current?.abort(), []);
 
-  useEffect(() => {
-    attempt.current = null;
-  }, [manualScope]);
-
-  function changeFiles(group: FileGroup, next: SelectedFile[]) {
-    attempt.current = null;
-    const setFiles = group === 'report' ? setReport : setDocuments;
-    setFiles(next);
+  function selectionChanged(group: FileGroup) {
     if (group === 'report') setScanScope(initialScanScope);
-    setErrors((previous) => ({ ...previous, [group]: '' }));
+    setAnnounceAccepted(false);
     setSubmitError('');
   }
 
   function updateScope(values: Partial<ScanScope>) {
-    attempt.current = null;
     setSubmitError('');
     setScanScope((previous) => ({ ...previous, ...values }));
   }
 
-  function removeFile(group: FileGroup, id: number) {
+  function chooseFiles(incoming: FileList, group: FileGroup) {
     if (active.current) return;
-    const files = group === 'report' ? report : documents;
-    changeFiles(group, files.filter((item) => item.id !== id));
+    if (takeFiles(incoming, group)) selectionChanged(group);
   }
 
-  function takeFiles(incoming: FileList, group: FileGroup) {
-    if (publicDemo || active.current || incoming.length === 0) return;
-    const selected = Array.from(incoming);
-    const isReport = group === 'report';
-    const setError = (message: string) => setErrors((previous) => ({ ...previous, [group]: message }));
-    if (isReport && selected.length > 1) {
-      setError('Выберите один файл КФЗ.');
-      return;
-    }
-    if (!selected.every((file) => file.size > 0 && formats.some(
-      (extension) => file.name.toLowerCase().endsWith(extension),
-    ))) {
-      setError('Добавьте непустые PDF, DOCX, XLSX или PNG.');
-      return;
-    }
-    if (selected.some((file) => file.size > maxFileSize)) {
-      setError('Размер одного файла не должен превышать 50 МиБ.');
-      return;
-    }
-    if (!isReport && documents.length + selected.length > maxDocuments) {
-      setError('Можно добавить до 100 первичных документов.');
-      return;
-    }
-
-    const retainedFiles = isReport ? documents : [...report, ...documents];
-    const size = selected.reduce((total, file) => total + file.size, 0)
-      + retainedFiles.reduce((total, item) => total + item.file.size, 0);
-    if (size > maxPackageSize) {
-      setError('Размер пакета не должен превышать 250 МиБ.');
-      return;
-    }
-
-    const items = selected.map((file) => ({ id: nextFileId.current++, file }));
-    changeFiles(group, isReport ? items : [...documents, ...items]);
+  function removeSelectedFile(group: FileGroup, id: string) {
+    if (active.current) return;
+    removeFile(group, id);
+    selectionChanged(group);
   }
 
   useEffect(() => {
-    if (isSending || !restoreUploadFocus.current) return;
+    if (starting || !restoreUploadFocus.current) return;
     restoreUploadFocus.current = false;
     if (document.activeElement === document.body) chooseReport.current?.focus({ preventScroll: true });
-  }, [isSending]);
+  }, [starting]);
 
   async function submit() {
-    if (publicDemo || active.current || !canStart) return;
+    if (publicDemo || active.current || !ready) return;
+    const uploadId = prepared.start();
+    if (!uploadId) return;
     const controller = new AbortController();
     active.current = controller;
     setAnnounceAccepted(false);
-    setIsSending(true);
+    setStarting(true);
     setSubmitError('');
     const submitHadFocus = document.activeElement === submitButton.current;
     try {
-      attempt.current ??= prepareRunUpload({
-        report: report[0].file,
-        documents: documents.map(({ file }) => file),
-        scanScope: requireScanScope
-          ? { ...scanScope, contractNumber: scanScope.contractNumber.trim() }
-          : undefined,
-      }, newIdempotencyKey());
-      const accepted = await attempt.current(controller.signal);
+      const accepted = await startPreparedRun(uploadId, controller.signal);
       if (controller.signal.aborted) return;
-      recordReceipt({ id: accepted.run_id, documentCount: 1 + documents.length });
+      if (initialPack) {
+        void navigate('/checks/new#queue', { replace: true });
+        return;
+      }
+      const receipt = { id: accepted.run_id, documentCount: 1 + documents.length };
+      setReceipts((previous) => [receipt, ...previous.filter(({ id }) => id !== receipt.id)].slice(0, 20));
+      history.refresh();
       setAnnounceAccepted(true);
       restoreUploadFocus.current = submitHadFocus;
-      setReport([]);
-      setScanScope(initialScanScope);
-      if (manualScope) void navigate('/checks/new', { replace: true });
-      setDocuments([]);
-      setErrors({ report: '', documents: '' });
-      attempt.current = null;
+      clearFiles();
+      if (manualScope) {
+        setScanScope(initialScanScope);
+        void navigate('/checks/new#queue', { replace: true });
+      }
     } catch (error) {
-      if (!controller.signal.aborted) setSubmitError(uploadErrorMessage(error));
-    } finally {
-      active.current = null;
-      if (!controller.signal.aborted) setIsSending(false);
-    }
-  }
-
-  function recordReceipt(receipt: QueueReceipt) {
-    setReceipts((previous) => [receipt, ...previous.filter(({ id }) => id !== receipt.id)].slice(0, 20));
-    history.refresh();
-  }
-
-  async function submitDemo() {
-    if (publicDemo || active.current) return;
-    const controller = new AbortController();
-    const request = demoAttempt.current ??= { key: newIdempotencyKey() };
-    const startedAt = new Date().toISOString();
-    active.current = controller;
-    setAnnounceAccepted(false);
-    setIsSending(true);
-    setSubmitError('');
-    setDemoTransfer({ id: request.key, createdAt: startedAt });
-    try {
-      request.send ??= prepareRunUpload(await loadDemoUpload(controller.signal), request.key);
-      const accepted = await request.send(controller.signal, (percent) => {
-        if (!controller.signal.aborted) setDemoTransfer({ id: request.key, createdAt: startedAt, percent });
-      });
       if (controller.signal.aborted) return;
-      recordReceipt({ id: accepted.run_id, documentCount: demoUploadFiles.length, synthetic: true, createdAt: startedAt });
-      demoAttempt.current = null;
-      setDemoTransfer(undefined);
-      setAnnounceAccepted(true);
-    } catch (error) {
-      if (!controller.signal.aborted) {
-        setDemoTransfer({ id: request.key, createdAt: startedAt, error: uploadErrorMessage(error) });
+      if (error instanceof RunUploadHttpError && (error.status === 404 || error.status === 410)) {
+        prepared.replaceExpired(uploadId);
+      } else {
+        setSubmitError(uploadErrorMessage(error, 'Не удалось подтвердить запуск. Попробуйте ещё раз.'));
       }
     } finally {
       active.current = null;
-      if (!controller.signal.aborted) setIsSending(false);
+      if (!controller.signal.aborted) setStarting(false);
     }
   }
 
   return (
     <div className="upload-page">
-      <h1>Новая проверка</h1>
+      {sourceRunId && <Link to={'/checks/' + encodeURIComponent(sourceRunId)}>К результату</Link>}
+      <h1>{initialPack ? 'Изменить комплект' : 'Новая проверка'}</h1>
       {!publicDemo && <p className="upload-intro">Добавьте КФЗ и первичные документы.</p>}
       {publicDemo ? (
         <section className="upload-card upload-public-notice mt-6">
           <h2>Загрузка доступна в локальной установке</h2>
         </section>
       ) : (
-        <div className="mt-6 grid grid-cols-1 items-start gap-5 md:grid-cols-2">
-          <UploadBlock chooseButton={chooseReport} group="report" files={report} error={errors.report} disabled={isSending}
-            onFiles={takeFiles} onRemove={(id) => removeFile('report', id)} />
-          <UploadBlock group="documents" files={documents} error={errors.documents} disabled={isSending}
-            onFiles={takeFiles} onRemove={(id) => removeFile('documents', id)} />
-        </div>
+        <>
+          <div className="mt-6 grid grid-cols-1 items-start gap-5 md:grid-cols-2">
+            <UploadBlock chooseButton={chooseReport} group="report" files={report} error={errors.report} disabled={starting}
+              transferring={Boolean(transfer)} onFiles={chooseFiles} onRemove={(id) => removeSelectedFile('report', id)} />
+            <UploadBlock group="documents" files={documents} error={errors.documents} disabled={starting}
+              transferring={Boolean(transfer)} onFiles={chooseFiles} onRemove={(id) => removeSelectedFile('documents', id)} />
+          </div>
+          {requireScanScope && <fieldset className="upload-card mt-6" disabled={starting}>
+            <legend className="px-2">Строка КФЗ</legend>
+            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+              <label className="grid gap-1">Номер договора
+                <input className="rounded border p-2" value={scanScope.contractNumber}
+                  onChange={(event) => updateScope({ contractNumber: event.currentTarget.value })} />
+              </label>
+              <label className="grid gap-1">Начало периода
+                <input className="rounded border p-2" type="date" value={scanScope.periodStart}
+                  onChange={(event) => updateScope({ periodStart: event.currentTarget.value })} />
+              </label>
+              <label className="grid gap-1">Конец периода
+                <input className="rounded border p-2" type="date" value={scanScope.periodEnd}
+                  onChange={(event) => updateScope({ periodEnd: event.currentTarget.value })} />
+              </label>
+              <label className="grid gap-1">Этап
+                <input className="rounded border p-2" type="number" min={1} value={scanScope.stage || ''}
+                  onChange={(event) => updateScope({ stage: event.currentTarget.valueAsNumber })} />
+              </label>
+              <label className="grid gap-1">Страница
+                <input className="rounded border p-2" type="number" min={1} max={12}
+                  value={scanScope.page || ''}
+                  onChange={(event) => updateScope({ page: event.currentTarget.valueAsNumber })} />
+              </label>
+            </div>
+          </fieldset>}
+          <div className="upload-navigation mt-5 flex flex-wrap items-center gap-3">
+            <Button ref={submitButton} disabled={starting || !ready} onClick={() => { void submit(); }}>
+              Запустить проверку <WorkspaceIcon name="arrow" size={17} />
+            </Button>
+            <p role="status" className={status || ready ? 'upload-transfer' : 'sr-only'}>
+              {status && <UploadSpinner />}
+              {status || (ready && 'Пакет загружен') || (announceAccepted && 'Проверка поставлена в очередь.')}
+            </p>
+          </div>
+          {transfer && <div className="upload-transfer-progress">
+            <RunProgressBar label="Загрузка пакета" value={transfer.percent ?? null} valueText={status} />
+          </div>}
+          {transferError && <div className="upload-validation">
+            <p role="alert">{transferError}</p>
+            <button type="button" onClick={prepared.retry}>Повторить загрузку</button>
+          </div>}
+          {submitError && !transfer && !transferError && <p className="upload-validation" role="alert">{submitError}</p>}
+          <RunQueue entries={history.page?.entries} receipts={receipts}
+            loading={history.loading} error={history.error} onRetry={history.refresh} />
+        </>
       )}
-      {!publicDemo && requireScanScope && <fieldset className="upload-card mt-6" disabled={isSending}>
-        <legend className="px-2">Строка КФЗ</legend>
-        <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
-          <label className="grid gap-1">Номер договора
-            <input className="rounded border p-2" value={scanScope.contractNumber}
-              onChange={(event) => updateScope({ contractNumber: event.currentTarget.value })} />
-          </label>
-          <label className="grid gap-1">Начало периода
-            <input className="rounded border p-2" type="date" value={scanScope.periodStart}
-              onChange={(event) => updateScope({ periodStart: event.currentTarget.value })} />
-          </label>
-          <label className="grid gap-1">Конец периода
-            <input className="rounded border p-2" type="date" value={scanScope.periodEnd}
-              onChange={(event) => updateScope({ periodEnd: event.currentTarget.value })} />
-          </label>
-          <label className="grid gap-1">Этап
-            <input className="rounded border p-2" type="number" min={1} value={scanScope.stage || ''}
-              onChange={(event) => updateScope({ stage: event.currentTarget.valueAsNumber })} />
-          </label>
-          <label className="grid gap-1">Страница
-            <input className="rounded border p-2" type="number" min={1} max={12}
-              value={scanScope.page || ''}
-              onChange={(event) => updateScope({ page: event.currentTarget.valueAsNumber })} />
-          </label>
-        </div>
-      </fieldset>}
-      <div className="upload-navigation mt-5 flex flex-wrap items-center gap-3">
-        {!publicDemo && <Button ref={submitButton} disabled={isSending || !canStart} onClick={() => { void submit(); }}>
-          Запустить проверку <WorkspaceIcon name="arrow" size={17} />
-        </Button>}
-        {publicDemo
-          ? <Link className="workspace-button workspace-button-outline upload-example" to={demoRunPath}>
-              Открыть готовый синтетический результат
-            </Link>
-          : <Button variant="outline" aria-disabled={isSending} disabled={isSending && !busyDemo} onClick={() => { void submitDemo(); }}>
-              Загрузить пример
-            </Button>}
-      </div>
-      {submitError && <p className="upload-validation" role="alert">{submitError}</p>}
-      <p role="status" className={isSending && !busyDemo ? undefined : 'sr-only'}>
-        {isSending ? 'Загрузка файлов…' : announceAccepted && 'Сервер получил пакет.'}
-      </p>
-      {!publicDemo && <RunQueue entries={history.page?.entries} receipts={receipts} demoTransfer={demoTransfer}
-        loading={history.loading} error={history.error} onRetry={history.refresh} />}
     </div>
   );
 }
 
-function UploadBlock({ group, files, error, disabled, chooseButton, onFiles, onRemove }: {
+function UploadBlock({ group, files, error, disabled, transferring, chooseButton, onFiles, onRemove }: {
   group: FileGroup;
-  files: SelectedFile[];
+  files: UploadFile[];
   error: string;
   disabled: boolean;
+  transferring: boolean;
   chooseButton?: React.Ref<HTMLButtonElement>;
   onFiles: (files: FileList, group: FileGroup) => void;
-  onRemove: (id: number) => void;
+  onRemove: (id: string) => void;
 }) {
   const input = useRef<HTMLInputElement>(null);
   const [over, setOver] = useState(false);
@@ -340,7 +291,7 @@ function UploadBlock({ group, files, error, disabled, chooseButton, onFiles, onR
           {report ? 'Выбрать файл' : 'Выбрать файлы'}
         </Button>
       </div> : <>
-        <UploadFileList files={files} disabled={disabled} onRemove={onRemove} />
+        <UploadFileList files={files} disabled={disabled} transferring={transferring} onRemove={onRemove} />
         <div className="upload-list-actions mt-3">
           <button type="button" disabled={disabled} onClick={() => input.current?.click()}>
             <WorkspaceIcon name="plus" size={16} />

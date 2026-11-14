@@ -78,6 +78,22 @@ def no_model(*args, **kwargs):
     pytest.fail("Native synthetic data should not need the model")
 
 
+def _prepare_and_start(client, files, data=None):
+    prepared = client.post(
+        "/api/v0/runs/uploads",
+        headers={"Idempotency-Key": str(uuid4())},
+        files=files,
+        data=data,
+    )
+    assert prepared.status_code == 201, prepared.text
+    upload_id = prepared.json()["upload_id"]
+    assert client.get(f"/api/v0/runs/{upload_id}").status_code == 404
+    accepted = client.post(f"/api/v0/runs/uploads/{upload_id}/start")
+    assert accepted.status_code == 202
+    assert accepted.json()["run_id"] == upload_id
+    return upload_id
+
+
 @pytest.mark.parametrize(
     "missing_article",
     [False, True],
@@ -157,16 +173,13 @@ def test_scanned_breakdown_retains_unverified_values_without_counting_them_twice
     )
     settings = Settings(database_url, upload_root=tmp_path / "uploads")
     with TestClient(create_app(settings)) as client:
-        accepted = client.post(
-            "/api/v0/runs",
-            headers={"Idempotency-Key": str(uuid4())},
-            files=[
+        run_id = _prepare_and_start(
+            client,
+            [
                 ("report", (report.name, report.read_bytes())),
                 *(("documents", (p.name, p.read_bytes())) for p in files),
             ],
         )
-        assert accepted.status_code == 202
-        run_id = accepted.json()["run_id"]
         assert run_document_worker(
             client.app.state.engine,
             settings.upload_root,
@@ -214,3 +227,83 @@ def test_scanned_breakdown_retains_unverified_values_without_counting_them_twice
         labor_export = next(row for row in book["Сверка"].values if row[0] == labor["id"])
         assert labor_export[4:9] == ("17.625", None, None, None, "Не проверен")
         book.close()
+
+
+def test_bundled_example_counts_the_document_total(database_url, tmp_path):
+    root = Path(__file__).resolve().parents[2] / "frontend" / "public" / "demo"
+    report, act = root / "report.xlsx", root / "act.docx"
+    settings = Settings(database_url, upload_root=tmp_path / "uploads")
+    with TestClient(create_app(settings)) as client:
+        run_id = _prepare_and_start(
+            client,
+            [
+                ("report", (report.name, report.read_bytes())),
+                ("documents", (act.name, act.read_bytes())),
+            ],
+        )
+        assert run_document_worker(
+            client.app.state.engine,
+            settings.upload_root,
+            V32Processor(no_model, no_model),
+            once=True,
+        )
+        findings = client.get(f"/api/v0/runs/{run_id}/findings")
+        assert findings.status_code == 200
+        result = findings.json()
+        assert result["synthetic"]
+        row = next(row for row in result["rows"] if row["id"] == "general_admin")
+        assert row["expected_value"] == "8112.50"
+        assert row["calculation"]["components"][0]["amount"] == "8112.50"
+
+
+@pytest.mark.parametrize(
+    ("second_issuer", "second_kind", "expected"),
+    [
+        ("ООО Бета", "Акт", "399.12"),
+        ("ООО Альфа", "Акт", None),
+        (None, "Акт", None),
+        ("ООО Альфа", "УПД", "399.12"),
+    ],
+)
+def test_equal_primary_numbers_require_compatible_issuer_and_kind(
+    database_url, tmp_path, second_issuer, second_kind, expected
+):
+    report, _ = write_reconciliation_case(tmp_path)
+    files = []
+    for i, (issuer, kind, amount) in enumerate(
+        [("ООО Альфа", "Акт", "200,00"), (second_issuer, second_kind, "199,12")]
+    ):
+        source = Document()
+        source.add_paragraph(f"{kind} № 17")
+        if issuer:
+            source.add_paragraph(f"Исполнитель: {issuer}")
+        source.add_paragraph(f"Договор № {CONTRACT}")
+        source.add_paragraph(f"Период: {START} — {END}")
+        source.add_paragraph("Оказаны общехозяйственные услуги.")
+        source.add_paragraph(f"Итого: {amount} руб.")
+        path = tmp_path / f"synthetic-{i}.docx"
+        source.save(path)
+        files.append(("documents", (path.name, path.read_bytes())))
+
+    settings = Settings(database_url, upload_root=tmp_path / "uploads")
+    with TestClient(create_app(settings)) as client:
+        run_id = _prepare_and_start(
+            client, [("report", (report.name, report.read_bytes())), *files]
+        )
+        assert run_document_worker(
+            client.app.state.engine,
+            settings.upload_root,
+            V32Processor(no_model, no_model),
+            once=True,
+        )
+        findings = client.get(f"/api/v0/runs/{run_id}/findings")
+        assert findings.status_code == 200
+        row = next(row for row in findings.json()["rows"] if row["id"] == "general_admin")
+        assert row["expected_value"] == expected
+        if expected is not None:
+            assert row["status"] == "verified"
+            assert len(row["calculation"]["components"]) == 2
+        else:
+            assert row["status"] == "unverified"
+            assert row["calculation"]["components"] == []
+            assert {reason["code"] for reason in row["reasons"]} == {"duplicate_identity"}

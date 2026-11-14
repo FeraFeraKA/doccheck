@@ -14,6 +14,7 @@ from PIL import Image
 from doccheck_backend.contracts.locators import PageLocator
 from doccheck_backend.normalization import normalize_document_date
 from doccheck_backend.page_ocr import (
+    OcrLine,
     PixelBox,
     page_locator,
     recognize_crop,
@@ -392,15 +393,8 @@ def _stage_bands(
             yield top, bottom, str(int(match[1])), match[2]
 
 
-def read_scan_page(image: Image.Image, page: int) -> ScanPage | None:
-    """Return OCR-addressed row candidates and periods printed by the report."""
-    ink, xs, ys = _table_rules(image)
-    if len(xs) < 6 or xs[-1] - xs[0] < image.width * 0.55:
-        return None
-    lines = recognize_lines(image.crop((0, 0, image.width, ys[0])))
-    contracts = {match[1] for line in lines for match in _CONTRACT.finditer(line.text)}
-    contract = next(iter(contracts)) if len(contracts) == 1 else None
-    periods = {
+def _header_periods(lines: list[OcrLine]) -> set[ReportPeriod]:
+    return {
         period
         for line in lines
         if (
@@ -409,22 +403,44 @@ def read_scan_page(image: Image.Image, page: int) -> ScanPage | None:
         )
         is not None
     }
+
+
+def _visible_row_period(
+    image: Image.Image,
+    xs: list[int],
+    top: int,
+    bottom: int,
+    year: str,
+    header_periods: set[ReportPeriod],
+) -> ReportPeriod | None:
+    if len(header_periods) > 1:
+        return None
+    raw = recognize_crop(image, (xs[1] + 4, top + 3, xs[2] - 4, bottom - 3))
+    row = _dates(_ROW_PERIOD.fullmatch(" ".join(raw.split())))
+    if row is None and re.search(r"\d{1,2}[./]\d{1,2}[./]\d{2,4}", raw):
+        return None
+    first, last = f"{year}-01-01", f"{year}-12-31"
+    if not header_periods:
+        return row if row and first <= row[0] <= row[1] <= last else None
+    start, end = next(iter(header_periods))
+    start, end = max(start, first), min(end, last)
+    if start > end or (row and not start <= row[0] <= row[1] <= end):
+        return None
+    return row or (start, end)
+
+
+def read_scan_page(image: Image.Image, page: int) -> ScanPage | None:
+    """Return OCR-addressed row candidates and periods printed by the report."""
+    ink, xs, ys = _table_rules(image)
+    if len(xs) < 6 or xs[-1] - xs[0] < image.width * 0.55:
+        return None
+    lines = recognize_lines(image.crop((0, 0, image.width, ys[0])))
+    contracts = {match[1] for line in lines for match in _CONTRACT.finditer(line.text)}
+    contract = next(iter(contracts)) if len(contracts) == 1 else None
+    periods = _header_periods(lines)
     rows = []
     for top, bottom, stage, year in _stage_bands(image, xs, ys):
-        raw = recognize_crop(image, (xs[1] + 4, top + 3, xs[2] - 4, bottom - 3))
-        row_period = _dates(_ROW_PERIOD.fullmatch(" ".join(raw.split())))
-        invalid_dates = row_period is None and re.search(r"\d{1,2}[./]\d{1,2}[./]\d{2,4}", raw)
-        period = None
-        if len(periods) < 2 and not invalid_dates:
-            if periods:
-                start, end = next(iter(periods))
-                start, end = max(start, f"{year}-01-01"), min(end, f"{year}-12-31")
-                if start <= end and (
-                    row_period is None or start <= row_period[0] <= row_period[1] <= end
-                ):
-                    period = row_period or (start, end)
-            elif row_period and row_period[0][:4] == row_period[1][:4] == year:
-                period = row_period
+        period = _visible_row_period(image, xs, top, bottom, year, periods)
         locator = page_locator(page, image, (xs[0], top, xs[2], bottom)).model_copy(
             update={"fragment_id": f"kfz-stage-{stage}-{year}"}
         )
@@ -494,8 +510,6 @@ def read_report_row(
     selected: PageLocator | None,
     contract_number: str,
     period: tuple[str, str] | None = None,
-    *,
-    allow_header_subperiod: bool = False,
 ) -> ReportReading | None:
     """Return values only when the report contract, header and row can be located."""
     if selected is not None and selected.page != page:
@@ -511,32 +525,12 @@ def read_report_row(
     contracts = {match[1] for line in lines for match in _CONTRACT.finditer(line.text)}
     if contracts != {contract_number}:
         return None
-    bounds = {
-        tuple(normalize_document_date(value).value for value in match.groups())
-        for line in lines
-        if (match := _EXPLICIT_PERIOD.fullmatch(line.text))
-    }
-    addressed = selected is not None and selected.bbox is not None and selected.fragment_id
-    if (
-        bounds
-        and bounds != {period}
-        and not (
-            allow_header_subperiod
-            and addressed
-            and len(bounds) == 1
-            and any(
-                start and end and start <= period[0] <= period[1] <= end for start, end in bounds
-            )
-        )
-    ):
-        return None
-    if not bounds and selected is None:
-        return None
+    bounds = _header_periods(lines)
     band = _row_band(image, selected, xs, ys)
     if band is None:
         return None
     top, bottom, year = band
-    if period[0][:4] != year or period[1][:4] != year:
+    if _visible_row_period(image, xs, top, bottom, year, bounds) != period:
         return None
     header_edges = [y for y in ys if y <= top]
     groups = _headers(image, ink, xs, header_edges)

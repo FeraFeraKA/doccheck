@@ -1,20 +1,20 @@
 import type { ReactNode } from 'react';
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Link, useLocation, useParams } from 'react-router';
+import { Link, Navigate, useLocation, useParams } from 'react-router';
 import { loadCheckRun, runStatusLabels } from './checkData';
 import type { RunDetails } from './checkData';
-import { demoJob, demoTitle } from './demoData';
-import { SourceWorkspace, useSourceWorkspace } from './SourceWorkspace';
+import { demoTitle } from './demoData';
+import { ResultSourceWorkspace, SourceWorkspace, useSourceWorkspace } from './SourceWorkspace';
 import { FindingsHttpError, loadFindings } from './loadFindings';
 import { ResultHeader } from './ResultHeader';
 import type { CheckView } from './ResultHeader';
 import { AdditionalChecks, ResultConclusion } from './ResultSummary';
-import { documentDecisionLabels, ResultDocuments } from './ResultDocuments';
+import { ResultDocuments } from './ResultDocuments';
 import { ResultTable } from './ResultTable';
-import { formatDecimal, formatLocation, statusLabels } from './reviewResult';
+import { formatLocation } from './reviewResult';
 import type { ReviewResult } from './reviewResult';
 import { useCheckData } from './useCheckData';
-import { runTitle } from './runTitle';
+import { runQueuePath, runTitle } from './runTitle';
 import { isRunId } from './runStatusApi';
 import { RunArchiveAction } from './RunArchiveAction';
 import './result-workspace.css';
@@ -66,6 +66,7 @@ export function CheckDetail({ view, loadRun = loadCheckRun }: {
 function RunContent({ id, view, run }: { id: string; view: CheckView; run: RunDetails }) {
   const { result, status } = run;
   const hasStoredResult = status === 'completed' || status === 'completed_with_issues';
+  if (status === 'queued' || status === 'processing') return <Navigate to={runQueuePath(id)} replace />;
   if (result) return <ResultContent id={id} view={view} result={result} run={run} synthetic stored={false} />;
   if (hasStoredResult) return <StoredFindings id={id} view={view} run={run} />;
   return <PendingRun run={run} />;
@@ -75,10 +76,6 @@ function RunState({ run }: { run: RunDetails }) {
   const { status } = run;
   return <>
       <p role="status" className="result-run-state">Состояние проверки · {runStatusLabels[status]}</p>
-      {run.progress && (
-        <p>Обработано документов: {run.progress.processed} из {run.progress.total}</p>
-      )}
-      {status === 'processing' && !run.progress && <p>Число обработанных документов пока неизвестно.</p>}
       {status === 'failed' && <p role="alert">{run.error ?? 'Не удалось выполнить проверку.'}</p>}
       {status === 'completed_with_issues' && run.error && <p role="alert">{run.error}</p>}
   </>;
@@ -145,17 +142,18 @@ function ResultContent({ id, view, result, run, synthetic, stored }: ResultConte
   const { scope } = result;
   const runPath = '/checks/' + encodeURIComponent(id);
   const exportRunId = stored && isRunId(id) ? id : undefined;
-  const syntheticLabel = id === demoJob.run_id ? 'Синтетика · готовый пример'
-    : synthetic ? 'Синтетика · сохранённая проверка' : undefined;
+  const syntheticLabel = synthetic ? (stored ? 'Синтетика · сохранённая проверка' : 'Синтетика') : undefined;
+  const localRunId = import.meta.env.VITE_DOCCHECK_PUBLIC_DEMO === '1' ? undefined : exportRunId;
+  const archiveAction = localRunId
+    ? <RunArchiveAction runId={localRunId} initialArchivedAt={archivedAt} onChange={setArchivedAt} />
+    : undefined;
 
-  function renderHeader(documentFilters?: ReactNode, documentActions?: ReactNode) {
+  function renderHeader(documentFilters?: ReactNode) {
     return <>
       <ResultHeader title={result.reportNumber ? runTitle(id, result.reportNumber) : synthetic ? demoTitle : run.title}
         runPath={runPath} view={view} scope={scope} syntheticLabel={syntheticLabel}
-        documentFilters={documentFilters} documentActions={documentActions}
-        archiveAction={exportRunId && import.meta.env.VITE_DOCCHECK_PUBLIC_DEMO !== '1'
-          ? <RunArchiveAction runId={exportRunId} initialArchivedAt={archivedAt} onChange={setArchivedAt} />
-          : undefined} />
+        documentFilters={documentFilters}
+        editPackPath={localRunId && '/checks/new?from=' + encodeURIComponent(localRunId)} />
       {stored && (run.status !== 'completed' || run.error) &&
         <div className="stored-run-status mt-2 text-[13px]"><RunState run={run} /></div>}
     </>;
@@ -166,6 +164,9 @@ function ResultContent({ id, view, result, run, synthetic, stored }: ResultConte
       {view !== 'documents' && view !== 'exceptions' && renderHeader()}
       {(view === 'table' || view === 'conclusion') && <ResultConclusion result={result}
         exportRunId={view === 'conclusion' ? exportRunId : undefined} />}
+      {(view === 'conclusion' || (view === 'table' && result.rows.length === 0)) && (
+        <ResultSourceWorkspace result={result} storedRunId={stored ? id : undefined} />
+      )}
       {view === 'table' && <>
         <div className="mt-4">
           {result.rows.length > 0
@@ -176,10 +177,11 @@ function ResultContent({ id, view, result, run, synthetic, stored }: ResultConte
         </div>
         {result.rows.length === 0 && <AdditionalChecks result={result} runPath={runPath} onOpenRow={() => {}} />}
       </>}
+      {view === 'table' && archiveAction && <div className="mt-6">{archiveAction}</div>}
       {(view === 'documents' || view === 'exceptions') && <ResultDocuments
         key={view} result={result} runPath={runPath} storedRunId={stored ? id : undefined}
         exceptions={view === 'exceptions'} synthetic={synthetic}
-        exportRunId={view === 'documents' ? exportRunId : undefined}
+        exportRunId={exportRunId} archiveAction={archiveAction}
         renderHeader={renderHeader} rowEvidenceIds={resultRowEvidenceIds}
       />}
       {view === 'log' && <CheckLog synthetic={synthetic} />}
@@ -215,8 +217,7 @@ function Reconciliation({ result, storedRunId, runPath, rowJump, onOpenRow }: {
   const [query, setQuery] = useState('');
   const [selectedId, setSelectedId] = useState(() => rows.find(({ status }) => status === 'discrepancy')?.id);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
-  const [evidenceId, setEvidenceId] = useState<string>();
-  const sourceWorkspace = useSourceWorkspace({ result, storedRunId, onEvidenceChange: setEvidenceId });
+  const sourceWorkspace = useSourceWorkspace({ result, storedRunId });
   const { clear: clearSource } = sourceWorkspace;
   const [focused, setFocused] = useState(false);
   const workspace = useRef<HTMLDialogElement>(null);
@@ -281,7 +282,6 @@ function Reconciliation({ result, storedRunId, runPath, rowJump, onOpenRow }: {
     closeFocus(false);
     const selected = rows.find((item) => item.id === selectedRowId) ?? row;
     const linkedIssue = summary.primary_issues.find((item) => item.id === selected?.root_issue_id);
-    setEvidenceId(id);
     sourceWorkspace.openEvidence(id, trigger, selected, [...new Set(resultRowEvidenceIds(selected, linkedIssue))]);
   }
 
@@ -293,7 +293,6 @@ function Reconciliation({ result, storedRunId, runPath, rowJump, onOpenRow }: {
     setFilter('all');
     setQuery('');
     setSelectedId(id);
-    setEvidenceId(undefined);
     clearSource();
     setExpanded((previous) => new Set(previous).add(id));
   }, [rowJump, clearSource]);
@@ -333,7 +332,6 @@ function Reconciliation({ result, storedRunId, runPath, rowJump, onOpenRow }: {
 
   function selectRow(id?: string) {
     setSelectedId(id);
-    setEvidenceId(undefined);
     clearSource();
   }
 
@@ -364,38 +362,6 @@ function Reconciliation({ result, storedRunId, runPath, rowJump, onOpenRow }: {
     ['unverified', 'Не проверено', summary.counts.unverified],
     ['verified', 'Подтверждено', summary.counts.verified],
   ] as const;
-  const issue = summary.primary_issues.find(({ id }) => id === row?.root_issue_id);
-  const fileErrorIds = new Set(issue?.file_error_refs);
-  const affectedFiles = documents.filter((item) => item.errors.some((error) => fileErrorIds.has(error.id)));
-  const refs = new Set(resultRowEvidenceIds(row, issue));
-  const sources = evidence.filter(({ id }) => refs.has(id));
-  const sourcesById = new Map(sources.map((item) => [item.id, item]));
-  const source = sources.find(({ id }) => id === (evidenceId ??
-    (sourceWorkspace.row?.id === row?.id ? sourceWorkspace.evidenceId : undefined)))
-    ?? sources[0];
-  const sourceIndex = sources.findIndex(({ id }) => id === source?.id);
-  const document = source && documentsById.get(source.document_id);
-
-  function selectSource(id: string) {
-    setEvidenceId(id);
-    if (sourceWorkspace.open) sourceWorkspace.selectEvidence(id);
-  }
-
-  const sourcePicker = sources.length > 0 && <div className="document-picker">
-    <button type="button" aria-label="Предыдущий источник" disabled={sourceIndex <= 0}
-      onClick={() => selectSource(sources[sourceIndex - 1].id)}>‹</button>
-    <label><span className="source-picker-caption">Доказательство</span>
-      <select value={source?.id} onChange={(event) => selectSource(event.target.value)}>
-        {sources.map((item) => (
-          <option key={item.id} value={item.id}>{documentsById.get(item.document_id)?.name}
-            {' · '}{formatSourceChoice(item.locator)}</option>
-        ))}
-      </select>
-    </label>
-    <button type="button" aria-label="Следующий источник" disabled={sourceIndex >= sources.length - 1}
-      onClick={() => selectSource(sources[sourceIndex + 1].id)}>›</button>
-  </div>;
-
   return (
     <>
     <SourceWorkspace workspace={sourceWorkspace} />
@@ -440,9 +406,10 @@ function Reconciliation({ result, storedRunId, runPath, rowJump, onOpenRow }: {
       <div className="reconcile-panes reconcile-panes-stacked">
         <ResultTable
           rows={visible} total={rows.length} filters={filters} filter={filter} query={query}
-          selectedId={row?.id} activeSourceRowId={sourceWorkspace.rowId} selectedEvidenceId={source?.id} expanded={expanded}
+          selectedId={row?.id} activeSourceRowId={sourceWorkspace.rowId}
+          selectedEvidenceId={sourceWorkspace.evidenceId} expanded={expanded}
           tableScroll={tableScroll} selectedRow={selectedRow} evidenceFields={componentEvidenceFields}
-          evidenceById={allEvidenceById} documentsById={documentsById}
+          evidenceById={allEvidenceById} documentsById={documentsById} issuesById={issuesById}
           formatAddress={formatSourceChoice}
           onFilterChange={(value) => { setFilter(value); selectRow(); }}
           onQueryChange={(value) => { setQuery(value); selectRow(); }}
@@ -450,73 +417,9 @@ function Reconciliation({ result, storedRunId, runPath, rowJump, onOpenRow }: {
           onToggle={toggleRow}
           onSelectSource={(rowId, id, trigger) => {
             setSelectedId(rowId);
-            selectSource(id);
-            if (storedRunId) openSource(id, trigger, rowId);
+            openSource(id, trigger, rowId);
           }}
         />
-        <details className="evidence-panel evidence-disclosure">
-          <summary>Основания выбранного показателя</summary>
-          {row ? <div className="evidence-header">
-            <div className="evidence-heading"><h2>{row.label}</h2><span className="checks-status" data-status={row.status}>{statusLabels[row.status]}</span></div>
-            <div className="evidence-amounts">
-              <div><small>В КФЗ · {row.unit}</small><strong>{formatDecimal(row.reported_value)}</strong></div>
-              <div className="expected-readout"><small>По документам · {row.unit}</small><strong>{formatDecimal(row.expected_value)}</strong></div>
-              <div data-alert={row.status === 'discrepancy'}><small>Разница · {row.unit}</small><strong>{formatDecimal(row.delta)}</strong></div>
-            </div>
-          </div> : <p className="source-empty-state">Выберите показатель, чтобы увидеть источник.</p>}
-          {row && <div className="evidence-source-content">
-            <h3 className="evidence-tab-label">Источник</h3>
-            <div className="source-document-content">
-            <div className="evidence-rules">
-              {row.calculation && <p>{row.calculation.formula}</p>}
-              {row.calculation && row.calculation.components.length > 0 && <details>
-                <summary>Основания по слагаемым</summary>
-                <ol aria-label="Слагаемые" className="component-evidence-list">{row.calculation.components.map((component) => (
-                  <li key={component.amount_refs[0]}>
-                    <p>{formatDecimal(component.amount)} {row.unit} · {component.relation_reason}</p>
-                    <ul>{componentEvidenceFields.flatMap(([field, label]) =>
-                      (component[field] ?? []).map((id) => {
-                        const item = sourcesById.get(id);
-                        const file = item && documentsById.get(item.document_id);
-                        return <li key={field + ':' + id}>
-                          {item && file ? (
-                            <button type="button" aria-pressed={source?.id === id} onClick={() => selectSource(id)}>
-                              {label} · {file.name} · {formatSourceChoice(item.locator)}
-                            </button>
-                          ) : <span>{label} · Адрес источника недоступен.</span>}
-                        </li>;
-                      }),
-                    )}</ul>
-                  </li>
-                ))}</ol>
-              </details>}
-            </div>
-            {issue && <p>{issue.message}</p>}
-            {affectedFiles.flatMap((item) => item.errors.filter((error) => fileErrorIds.has(error.id)).map((error) => (
-              <p key={error.id}>{item.name} · {error.message}</p>
-            )))}
-            {!sourceWorkspace.open && sourcePicker}
-            {source && document ? (
-              <dl className="source-address-card">
-                <dt>Документ</dt><dd>{document.name}</dd>
-                {document.decision.state !== 'include' && <>
-                  <dt>Решение по документу</dt><dd>{documentDecisionLabels[document.decision.state]}</dd>
-                </>}
-                <dt>Адрес в результате</dt><dd>{formatLocation(source.locator)}</dd>
-                {'bbox' in source.locator && source.locator.bbox && <>
-                  <dt>Координаты фрагмента</dt><dd>{source.locator.bbox.join(', ')}</dd>
-                </>}
-                <dt>Значение источника</dt><dd>{source.raw_value}</dd>
-              </dl>
-            ) : <p>Адрес источника недоступен.</p>}
-            {storedRunId && source && document && <button type="button" aria-expanded={sourceWorkspace.open}
-              onClick={(event) => openSource(source.id, event.currentTarget)}>
-              Просмотреть источник
-            </button>}
-            {!storedRunId && <p className="checks-caption">В готовом примере доступны адреса источников.</p>}
-            </div>
-          </div>}
-        </details>
       </div>
     </section>
     </dialog>

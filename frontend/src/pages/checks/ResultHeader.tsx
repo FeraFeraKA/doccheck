@@ -10,16 +10,18 @@ const tabs = [
 
 export type CheckView = 'table' | 'documents' | 'exceptions' | 'conclusion' | 'log';
 
-export function ResultHeader({ title, runPath, view, scope, syntheticLabel, documentFilters, documentActions, archiveAction }: {
+export function ResultHeader({ title, runPath, view, scope, syntheticLabel, documentFilters, editPackPath }: {
   title: string;
   runPath: string;
   view: CheckView;
   scope: ReviewResult['scope'];
   syntheticLabel?: string;
   documentFilters?: ReactNode;
-  documentActions?: ReactNode;
-  archiveAction?: ReactNode;
+  editPackPath?: string;
 }) {
+  const documents = view === 'documents' || view === 'exceptions';
+  const editLink = import.meta.env.VITE_DOCCHECK_PUBLIC_DEMO === '1' ? undefined : editPackPath;
+
   return (
     <header className="check-result-header">
       <div>
@@ -33,19 +35,25 @@ export function ResultHeader({ title, runPath, view, scope, syntheticLabel, docu
         <div className="flex min-w-0 flex-wrap items-end gap-x-4 gap-y-2">
           <nav aria-label="Разделы проверки" className="check-result-tabs flex gap-6">
             {tabs.map(({ suffix, label }) => {
-              const selected = suffix === '' ? view === 'table' || view === 'conclusion' : view === 'documents' || view === 'exceptions';
+              const selected = suffix === '' ? view === 'table' || view === 'conclusion' : documents;
               return <Link key={suffix} to={runPath + suffix} aria-current={selected ? 'page' : undefined}>{label}</Link>;
             })}
           </nav>
           {documentFilters}
         </div>
-        <div className="result-header-actions">
-          {documentActions}
-          {archiveAction}
-          {!documentActions && <nav aria-label="Путь к проверке">
+        {documents ? editLink && <div className="result-header-actions">
+          <Link className="result-edit-pack" to={editLink}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="m14 6 4 4M4 20l4-.9L20 7a2.8 2.8 0 0 0-4-4L4.9 15Z" />
+            </svg>
+            Изменить комплект
+          </Link>
+        </div> : <div className="result-header-actions">
+          <nav aria-label="Путь к проверке">
             <Link className="result-history-link" to="/checks">Все проверки</Link>
-          </nav>}
-        </div>
+          </nav>
+        </div>}
       </div>
     </header>
   );

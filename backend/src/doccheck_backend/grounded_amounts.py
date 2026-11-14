@@ -65,7 +65,10 @@ _BASIS = re.compile(r"^основание\s*:?\s*([0-9]+(?:/[0-9]+){2}-[0-9]+)$"
 _PROJECT = re.compile(rf"^проект\s*:\s*({_CONTRACT_ID})(?=$|\s*\|)", re.I)
 _LABEL = re.compile(r"^(?:договор|контракт|основание|дата(?:\s+документа)?)\s*:?$", re.I)
 _BASIS_ID = re.compile(r"[\w]+(?:[/‑-][\w]+)+")
-_FINAL_LABEL = r"(?:итого(?:\s+к\s+(?:оплате|уч[её]ту))?|к\s+оплате(?:\s+по\s+документу)?)"
+_FINAL_LABEL = (
+    r"(?:итого(?:\s+(?:к\s+(?:оплате|уч[её]ту)|стоимость\s+(?:услуг|работ)))?"
+    r"|к\s+оплате(?:\s+по\s+документу)?)"
+)
 _TOTAL_LABEL = re.compile(
     r"^(?:сумма(?:\s+по\s+акту)?|стоимость(?:\s+(?:оказанных\s+)?услуг"
     r"(?:\s+за\s+расчетный\s+период)?)?)\s*[:：]",
@@ -73,6 +76,7 @@ _TOTAL_LABEL = re.compile(
 )
 _FINAL_VALUE = re.compile(rf"^{_FINAL_LABEL}(?:\s*[:：]\s*|\s+)(?=[+−-]?[0-9])", re.I)
 _FINAL_CELL = re.compile(rf"^{_FINAL_LABEL}\s*[:.：]?$", re.I)
+_FINAL_LINE = re.compile(rf"^{_FINAL_LABEL}(?=[\s:：.]|$)", re.I)
 _BARE_FINAL = re.compile(
     rf"{_FINAL_LABEL}\s*[:：]?\s+(-?(?:[0-9]+|[0-9]{{1,4}}(?: [0-9]{{3}})+)[,.][0-9]{{2}})",
     re.I,
@@ -86,6 +90,7 @@ _OTHER_CURRENCY = re.compile(
     r"\b(?:USD|EUR|CNY|GBP|JPY|KZT|BYN|доллар\w*|евро|юан\w*)\b|[€$¥£]", re.I
 )
 _WHOLE_RUBLES = Decimal("0.01")
+_PDF_OCR_ISSUES = {"clipped_pdf_text", "no_native_text", "raster_pdf_content"}
 
 
 @dataclass(frozen=True)
@@ -100,6 +105,8 @@ class GroundedDocument:
     issues: tuple[NativeIssue, ...]
     text: str
     identity: str | None
+    document_kind: str | None
+    issuer_key: str | None
 
 
 def _norm(text: str) -> str:
@@ -115,8 +122,8 @@ def _read_observations(path: Path, format_: FileFormat) -> tuple[NativeDocument,
     # Unsupported PDF visibility is left to review instead of mixing layers.
     render = format_ == "png" or (
         format_ == "pdf"
-        and any(issue.code in {"clipped_pdf_text", "no_native_text"} for issue in native.issues)
-        and all(issue.code in {"clipped_pdf_text", "no_native_text"} for issue in native.issues)
+        and native.issues
+        and all(issue.code in _PDF_OCR_ISSUES for issue in native.issues)
     )
     if not render:
         return native, "native"
@@ -126,6 +133,10 @@ def _read_observations(path: Path, format_: FileFormat) -> tuple[NativeDocument,
         before = len(observations)
         for line in recognize_lines(image):
             if line.confidence < 50:
+                if _FINAL_LINE.match(line.text) or _TOTAL_LABEL.match(line.text):
+                    issues.append(
+                        NativeIssue("unreadable_amount_line", page_locator(page, image, line.box))
+                    )
                 continue
             observations.append(Observation(line.text, page_locator(page, image, line.box)))
         if len(observations) == before:
@@ -420,10 +431,7 @@ def ground_document(
         if template
         else _category(observations, text, ocr=method == "ocr")
     )
-    if not category and format_ == "pdf" and method == "ocr":
-        native_pdf = read_native_document(path, format_)
-        text_only = "\n".join(o.raw_text for o in native_pdf.observations)
-        category, article_evidence = _category(native_pdf.observations, text_only)
+
     if template:
         sheet = articles[0][1].locator.sheet
         observations = tuple(
@@ -549,4 +557,6 @@ def ground_document(
         native.issues,
         text,
         identity,
+        parsed["document_kind"],
+        parsed["issuer_key"],
     )

@@ -5,6 +5,7 @@ import re
 from collections.abc import Callable
 from decimal import Decimal
 from hashlib import file_digest, sha256
+from itertools import combinations
 from pathlib import Path
 from shutil import copyfileobj
 from tempfile import TemporaryDirectory
@@ -64,7 +65,7 @@ _ARTICLES = {
 _HEX = re.compile(r"[0-9a-f]{32}")
 _MAX_PAGES = 12
 _MAX_NATIVE_CHARS = 24_000
-_RULES_VERSION = "doccheck-local-v3.2-addressed.7"
+_RULES_VERSION = "doccheck-local-v3.2-addressed.8"
 _REPORT_FIELDS = ("contract_number", "period_start", "period_end")
 _REPORT_SCHEMA = {
     "type": "object",
@@ -387,10 +388,7 @@ def _reported_cells(native, scanned):
         yield category, item.raw, format_rubles(item.amount), item.locator, "ocr"
 
 
-def _amount_components(scope, documents, grounds, bound):
-    grouped = {}
-    for item in bound:
-        grouped.setdefault(item.document_id, []).append(item)
+def _identity_collisions(grounds: dict[str, GroundedDocument]) -> set[str]:
     identities = {}
     for document_id, source in grounds.items():
         if source.identity:
@@ -400,8 +398,28 @@ def _amount_components(scope, documents, grounds, bound):
                 source.period.start if source.period else None,
                 source.period.end if source.period else None,
             )
-            identities.setdefault(key, []).append(document_id)
-    collisions = {doc_id for group in identities.values() if len(group) > 1 for doc_id in group}
+            identities.setdefault(key, []).append((document_id, source))
+    collisions = set()
+    for group in identities.values():
+        for (left_id, left), (right_id, right) in combinations(group, 2):
+            # Missing context cannot establish that two readings describe different documents.
+            if left.issuer_key and right.issuer_key and left.issuer_key != right.issuer_key:
+                continue
+            if (
+                left.document_kind
+                and right.document_kind
+                and left.document_kind != right.document_kind
+            ):
+                continue
+            collisions.update((left_id, right_id))
+    return collisions
+
+
+def _amount_components(scope, documents, grounds, bound):
+    grouped = {}
+    for item in bound:
+        grouped.setdefault(item.document_id, []).append(item)
+    collisions = _identity_collisions(grounds)
     components = {}
     unresolved = {}
     for document in documents:
@@ -856,7 +874,6 @@ class V32Processor:
                             selector,
                             scope_for_scan.contract_number,
                             (scope_for_scan.period_start, scope_for_scan.period_end),
-                            allow_header_subperiod=automatic_scope is not None,
                         )
                         if reading:
                             if scanned:

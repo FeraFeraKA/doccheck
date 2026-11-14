@@ -2,6 +2,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import {
   InvalidRunUploadResponse,
+  prepareRunTransfer,
   prepareRunUpload,
   RunUploadHttpError,
 } from '../../src/pages/checks/createRun';
@@ -98,6 +99,24 @@ it('сохраняет исходный ключ и пакет при явном
   expect(retry.body.getAll('documents')).toMatchObject([{ name: 'B.xlsx' }, { name: 'A.docx' }]);
   expect(next.body.get('report')).toMatchObject({ name: 'new-report.pdf' });
   expect(next.body.getAll('documents')).toMatchObject([{ name: 'A.docx' }, { name: 'B.xlsx' }]);
+});
+
+it('передаёт подтверждаемые реквизиты ручного режима в multipart отложенной загрузки', async () => {
+  const fetchMock = stubFetch().mockResolvedValueOnce(Response.json({ upload_id: runId }, { status: 201 }));
+  const scanScope = {
+    contractNumber: 'TEST-31', periodStart: '2031-02-01', periodEnd: '2031-02-28', page: 3, stage: 2,
+  };
+  await expect(prepareRunTransfer({ ...upload(), scanScope }, key)()).resolves.toEqual({ upload_id: runId });
+  const [path, init] = fetchMock.mock.calls[0];
+  expect(path).toBe(postUrl + '/uploads');
+  const form = await new Request(path, init).formData();
+  expect(form.get('contract_number')).toBe('TEST-31');
+  expect(form.get('period_start')).toBe('2031-02-01');
+  expect(form.get('period_end')).toBe('2031-02-28');
+  expect(JSON.parse(String(form.get('report_row_locator')))).toEqual({
+    kind: 'page', page: 3, fragment_id: 'kfz-stage-2-2031',
+  });
+  expect(form.has('complete_package')).toBe(false);
 });
 
 it.each([
