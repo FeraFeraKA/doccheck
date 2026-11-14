@@ -133,6 +133,7 @@ docker compose up --wait
 - [Кейс и уточнения консультации](docs/case/README.md) — актуальный сценарий, открытые вопросы и ссылка на исходную формулировку организаторов.
 - [Обезличенные примеры документов](docs/case/examples/)
 - [Общий контракт](contracts/README.md)
+- [Закрытый Preview с локальной Qwen](docs/hosted-preview.md) — Vercel, выделенные Render API и PostgreSQL и запуск воркера на компьютере.
 - [Режим данных](docs/data-policy.md)
 - [Проект в Linear](https://linear.app/andreiakimov/project/hakaton-mfti-butkempery-69371251ea50)
 
