@@ -68,8 +68,8 @@ _MONTH_NUMBERS = {
 }
 _PERIOD_MONTH = re.compile(r"^Период:\s*([а-яё]+)\s+(\d{4})(?:\s*г\.?)?\.?$", re.IGNORECASE)
 _XLSX_ARTICLES = {
-    "payroll": {"расчетная ведомость по оплате труда", "расчётная ведомость по оплате труда"},
-    "insurance": {"расчет страховых взносов", "расчёт страховых взносов"},
+    "payroll": ("C8", "расчетная ведомость по оплате труда"),
+    "insurance": ("B6", "расчет страховых взносов"),
 }
 _DATE = re.compile(r"(?<!\d)(?:\d{4}-\d{2}-\d{2}|\d{2}\.\d{2}\.\d{4})(?!\d)")
 _PERIOD = re.compile(r"^Период\b", re.IGNORECASE)
@@ -296,16 +296,25 @@ def _source_groups(
 ) -> tuple[list[Observation], list[Observation]]:
     if file_format == "xlsx":
         amounts = [item for item in observations if item.amount_role == "total"]
-        sheet = amounts[0].locator.sheet if len(amounts) == 1 else None
+        template = _XLSX_ARTICLES.get(category)
+        if (
+            len(amounts) != 1
+            or template is None
+            or not isinstance(amounts[0].locator, SheetLocator)
+            or amounts[0].locator.range != template[0]
+        ):
+            return [], []
+        sheet = amounts[0].locator.sheet
         articles = [
             item
             for item in observations
             if isinstance(item.locator, SheetLocator)
             and item.locator.sheet == sheet
-            and item.raw_text.strip().casefold() in _XLSX_ARTICLES.get(category, set())
+            and item.locator.range == "A1"
+            and " ".join(item.raw_text.casefold().replace("ё", "е").split()) == template[1]
         ]
         # Prevent a scope match from an unrelated sheet.
-        if sheet is None or any(
+        if any(
             item.locator.sheet != sheet
             for item in observations
             if _period_candidate(item.raw_text) or _contract(item.raw_text) is not None

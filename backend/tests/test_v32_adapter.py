@@ -687,3 +687,26 @@ def test_xlsx_primary_formula_cache_conflict_requires_review(uploaded_files, tmp
     decision = result.documents[1].decision
     assert decision.state == "needs_review"
     assert decision.reason_code == "formula_cache_mismatch"
+
+
+def test_unrelated_xlsx_heading_cannot_relabel_total():
+    from decimal import Decimal
+    from doccheck_backend.contracts.locators import SheetLocator
+    from doccheck_backend.native_observations import Observation
+    from doccheck_backend.v32_adapter import _source_groups
+
+    def cell(address, text, **values):
+        return Observation(
+            text, SheetLocator(kind="sheet", sheet="Взносы", range=address), **values
+        )
+
+    observations = (
+        cell("A1", "Расчет страховых взносов"),
+        cell("E1", "Расчетная ведомость по оплате труда"),
+        cell("B6", "1172.70", amount=Decimal("1172.70"), amount_role="total"),
+    )
+    assert _source_groups("xlsx", observations, {}, "payroll") == ([], [])
+    assert _source_groups("xlsx", observations, {}, "insurance") == (
+        [observations[2]],
+        [observations[0]],
+    )
