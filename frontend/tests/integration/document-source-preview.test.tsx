@@ -76,6 +76,12 @@ describe('document source preview', () => {
     expect(view.container.querySelector('[aria-hidden="true"]')).toHaveStyle({
       left: '25%', top: '12.5%', width: '50%', height: '50%',
     });
+    fireEvent.click(screen.getByRole('button', { name: 'Увеличить масштаб' }));
+    expect(screen.getByLabelText('Масштаб документа')).toHaveTextContent('125%');
+    fireEvent.click(screen.getByRole('button', { name: 'Подсветка' }));
+    expect(view.container.querySelector('[aria-hidden="true"]')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Подсветка' }));
+    expect(view.container.querySelector('[aria-hidden="true"]')).toBeVisible();
     fireEvent.error(image);
     expect(screen.getByRole('alert')).toHaveTextContent('Предпросмотр изображения недоступен.');
     expect(screen.getByRole('link', { name: 'Скачать оригинал' })).toBeVisible();
