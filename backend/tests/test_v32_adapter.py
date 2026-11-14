@@ -811,6 +811,7 @@ def test_unrelated_xlsx_heading_cannot_relabel_total():
         [observations[0]],
     )
 
+
 def test_model_pixel_pages_cannot_reuse_pdf_text_overlay_as_evidence(
     uploaded_files, tmp_path, monkeypatch
 ):

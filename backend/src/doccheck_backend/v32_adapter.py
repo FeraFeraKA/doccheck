@@ -584,9 +584,8 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
                         extracted = v32.extract_primary(entry, previous)
                         # The visible page may disagree with its embedded text, and
                         # native sections alone do not establish the document total.
-                        addressed_native = (
-                            file.format != "pdf"
-                            or (not native.issues and not extracted.get("raster_pages"))
+                        addressed_native = file.format != "pdf" or (
+                            not native.issues and not extracted.get("raster_pages")
                         )
                         observations_by_id[file.id] = (
                             native.observations if addressed_native else ()
