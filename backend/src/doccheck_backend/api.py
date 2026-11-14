@@ -19,6 +19,7 @@ from doccheck_backend.config import Settings
 from doccheck_backend.contracts import CheckResult
 from doccheck_backend.contracts.result import Evidence
 from doccheck_backend.database import create_database_engine
+from doccheck_backend.fragment_preview import FragmentPreview
 from doccheck_backend.jobs import create_job, get_job
 from doccheck_backend.models import SyntheticJob
 from doccheck_backend.run_xlsx import XLSX_MEDIA_TYPE, XlsxReportLimitError, export_check_result
@@ -101,7 +102,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if (
             request.method == "GET"
             and path.startswith("/api/v0/runs")
-            and (path == "/api/v0/runs" or path.endswith("/fragments"))
+            and (path == "/api/v0/runs" or path.endswith(("/fragments", "/fragment-preview")))
         ):
             field = str(exc.errors()[0]["loc"][-1])
             return await run_read_error(
@@ -253,6 +254,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         evidence_id: Annotated[str, Query(min_length=1)],
     ) -> Evidence:
         return run_reads.get_run_fragment(
+            request.app.state.engine,
+            request.app.state.upload_root,
+            run_id,
+            document_id,
+            evidence_id,
+        )
+
+    @document_runs.get("/{run_id}/documents/{document_id}/fragment-preview")
+    def get_fragment_preview(
+        request: Request,
+        response: Response,
+        run_id: str,
+        document_id: str,
+        evidence_id: Annotated[str, Query(min_length=1)],
+    ) -> FragmentPreview:
+        response.headers["Cache-Control"] = "no-store"
+        return run_reads.get_run_fragment_preview(
             request.app.state.engine,
             request.app.state.upload_root,
             run_id,
