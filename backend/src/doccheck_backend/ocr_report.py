@@ -20,12 +20,12 @@ _MONTHS = tuple(
 )
 _AMOUNT = re.compile(r"^(?:\d+|\d{1,3}(?:[ \u00a0\u2009\u202f]\d{3})+)[.,]\d{2}$")
 _HEADERS = {
-    "production_overhead": re.compile(r"общепроизводственн\w*\s+(?:затрат|расход)"),
-    "general_admin": re.compile(r"общехозяйственн\w*\s+(?:затрат|расход)"),
+    "production_overhead": re.compile(r"общепроизводственн\w*\s+(?:затрат|расход)\w*"),
+    "general_admin": re.compile(r"общехозяйственн\w*\s+(?:затрат|расход)\w*"),
 }
 _MONEY_HEADER = {
-    "payroll": re.compile(r"(?:затрат\w*\s+на\s+оплату\s+труда|оплата\s+труда)"),
-    "insurance": re.compile(r"страховые\s+взносы\s+на\s+обязательное"),
+    "payroll": re.compile(r"(?:затрат\w*\s+на\s+оплату\s+труда|оплата\s+труда)[, :]+всего"),
+    "insurance": re.compile(r"страховые\s+взносы(?:\s+на\s+обязательное[^:]*?)?[, :]+всего"),
 }
 _MIN_SCORE = 0.8
 # OCR returns text boxes, not cell boundaries. Reject column snaps with implausible offset.
@@ -79,31 +79,17 @@ def _anchors(ordered: tuple[Observation, ...], row: Observation) -> dict[str, Ob
     anchors = {}
     above = [item for item in ordered if _above(item, row)]
     for category, pattern in {**_HEADERS, **_MONEY_HEADER}.items():
+        # A broad section title does not identify one monetary column.
+        # Without a verified numbered/grid boundary keep this table cell unknown.
         matches = []
         for item in above:
             normalized = " ".join(item.raw_text.casefold().split())
-            if pattern.search(normalized):
-                matches.append(item)
-        if category in _MONEY_HEADER and len(matches) > 1:
-            # A parent heading spans multiple monetary columns. Use the lowest
-            # repeated leaf label only if it lies under that heading and to its left.
-            matches.sort(key=lambda item: _box(item)[1])
-            leaf = matches[-1]
-            parents = matches[:-1]
-            parent = parents[0]
-            parent_left, parent_top, parent_right, _ = _box(parent)
-            if (
-                len(parents) != 1
-                or "всего" not in leaf.raw_text.casefold()
-                or _box(leaf)[1] <= parent_top
-                or not parent_left - _MAX_X_DRIFT <= _center(leaf, 0) <= parent_right
-                or _center(leaf, 0) > _center(parent, 0)
-            ):
+            if not pattern.fullmatch(normalized):
                 continue
-            matches = [leaf]
+            if category in _MONEY_HEADER and "всего" not in normalized:
+                continue
+            matches.append(item)
         if len(matches) == 1:
-            if category in _MONEY_HEADER and "всего" not in matches[0].raw_text.casefold():
-                continue
             anchors[category] = matches[0]
     return anchors
 
@@ -179,8 +165,6 @@ def parse_scan_report(observations: tuple[Observation, ...]) -> ScanScope | None
         for item in row_items
         if _box(item)[0] > _box(row)[2] and _AMOUNT.fullmatch(item.raw_text.strip())
     ]
-    if not candidates:
-        return None
     amounts = {}
     claimed = set()
     for category, anchor in _anchors(visible, row).items():
@@ -198,7 +182,5 @@ def parse_scan_report(observations: tuple[Observation, ...]) -> ScanScope | None
         value = Decimal(re.sub(r"\s", "", item.raw_text.strip()).replace(",", "."))
         amounts[category] = Observation(item.raw_text, item.locator, amount=value)
         claimed.add(item.locator.bbox)
-    if not amounts:
-        return None
     assert isinstance(row.locator, PageLocator)
     return ScanScope(next(iter(contracts)), start, last, row.locator, amounts)
