@@ -365,6 +365,7 @@
 .workspace-button-default:hover { background: #28575a; }
 .accountant-workspace .upload-card h2 { font-family: var(--font-sans); margin-bottom: 0; }
 .upload-page :is(.upload-empty, .upload-navigation) > .workspace-button { line-height: 20px; }
+.accountant-workspace .upload-navigation .workspace-button-default { font-weight: 600; }
 .upload-page .upload-navigation > .workspace-button > svg { width: 16px; height: 16px; }
 .upload-page .upload-navigation .upload-example { height: auto; text-decoration: none; text-align: center; }
 .upload-navigation > span { font-size: 13px; color: var(--ui-secondary); }

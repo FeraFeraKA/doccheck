@@ -133,15 +133,18 @@ export function ResultConclusion({ result, exportRunId }: { result: ReviewResult
         <p>{discrepancyForm === 'one' ? 'Обнаружено' : 'Обнаружены'} {discrepancies.length}
           {' '}{discrepancyForm === 'one' ? 'расхождение' : discrepancyForm === 'few' ? 'расхождения' : 'расхождений'}.</p>
         <ul className="list-disc space-y-1 pl-5">
-        {discrepancies.map((row) => <li key={row.id}>{row.label}: в КФЗ {formatMeasure(row.reported_value, row.unit)},
-          по документам {formatMeasure(row.expected_value, row.unit)}. Разница {row.delta !== null && !row.delta.startsWith('-') ? '+' : ''}{formatMeasure(row.delta, row.unit)}.</li>)}
+          {discrepancies.map((row) => <li key={row.id}>
+            {row.label}: в КФЗ {formatMeasure(row.reported_value, row.unit)},
+            по документам {formatMeasure(row.expected_value, row.unit)}.
+            {' '}Разница {row.delta !== null && !row.delta.startsWith('-') ? '+' : ''}{formatMeasure(row.delta, row.unit)}.
+          </li>)}
         </ul>
       </>}
       {unverified.length > 0 && <p>Не удалось проверить {unverified.length}
         {' '}{unverifiedForm === 'one' ? 'показатель' : unverifiedForm === 'few' ? 'показателя' : 'показателей'}:
         {' '}{indicatorList.format(unverified.map(({ label }) => label))}.</p>}
       {summaryCoverage && <p>Известные денежные статьи КФЗ: <strong className="font-medium">{formatMeasure(summaryCoverage, 'RUB')}</strong>.</p>}
-      {unverified.filter((row) => row.observed_evidence_sum !== null).map((row) => <p key={row.id}>
+      {unverified.filter((row) => row.expected_value === null && row.observed_evidence_sum !== null).map((row) => <p key={row.id}>
         {row.label}: подтверждена часть суммы {formatMeasure(row.observed_evidence_sum, row.unit)}.
       </p>)}
       {rubCoverage && <details className="text-[13px]">
