@@ -34,7 +34,7 @@ for (const { width, from, section, contents, columns } of [
     try {
       if (from === '/checks') {
         await page.goto(from);
-        await page.getByRole('link', { name: 'Проверка КФЗ №' + runId }).click();
+        await page.getByRole('link', { name: 'Проверка КФЗ', exact: true }).click();
       } else {
         await page.goto(resultUrl + from);
       }

@@ -13,6 +13,7 @@ import './run-queue.css';
 export interface QueueReceipt {
   id: string;
   documentCount: number;
+  reportName?: string;
 }
 
 interface RunQueueProps {
@@ -49,7 +50,7 @@ export function RunQueue({ entries = [], receipts, loading, error, onRetry }: Ru
   const items: RunQueueItemProps[] = [
     ...pendingReceipts.filter(({ id }) => id !== followedId).map((receipt): RunQueueItemProps => ({
       ...receipt,
-      title: runTitle(receipt.id),
+      title: runTitle(receipt.id, undefined, receipt.reportName),
       label: 'В очереди',
       tone: 'neutral',
       progress: null,
@@ -89,7 +90,8 @@ function FollowedRun({ id, listed }: { id: string; listed?: HistoryEntry }) {
   }
   if (!state.data) return <li className="queue-message">Проверка не найдена.</li>;
   const entry = {
-    ...listed, ...state.data, title: listed?.title ?? state.data.title,
+    ...listed, ...state.data,
+    title: runTitle(id, state.data.reportNumber ?? listed?.reportNumber, state.data.reportName ?? listed?.reportName),
     documentCount: state.data.documentCount ?? listed?.documentCount,
     synthetic: state.data.synthetic ?? listed?.synthetic,
   };
@@ -139,7 +141,7 @@ function RunQueueItem({
           {(createdAt || synthetic || documentCount !== undefined) && <div className="queue-job-meta">
             {documentCount !== undefined && <span>Файлов: {documentCount}</span>}
             {createdAt && <time dateTime={createdAt}>{dateFormat.format(new Date(createdAt))}</time>}
-            {synthetic && <span>Синтетика</span>}
+            {synthetic && <span>Тестовые данные</span>}
           </div>}
         </div>
       </div>

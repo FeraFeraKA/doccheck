@@ -57,7 +57,7 @@ it('открывает сохранённый запуск из истории �
     </Routes>
   </MemoryRouter>);
 
-  fireEvent.click(await screen.findByRole('link', { name: 'Проверка КФЗ №saved-run' }));
+  fireEvent.click(await screen.findByRole('link', { name: /^Проверка КФЗ$/ }));
   expect(await screen.findByRole('alert')).toHaveTextContent('Безопасная причина остановки');
   expect(screen.getByRole('status')).toHaveTextContent('Ошибка обработки');
   expect(fetchMock.mock.calls.map(([path]) => path)).toEqual([

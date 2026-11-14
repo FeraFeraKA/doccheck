@@ -1,6 +1,8 @@
-export function runTitle(id: string, reportNumber?: string) {
+export function runTitle(_id: string, reportNumber?: string, reportName?: string) {
   const number = reportNumber?.trim();
-  return number ? `КФЗ №${number}` : `Проверка КФЗ №${id}`;
+  if (number) return `КФЗ №${number}`;
+  const name = reportName?.trim();
+  return name ? `КФЗ · ${name}` : 'Проверка КФЗ';
 }
 
 export function runQueuePath(id: string) {

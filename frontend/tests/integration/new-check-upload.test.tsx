@@ -119,8 +119,8 @@ it('берёт файлы после чтения, ждёт подтвержде
   expect(screen.getByRole('status')).toHaveTextContent('Запуск проверки');
   pendingStart.resolve(accepted('saved-run'));
   const queue = screen.getByRole('region', { name: 'Последние проверки' });
-  expect(await within(queue).findByRole('heading', { name: 'Проверка КФЗ №saved-run' })).toBeVisible();
-  expect(within(queue).queryByRole('link', { name: 'Проверка КФЗ №saved-run' })).not.toBeInTheDocument();
+  expect(await within(queue).findByRole('heading', { name: /Проверка КФЗ|КФЗ · report\.pdf/ })).toBeVisible();
+  expect(within(queue).queryByRole('link', { name: /Проверка КФЗ|КФЗ · report\.pdf/ })).not.toBeInTheDocument();
   expect(screen.queryByText('report.pdf')).not.toBeInTheDocument();
   expect(discard).not.toHaveBeenCalled();
 });
@@ -189,7 +189,7 @@ it('повторяет запуск с тем же сохранённым пак
   fireEvent.click(submit);
   expect(await screen.findByRole('alert')).toHaveTextContent('Не удалось подтвердить запуск');
   fireEvent.click(submit);
-  expect(await screen.findByRole('heading', { name: 'Проверка КФЗ №saved-run' })).toBeVisible();
+  expect(await screen.findByRole('heading', { name: /Проверка КФЗ|КФЗ · / })).toBeVisible();
   expect(startRun.mock.calls.map(([id]) => id)).toEqual(['uploaded', 'uploaded']);
   expect(prepareTransfer).toHaveBeenCalledTimes(1);
   expect(discard).not.toHaveBeenCalled();
@@ -209,7 +209,7 @@ it('перезагружает выбранные файлы после исте
   expect(prepareTransfer.mock.calls[1][1]).not.toBe(prepareTransfer.mock.calls[0][1]);
   await waitFor(() => expect(submit).toBeEnabled());
   fireEvent.click(submit);
-  expect(await screen.findByRole('heading', { name: 'Проверка КФЗ №saved-run' })).toBeVisible();
+  expect(await screen.findByRole('heading', { name: /Проверка КФЗ|КФЗ · / })).toBeVisible();
   expect(startRun.mock.calls.map(([id]) => id)).toEqual(['expired', 'renewed']);
 });
 

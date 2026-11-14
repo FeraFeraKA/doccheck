@@ -135,6 +135,7 @@ test('the expanded desktop rail does not cover history pagination', async ({ pag
     return route.fulfill({ json: {
       items: [{
         run_id: older ? 'older-run' : 'recent-run', status: 'queued',
+        report_name: older ? 'older.xlsx' : 'recent.xlsx',
         created_at: '2026-11-14T10:00:00Z', error: null,
       }],
       next_cursor: older ? null : 'next-page',
@@ -151,7 +152,7 @@ test('the expanded desktop rail does not cover history pagination', async ({ pag
   });
   expect(reachable).toBe(true);
   await older.click();
-  await expect(page.getByRole('link', { name: 'Проверка КФЗ №older-run', exact: true })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'КФЗ · older.xlsx', exact: true })).toBeVisible();
 });
 
 test('Escape immediately restores breadcrumb clicks with animations enabled', async ({ page }) => {

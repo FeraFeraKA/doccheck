@@ -2,7 +2,7 @@ import { runTitle } from './runTitle';
 import { HttpError } from '../../shared/api/requestJson';
 import { demoJob, demoTitle } from './demoData';
 import { readDocumentParseStatus, readRubCoverage } from './loadFindings';
-import type { ReviewResult } from './reviewResult';
+import type { ReviewResult, RubCoverage } from './reviewResult';
 import { isRunId, listRuns, pollRun } from './runStatusApi';
 import type { RunState } from './runStatusApi';
 
@@ -26,6 +26,9 @@ export interface HistoryEntry {
   createdAt: string;
   archivedAt?: string;
   counts?: FindingCounts;
+  rubCoverage?: RubCoverage;
+  reportName?: string;
+  reportNumber?: string;
   synthetic?: boolean;
   documentCount?: number;
   progress?: { processed: number; total: number };
@@ -41,8 +44,10 @@ export async function loadFollowedRun(
   function toEntry(run: RunState): HistoryEntry {
     return {
       id: run.run_id,
-      title: run.synthetic ? demoTitle : runTitle(run.run_id),
+      title: runTitle(run.run_id, run.report_number, run.report_name),
       status: run.status,
+      reportName: run.report_name,
+      reportNumber: run.report_number,
       synthetic: run.synthetic,
       createdAt: run.created_at,
       documentCount: run.progress?.total_documents,
@@ -89,10 +94,13 @@ export async function loadRunHistory(
   return {
     entries: page.items.map((run) => ({
       id: run.run_id,
-      title: run.synthetic && !run.report_number ? demoTitle : runTitle(run.run_id, run.report_number),
+      title: runTitle(run.run_id, run.report_number, run.report_name),
       status: run.status,
       createdAt: run.created_at,
       counts: run.counts,
+      rubCoverage: run.rub_coverage,
+      reportName: run.report_name,
+      reportNumber: run.report_number,
       synthetic: run.synthetic,
       documentCount: run.document_count,
       contractNumber: run.contract_number,
@@ -118,7 +126,7 @@ export async function loadDemoRun(id: string): Promise<RunDetails | null> {
 
 function toRunDetails(run: RunState): RunDetails {
   return {
-    title: runTitle(run.run_id),
+    title: runTitle(run.run_id, run.report_number, run.report_name),
     status: run.status,
     progress: run.progress === null ? undefined : {
       processed: run.progress.processed_documents,

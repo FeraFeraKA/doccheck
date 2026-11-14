@@ -604,9 +604,18 @@ components:
         - type: object
           properties:
             counts: {$ref: './check-result.v1.schema.json#/$defs/StatusCounts'}
+            rub_coverage:
+              description: Покрытие известных аддитивных сумм КФЗ по результатам сверки.
+              anyOf:
+                - $ref: './check-result.v1.schema.json#/$defs/RubCoverage'
+                - type: 'null'
+            report_name:
+              type: [string, 'null']
+              description: Имя оригинала КФЗ из сохранённого комплекта.
             report_number: {type: [string, 'null']}
             document_count: {type: integer, minimum: 0}
             contract_number: {type: [string, 'null']}
+            archived_at: {type: [string, 'null'], format: date-time}
             synthetic: {type: [boolean, 'null']}
     RunState:
       allOf:
@@ -615,6 +624,8 @@ components:
           required: [progress]
           properties:
             archived_at: {type: [string, 'null'], format: date-time}
+            report_name: {type: [string, 'null']}
+            report_number: {type: [string, 'null']}
             synthetic:
               type: boolean
               description: Серверная маркировка синтетического комплекта или сохранённого результата.
