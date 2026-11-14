@@ -43,8 +43,10 @@ _ARTICLE = r"статья\s+калькуляци[ия]"
 _UNREADABLE_ARTICLE = r"статья\s+калькуля[а-яё]{2,4}"
 _HEADER_QUALIFIER = re.compile(
     r"\b(?:в\s+том\s+числе|за\s+сч[её]т|из\s+средств|по\s+видам|"
-    r"без\s+уч[её]та|только|часть|подытог|субсид\w*|со[-\s]?финансирован\w*)\b"
+    r"без\s+уч[её]та|только|часть|подытог|субсид\w*|со[-\s]?финансирован\w*|"
+    r"подразделени\w*)\b"
 )
+_SUBARTICLE_CODE = re.compile(r"(?<!\d)\d{4}[.\-/]\d+(?!\d)")
 # Accept only finite known leaf vocabulary (including narrow OCR spelling
 # variants), never an arbitrary qualifier. Parent section code is separate proof.
 _PAYROLL_LEAD = r"(?:(?:затраты|ззтрзты)\s+(?:(?:на|ва)\s+)?)?"
@@ -233,6 +235,44 @@ def _repeat_leaf(read: ReadCell, box: PixelBox, category: str) -> bool:
     return hits >= 2
 
 
+def _restricted_subcolumn(text: str, code: str) -> bool:
+    return bool(
+        _HEADER_QUALIFIER.search(text)
+        or _SUBARTICLE_CODE.search(text)
+        or (re.search(_WORD, text) and set(_CODE.findall(text)) - {code})
+    )
+
+
+def _has_restricted_overhead_leaf(
+    image: Image,
+    grid: TableGrid,
+    index: int,
+    code: str,
+    page_observations: tuple[Observation, ...],
+    read: ReadCell,
+) -> bool:
+    left, right = grid.x[index], grid.x[index + 1]
+    top = grid.upper[1]
+    bottom = grid.row[0]
+    for item in page_observations:
+        if not isinstance(item.locator, PageLocator) or item.locator.bbox is None:
+            continue
+        x0, y0, x1, y1 = item.locator.bbox
+        if (
+            top <= (y0 + y1) * image.height / 2 < bottom
+            and min(x1 * image.width, right) - max(x0 * image.width, left)
+            >= (x1 - x0) * image.width * 0.55
+            and _restricted_subcolumn(_tokens((item,)), code)
+        ):
+            return True
+    for y0, y1 in pairwise((*grid.upper[1:], bottom)):
+        if y1 - y0 >= 8:
+            crop = _cell_box(grid, index, y0, y1)
+            if any(_restricted_subcolumn(_tokens(read(crop, scale)), code) for scale in (2, 3, 4)):
+                return True
+    return False
+
+
 def _safe_row_cell(image: Image, grid: TableGrid, index: int) -> bool:
     top, bottom = grid.row
     for left, right in ((grid.x[0], grid.x[1]), (grid.x[index], grid.x[index + 1])):
@@ -339,6 +379,8 @@ def _scoped_column_roles(
             ) or not _repeat_contains(
                 read, _cell_box(grid, index, header_top, header_bottom), words, code=code
             ):
+                continue
+            if _has_restricted_overhead_leaf(image, grid, index, code, page_observations, read):
                 continue
         else:
             code, words = _AGGREGATES[category]
@@ -480,6 +522,23 @@ def read_table_amounts(
             continue
         amount = next(iter(confirmed))
         if values.count(amount) < 2:
+            continue
+        # A crop may contain a line artefact next to a readable dissenting
+        # number. It cannot confirm a value, but it must be able to contradict.
+        fallback_size = (box[2] - box[0], box[3] - box[1])
+        if any(
+            _frame_amount_candidates(
+                [
+                    item
+                    for item in items
+                    if isinstance(item.locator, PageLocator) and item.locator.bbox is not None
+                ],
+                next((item.frame_size for item in items if item.frame_size), fallback_size),
+            )
+            - {amount}
+            for items, value in zip(readings, values)
+            if value is None
+        ):
             continue
         # The full-frame reader can return a conflicting, legible number
         # without repeat confidence. Check the full cell, including margins.

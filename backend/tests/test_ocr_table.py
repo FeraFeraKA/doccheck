@@ -178,7 +178,7 @@ def test_subsidy_only_payroll_leaf_is_not_the_complete_aggregate(table):
     image, row, headings = table
 
     def read(box, scale):
-        if 145 < box[1] < 270:
+        if 145 < box[1] < 270 and 240 < box[0] < 380:
             return (_source("Оплату труда, всего за счёт субсидии", 10, 10, 36, 36),)
         return _default_cell_read(box, scale)
 
@@ -225,7 +225,7 @@ def test_parenthesized_qualifier_below_leaf_cannot_be_skipped(table):
     image, row, headings = table
 
     def read(box, scale):
-        if 145 < box[1] < 270:
+        if 145 < box[1] < 270 and 240 < box[0] < 380:
             return (
                 _source("Оплату труда, всего", 10, 10, 76, 36),
                 _source("(из средств субсидии)", 13, 42, 72, 61),
@@ -375,7 +375,7 @@ def test_third_payroll_leaf_funding_qualifier_without_total_blocks_amount(table)
     image, row, headings = table
 
     def read(box, scale):
-        if 145 < box[1] < 270 and scale == 4:
+        if 145 < box[1] < 270 and 240 < box[0] < 380 and scale == 4:
             return (_source("Оплату труда за счет субсидии", 10, 10, 36, 36),)
         return _default_cell_read(box, scale)
 
@@ -459,4 +459,42 @@ def test_overhead_title_inside_one_leaf_still_requires_single_column_parent(tabl
 
     result = read_table_amounts(image, row, headings, read)
     assert "production_overhead" not in result
+    assert result["payroll"].amount == Decimal("1234.67")
+
+
+@pytest.mark.parametrize("from_original", [False, True])
+def test_overhead_lower_header_cannot_name_a_scope_limited_subcolumn(table, from_original):
+    image, row, headings = table
+    label = "Расходы по одному подразделению"
+    if from_original:
+        headings = (*headings, _source(label, 531, 184, 661, 198))
+
+    def read(box, scale):
+        if not from_original and 145 < box[1] < 270 and 525 < box[0] < 670:
+            return (_source(label, 10, 10, 76, 30),)
+        return _default_cell_read(box, scale)
+
+    result = read_table_amounts(image, row, headings, read)
+    assert "production_overhead" not in result
+    assert result["payroll"].amount == Decimal("1234.67")
+
+
+@pytest.mark.parametrize("dissent", ["5678,90", "1234,67"])
+def test_rejected_crop_can_dissent_without_a_false_conflicting_tail(table, dissent):
+    image, row, headings = table
+
+    def read(box, scale):
+        if box[1] > _ROW[0] and box[0] > 525 and scale == 4:
+            return (
+                _source(dissent[0], 10, 10, 21, 36),
+                _source(dissent[1:], 23, 10, 48, 36),
+                _source("|", 100, 10, 104, 36),
+            )
+        return _default_cell_read(box, scale)
+
+    result = read_table_amounts(image, row, headings, read)
+    if dissent == "5678,90":
+        assert "production_overhead" not in result
+    else:
+        assert result["production_overhead"].amount == Decimal("1234.67")
     assert result["payroll"].amount == Decimal("1234.67")
