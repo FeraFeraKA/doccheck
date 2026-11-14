@@ -31,4 +31,8 @@
 
 В worktree с общим обработчиком страниц прошли 34 проверки
 `uv run --project backend --locked --with-requirements bench/e2e_v32_20261114/requirements.txt pytest backend/tests/test_v32_adapter.py -q`,
-Ruff по изменённым Python-файлам и `git diff --check`.
+Ruff по изменённым Python-файлам и `git diff --check`. Вместе с тестами
+`backend/tests/test_run_worker.py` на отдельной PostgreSQL прошли 56 проверок.
+База и HTTP API сохраняют обе причины ошибки и подставляют сообщения сервера.
+Свободный текст адаптера игнорируется, для неизвестных кодов действует
+общее сообщение об ошибке.

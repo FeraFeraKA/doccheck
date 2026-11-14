@@ -33,6 +33,20 @@ _PROCESSING_COMPLETED_WITH_ISSUES = Issue(
     code="processing_completed_with_issues",
     message="Результат сохранён. При обработке возникла техническая ошибка.",
 )
+_PDF_SCAN_UNREADABLE = Issue(
+    code="v32_pdf_scan_unreadable",
+    message="Модель не смогла прочитать скан КФЗ. Проверьте оригинал.",
+)
+_PDF_SCAN_SCOPE_UNCONFIRMED = Issue(
+    code="v32_pdf_scan_scope_unconfirmed",
+    message=(
+        "Модель вернула предварительное чтение скана КФЗ. Реквизиты и суммы требуют "
+        "подтверждения по оригиналу."
+    ),
+)
+_PUBLIC_RUN_FAILURES = {
+    error.code: error for error in (_PDF_SCAN_UNREADABLE, _PDF_SCAN_SCOPE_UNCONFIRMED)
+}
 
 
 class WorkerSessionLost(RuntimeError):
@@ -159,7 +173,7 @@ class RunIdentity:
             raise ValueError("result must match the uploaded scope and document IDs")
         if outcome.error is not None:
             outcome.error = (
-                _PROCESSING_FAILED
+                _PUBLIC_RUN_FAILURES.get(outcome.error.code, _PROCESSING_FAILED)
                 if outcome.status == "failed"
                 else _PROCESSING_COMPLETED_WITH_ISSUES
             )
