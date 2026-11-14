@@ -58,8 +58,12 @@ def unavailable() -> RunReadError:
     return RunReadError(503, "service_unavailable", "Хранилище проверок недоступно")
 
 
-def list_runs(engine: Engine, limit: int, cursor: str | None) -> RunPage:
+def list_runs(
+    engine: Engine, limit: int, cursor: str | None, *, web_session: UUID | None = None
+) -> RunPage:
     query = select(Run.id, Run.status, Run.created_at, Run.error)
+    if web_session is not None:
+        query = query.where(Run.web_session_id == web_session)
     if cursor is not None:
         query = query.where(tuple_(Run.created_at, Run.id) < _decode_cursor(cursor))
     query = query.order_by(Run.created_at.desc(), Run.id.desc()).limit(limit + 1)
@@ -96,7 +100,9 @@ def _decode_cursor(token: str) -> tuple[datetime, UUID]:
         raise RunReadError(422, "invalid_input", "Некорректный курсор", "cursor") from None
 
 
-def _load_run(engine: Engine, run_id: str, *, with_result: bool = False) -> Run:
+def _load_run(
+    engine: Engine, run_id: str, *, with_result: bool = False, web_session: UUID | None = None
+) -> Run:
     try:
         if not _URL_ID.fullmatch(run_id):
             raise ValueError
@@ -106,13 +112,13 @@ def _load_run(engine: Engine, run_id: str, *, with_result: bool = False) -> Run:
     with Session(engine) as session:
         options = () if with_result else (defer(Run.result, raiseload=True),)
         run = session.get(Run, key, options=options)
-    if run is None:
+    if run is None or (web_session is not None and run.web_session_id != web_session):
         raise RunReadError(404, "run_not_found", "Проверка не найдена")
     return run
 
 
-def get_run_state(engine: Engine, run_id: str) -> RunState:
-    run = _load_run(engine, run_id)
+def get_run_state(engine: Engine, run_id: str, *, web_session: UUID | None = None) -> RunState:
+    run = _load_run(engine, run_id, web_session=web_session)
     total = len(run.documents)
     progress = None
     if run.status == "queued":
@@ -142,8 +148,10 @@ def _stored_result(run: Run) -> CheckResult:
     return result
 
 
-def get_run_findings(engine: Engine, run_id: str) -> CheckResult:
-    return _stored_result(_load_run(engine, run_id, with_result=True))
+def get_run_findings(
+    engine: Engine, run_id: str, *, web_session: UUID | None = None
+) -> CheckResult:
+    return _stored_result(_load_run(engine, run_id, with_result=True, web_session=web_session))
 
 
 def _document_not_found() -> RunReadError:
@@ -212,9 +220,14 @@ def open_run_original(
 
 
 def get_run_document(
-    engine: Engine, root: Path, run_id: str, document_id: str
+    engine: Engine,
+    root: Path,
+    run_id: str,
+    document_id: str,
+    *,
+    web_session: UUID | None = None,
 ) -> tuple[BinaryIO, int, str]:
-    run = _load_run(engine, run_id)
+    run = _load_run(engine, run_id, web_session=web_session)
     document = _stored_document(run, document_id)
     name = str(document["name"]).replace("\\", "/").rsplit("/", 1)[-1]
     safe_name = "".join(char for char in name if char.isprintable()).strip(" .") or document_id
@@ -230,8 +243,9 @@ def get_run_fragment(
     evidence_id: str,
     *,
     path_segment: bool = False,
+    web_session: UUID | None = None,
 ) -> Evidence:
-    run = _load_run(engine, run_id, with_result=True)
+    run = _load_run(engine, run_id, with_result=True, web_session=web_session)
     document = _stored_document(run, document_id)
     result = _stored_result(run)
     # Intermediaries can normalize separators and dot segments in request paths.

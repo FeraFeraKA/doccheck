@@ -6,17 +6,20 @@ from hashlib import sha256
 from pathlib import Path
 from shutil import rmtree
 from tempfile import mkdtemp
-from uuid import UUID, uuid4
+from uuid import UUID, uuid4, uuid5
 from zipfile import BadZipFile, ZipFile
 
 from pydantic import TypeAdapter, ValidationError
-from sqlalchemy import Engine, select
+from sqlalchemy import Engine, func, select
 from sqlalchemy.dialects.postgresql import insert
 from starlette.datastructures import FormData, UploadFile
 
 from doccheck_backend.contracts.locators import Locator
 from doccheck_backend.contracts.result import Scope
 from doccheck_backend.models import Run
+
+_WEB_QUEUE_LOCK = 416108
+_WEB_QUEUE_CAPACITY = 6
 
 MAX_FILE_SIZE = 50 * 1024**2
 MAX_PACKAGE_SIZE = 250 * 1024**2
@@ -138,7 +141,9 @@ def _sync_directory(path: Path) -> None:
         os.close(fd)
 
 
-def store_run(engine: Engine, root: Path, key: UUID, form: FormData) -> UUID:
+def store_run(
+    engine: Engine, root: Path, key: UUID, form: FormData, *, web_session: UUID | None = None
+) -> UUID:
     if set(form) - {*SCOPE_FIELDS, "report", "documents"}:
         raise input_error("Неизвестное поле")
     (report,) = _get_files(form, "report", 1)
@@ -175,11 +180,30 @@ def store_run(engine: Engine, root: Path, key: UUID, form: FormData) -> UUID:
         digest = sha256(json.dumps(fingerprint, sort_keys=True).encode()).hexdigest()
         run_id = uuid4()
         with engine.begin() as connection:
+            if web_session is not None:
+                key = uuid5(web_session, str(key))
+                # Serialize the queue capacity check and insert across API processes.
+                connection.execute(select(func.pg_advisory_xact_lock(_WEB_QUEUE_LOCK)))
+                already_submitted = connection.scalar(
+                    select(Run.id).where(Run.idempotency_key == key)
+                )
+                if already_submitted is None:
+                    pending = connection.scalar(
+                        select(func.count()).select_from(Run).where(
+                            Run.web_session_id.is_not(None),
+                            Run.status.in_(("queued", "processing")),
+                        )
+                    )
+                    if pending >= _WEB_QUEUE_CAPACITY:
+                        raise UploadError(
+                            503, "service_unavailable", "Очередь занята. Повторите позже"
+                        )
             query = (
                 insert(Run)
                 .values(
                     id=run_id,
                     idempotency_key=key,
+                    web_session_id=web_session,
                     request_digest=digest,
                     status="queued",
                     scope=stored_scope,

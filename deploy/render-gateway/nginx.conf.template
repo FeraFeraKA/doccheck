@@ -1,0 +1,62 @@
+pid @RUN@/nginx.pid;
+error_log stderr warn;
+worker_processes 1;
+events { worker_connections 256; }
+
+http {
+    default_type application/json;
+    access_log off;
+    client_body_temp_path @RUN@/body;
+    proxy_temp_path @RUN@/proxy;
+    fastcgi_temp_path @RUN@/fastcgi;
+    uwsgi_temp_path @RUN@/uwsgi;
+    scgi_temp_path @RUN@/scgi;
+    client_max_body_size 252m;
+    client_body_timeout 30s;
+    limit_conn_zone $server_name zone=documents:1m;
+
+    server {
+        listen @BIND@:@PORT@;
+        server_name doccheck-upload;
+        add_header Cache-Control "private, no-store" always;
+        add_header X-Content-Type-Options nosniff always;
+
+        # Platform health stays green while the GPU machine is offline.
+        location = /health {
+            return 200 '{"status":"ok"}';
+        }
+
+        location = /_tunnel {
+            proxy_pass http://127.0.0.1:19740;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+            proxy_read_timeout 90s;
+        }
+
+        location ~ ^/api/v0/(upload-session$|runs(/|$)) {
+            if ($http_sec_fetch_site = cross-site) { return 403; }
+            limit_conn documents 16;
+            limit_conn_status 503;
+            proxy_pass http://127.0.0.1:19741;
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+            proxy_set_header Host localhost;
+            proxy_set_header Authorization "";
+            proxy_connect_timeout 3s;
+            proxy_send_timeout 65s;
+            proxy_read_timeout 65s;
+            proxy_request_buffering off;
+            proxy_buffering off;
+            proxy_hide_header Cache-Control;
+            proxy_intercept_errors on;
+            error_page 502 504 =503 @worker_offline;
+        }
+
+        location @worker_offline {
+            return 503 '{"code":"service_unavailable","message":"Локальный DocCheck временно недоступен. Повторите позже."}';
+        }
+
+        location / { return 404; }
+    }
+}

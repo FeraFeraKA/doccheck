@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: doccheck-local-gpu-gateway
+    runtime: docker
+    plan: free
+    region: frankfurt
+    autoDeployTrigger: 'off'
+    dockerfilePath: ./deploy/render-gateway/Dockerfile
+    dockerContext: ./deploy/render-gateway
+    healthCheckPath: /health
+    envVars:
+      - key: DOCCHECK_TUNNEL_TOKEN
+        sync: false
+      - key: DOCCHECK_TUNNEL_SERVER_KEY
+        sync: false

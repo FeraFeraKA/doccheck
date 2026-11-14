@@ -39,6 +39,7 @@ class Run(Base):
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
     idempotency_key: Mapped[UUID] = mapped_column(Uuid, unique=True)
+    web_session_id: Mapped[UUID | None] = mapped_column(Uuid, index=True)
     request_digest: Mapped[str] = mapped_column(String(64))
     status: Mapped[str] = mapped_column(String(24))
     # An empty object means the upload did not include a user-supplied scope.

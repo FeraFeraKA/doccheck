@@ -2,6 +2,7 @@ import { HttpError } from '../../shared/api/requestJson';
 import { isRunId } from './runStatusApi';
 
 const runsPath = '/api/v0/runs';
+const webUploads = import.meta.env.VITE_DOCCHECK_WEB_UPLOADS === '1';
 
 export interface ScanScope {
   contractNumber: string;
@@ -114,6 +115,21 @@ export function prepareRunUpload(upload: RunUpload, idempotencyKey: string) {
   }
 
   return async (signal?: AbortSignal): Promise<AcceptedRun> => {
+    if (webUploads) {
+      const startSession = async () => {
+        const response = await fetch('/api/v0/upload-session', {
+          method: 'POST', redirect: 'error', signal,
+        });
+        if (response.status !== 204) {
+          throw new RunUploadHttpError(response.status, parseUploadError(await readJson(response)));
+        }
+      };
+      if (navigator.locks) {
+        await navigator.locks.request('doccheck-upload-session', { signal }, startSession);
+      } else {
+        await startSession();
+      }
+    }
     const requestUrl = new URL(runsPath, globalThis.location.origin);
     const response = await fetch(requestUrl.href, {
       method: 'POST',

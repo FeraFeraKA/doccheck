@@ -17,6 +17,7 @@ class Settings:
     synthetic_delay_seconds: float = 2.0
     upload_root: Path = Path("../data/runs")
     public_demo: bool = False
+    web_sessions: bool = False
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -34,6 +35,9 @@ class Settings:
         public_demo = os.environ.get("DOCCHECK_PUBLIC_DEMO", "0")
         if public_demo not in {"0", "1"}:
             raise ValueError("DOCCHECK_PUBLIC_DEMO must be 0 or 1")
+        web_sessions = os.environ.get("DOCCHECK_WEB_SESSIONS", "0")
+        if web_sessions not in {"0", "1"}:
+            raise ValueError("DOCCHECK_WEB_SESSIONS must be 0 or 1")
         return cls(
             database_url=database_url,
             worker_poll_seconds=_seconds("WORKER_POLL_SECONDS", 0.5, 0.05, 60),
@@ -45,6 +49,7 @@ class Settings:
                 )
             ),
             public_demo=public_demo == "1",
+            web_sessions=web_sessions == "1",
         )
 
 

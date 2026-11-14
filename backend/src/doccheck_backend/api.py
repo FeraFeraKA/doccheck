@@ -2,7 +2,7 @@ from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import aclosing, asynccontextmanager
 from typing import Annotated, BinaryIO
 from urllib.parse import quote
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.exception_handlers import request_validation_exception_handler
@@ -30,6 +30,28 @@ from doccheck_backend.uploads import (
     size_error,
     store_run,
 )
+
+_WEB_SESSION_COOKIE = "__Host-doccheck-session"
+
+
+def _web_session(request: Request) -> UUID | None:
+    value = request.cookies.get(_WEB_SESSION_COOKIE, "")
+    try:
+        session_id = UUID(value)
+    except ValueError:
+        return None
+    if session_id.version == 4 and value == str(session_id):
+        return session_id
+    return None
+
+
+def _run_session(request: Request) -> UUID | None:
+    if not request.app.state.web_sessions:
+        return None
+    session_id = _web_session(request)
+    if session_id is None:
+        raise run_reads.RunReadError(404, "run_not_found", "Проверка не найдена")
+    return session_id
 
 
 class _RunMultipartParser(MultiPartParser):
@@ -68,6 +90,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         configured = settings or Settings.from_env()
         application.state.upload_root = configured.upload_root
         application.state.public_demo = configured.public_demo
+        application.state.web_sessions = configured.web_sessions
         application.state.engine = create_database_engine(configured.database_url)
         try:
             yield
@@ -118,9 +141,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     document_runs = APIRouter(prefix="/api/v0/runs", dependencies=[Depends(require_document_runs)])
 
+    @application.post("/api/v0/upload-session", status_code=204)
+    def start_upload_session(request: Request) -> Response:
+        if not request.app.state.web_sessions or request.app.state.public_demo:
+            raise HTTPException(status_code=404)
+        response = Response(status_code=204, headers={"Cache-Control": "no-store"})
+        if _web_session(request) is None:
+            response.set_cookie(
+                _WEB_SESSION_COOKIE,
+                str(uuid4()),
+                max_age=30 * 24 * 60 * 60,
+                secure=True,
+                httponly=True,
+                samesite="strict",
+            )
+        return response
+
     @document_runs.post("", status_code=202)
     async def post_run(request: Request) -> JSONResponse:
         try:
+            web_session = None
+            if request.app.state.web_sessions:
+                web_session = _web_session(request)
+                if web_session is None:
+                    raise UploadError(401, "invalid_request", "Не удалось открыть сеанс загрузки")
             media_type = request.headers.get("content-type", "").partition(";")[0].strip().lower()
             if media_type != "multipart/form-data":
                 raise UploadError(415, "unsupported_media_type", "Ожидается multipart/form-data")
@@ -156,6 +200,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     request.app.state.upload_root,
                     parsed_key,
                     form,
+                    web_session=web_session,
                 )
             finally:
                 await form.close()
@@ -190,15 +235,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def list_runs(
         request: Request, limit: Annotated[int, Query(ge=1, le=100)] = 20, cursor: str | None = None
     ) -> run_reads.RunPage:
-        return run_reads.list_runs(request.app.state.engine, limit, cursor)
+        if request.app.state.web_sessions and _web_session(request) is None:
+            return run_reads.RunPage(items=[], next_cursor=None)
+        return run_reads.list_runs(
+            request.app.state.engine, limit, cursor, web_session=_run_session(request)
+        )
 
     @document_runs.get("/{run_id}")
     def get_run(request: Request, run_id: str) -> run_reads.RunState:
-        return run_reads.get_run_state(request.app.state.engine, run_id)
+        return run_reads.get_run_state(
+            request.app.state.engine, run_id, web_session=_run_session(request)
+        )
 
     @document_runs.get("/{run_id}/findings")
     def get_findings(request: Request, run_id: str) -> CheckResult:
-        return run_reads.get_run_findings(request.app.state.engine, run_id)
+        return run_reads.get_run_findings(
+            request.app.state.engine, run_id, web_session=_run_session(request)
+        )
 
     @document_runs.get(
         "/{run_id}/exports/xlsx",
@@ -206,7 +259,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         responses={200: {"content": {XLSX_MEDIA_TYPE: {}}}},
     )
     def export_run(request: Request, run_id: str) -> Response:
-        result = run_reads.get_run_findings(request.app.state.engine, run_id)
+        result = run_reads.get_run_findings(
+            request.app.state.engine, run_id, web_session=_run_session(request)
+        )
         try:
             payload = export_check_result(result)
         except XlsxReportLimitError:
@@ -230,7 +285,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     def get_document(request: Request, run_id: str, document_id: str) -> StreamingResponse:
         stream, size, name = run_reads.get_run_document(
-            request.app.state.engine, request.app.state.upload_root, run_id, document_id
+            request.app.state.engine,
+            request.app.state.upload_root,
+            run_id,
+            document_id,
+            web_session=_run_session(request),
         )
         return _OriginalFileResponse(stream, size, name)
 
@@ -242,6 +301,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             run_id,
             document_id,
             evidence_id,
+            web_session=_run_session(request),
             path_segment=True,
         )
 
@@ -258,6 +318,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             run_id,
             document_id,
             evidence_id,
+            web_session=_run_session(request),
         )
 
     application.include_router(document_runs)
