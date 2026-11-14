@@ -107,6 +107,7 @@ def test_simple_scan_exposes_only_unambiguous_ruble_amounts(monkeypatch, unit_li
         ([_line("Суммы КФЗ: руб.", 70)], [], True),
         ([_line("Суммы КФЗ: руб.", 70)], [_line("Код 1000", 10)], True),
         ([_line("Суммы КФЗ: руб.", 70)], [_line("Оплата труда AcT", 10)], True),
+        ([_line("Суммы КФЗ: руб.", 70)], [_line("Оплата труда", 10), _line("RUB", 40)], True),
         ([_line("Суммы: тыс. руб.", 70)], [], False),
         ([_line("Суммы: USD", 70)], [], False),
         ([], [], False),
@@ -115,6 +116,12 @@ def test_simple_scan_exposes_only_unambiguous_ruble_amounts(monkeypatch, unit_li
         ([_line("Суммы КФЗ: руб.", 70)], [_line("Страховые взносы: USD", 10)], False),
         ([_line("Суммы КФЗ: руб.", 70)], [_line("Оплата труда: CAD", 10)], False),
         ([_line("Суммы КФЗ: руб.", 70)], [_line("Страховые взносы: INR", 10)], False),
+        ([_line("Суммы КФЗ: руб.", 70)], [_line("Оплата труда", 10), _line("AUD", 40)], False),
+        ([_line("Суммы КФЗ: руб.", 70)], [_line("Взносы", 10), _line("SGD", 40)], False),
+        ([_line("Суммы КФЗ: руб.", 70)], [_line("Оплата труда", 10), _line("XYZ", 40)], False),
+        ([_line("Суммы КФЗ: руб.", 70)], [_line("Оплата труда", 10), _line("xYz", 40)], False),
+        ([_line("Суммы КФЗ: руб.", 70)], [_line("Оплата труда", 10), _line("AUD", 40, 15)], False),
+        ([_line("Суммы КФЗ: руб.", 70)], [_line("Оплата труда", 10), _line("код AUD", 40)], False),
         ([_line("Суммы КФЗ: руб.", 70)], [_line("Оплата труда: XYZ", 10)], False),
         ([_line("Суммы КФЗ: руб.", 70)], [_line("Оплата труда: фунты", 10)], False),
         ([_line("Суммы КФЗ: руб.", 70)], [_line("Страховые взносы: коп.", 10)], False),
@@ -155,6 +162,40 @@ def test_multilevel_scan_checks_units_without_losing_labor_quantity(
     assert labor.unit == "чел.-ч." and labor.amount == Decimal("12.34")
     monetary = next(cell for cell in reading.details if cell.code == "0200-base")
     assert (monetary.amount == Decimal("12.34")) is expected
+
+    if not expected:
+        run_id, document_id = uuid4(), uuid4().hex
+        report = SourceDocument(
+            id=document_id,
+            name="synthetic.png",
+            sha256="c" * 64,
+            format="png",
+            role="report",
+            parse_status="parsed",
+            decision=FileDecision(
+                state="include", reason_code="test", message="test", evidence_refs=[]
+            ),
+            errors=[],
+        )
+        scope = Scope(
+            report_document_id=document_id,
+            contract_number="SYN-01",
+            period_start="2026-01-01",
+            period_end="2026-01-31",
+            report_row_locator=None,
+        )
+        rows, evidence, _ = _rows(run_id, scope, report, None, reading, [report], {})
+        monetary_rows = [row for row in rows if row.unit == "RUB"]
+        assert monetary_rows and all(
+            row.status == "unverified"
+            and row.reported_value is None
+            and any(reason.code == "report_unit_unverified" for reason in row.reasons)
+            for row in monetary_rows
+        )
+        sources = {item.id: item for item in evidence}
+        for row in monetary_rows:
+            assert row.reported_evidence_refs
+            assert all(sources[ref].unit is None for ref in row.reported_evidence_refs)
 
 
 def test_unconfirmed_unit_keeps_source_address_without_asserting_rubles():
@@ -258,6 +299,19 @@ def test_real_ocr_does_not_treat_other_units_as_rubles(label, offset, confirmed)
     assert scanned_report._confirmed_rubles(lines) is confirmed
 
 
+@pytest.mark.parametrize("currency", ["AUD", "SGD", "XYZ"])
+def test_real_ocr_detects_code_on_separate_header_line(currency):
+    require_raster_ocr()
+    image = Image.new("RGB", (800, 200), "white")
+    draw = ImageDraw.Draw(image)
+    font = ImageFont.truetype("DejaVuSans.ttf", 36)
+    draw.text((30, 30), "Оплата труда", fill="black", font=font)
+    draw.text((30, 100), currency, fill="black", font=font)
+    lines = scanned_report.recognize_lines(image, mode=6)
+    assert any(line.text.strip().upper() == currency for line in lines)
+    assert not scanned_report._confirmed_rubles([_line("Суммы КФЗ: руб.", 5)], lines)
+
+
 def test_real_ocr_reads_an_explicit_ruble_multilevel_report(tmp_path):
     require_raster_ocr()
     period = ("2031-01-01", "2031-03-31")
@@ -284,3 +338,59 @@ def test_real_ocr_reads_an_explicit_ruble_multilevel_report(tmp_path):
         "0900": "399.12",
         "total": "2609.91",
     }
+
+
+def test_real_ocr_split_currency_remains_unverified_in_result(tmp_path):
+    require_raster_ocr()
+    period = ("2031-01-01", "2031-03-31")
+    contract = "SYN-10"
+    path = write_kfz_with_breakdown(
+        tmp_path / "report.png",
+        contract,
+        period,
+        ScanRow(5, 2031, ("1070,45", "351,29", "789,05", "399,12", "2609,91")),
+    )
+    with Image.open(path) as original:
+        image = original.copy()
+    ImageDraw.Draw(image).text(
+        (100, 420), "AUD", fill="black", font=ImageFont.truetype("DejaVuSans.ttf", 30)
+    )
+    reading = scanned_report.read_report_row(
+        image,
+        1,
+        PageLocator(kind="page", page=1, fragment_id="kfz-stage-5-2031"),
+        contract,
+        period,
+    )
+    assert reading is not None and not reading.complete
+    assert reading.cells and all(
+        cell.amount is None and cell.unit_unverified for cell in reading.cells
+    )
+
+    run_id, document_id = uuid4(), uuid4().hex
+    report = SourceDocument(
+        id=document_id,
+        name="synthetic.png",
+        sha256="d" * 64,
+        format="png",
+        role="report",
+        parse_status="parsed",
+        decision=FileDecision(
+            state="include", reason_code="test", message="test", evidence_refs=[]
+        ),
+        errors=[],
+    )
+    scope = Scope(
+        report_document_id=document_id,
+        contract_number=contract,
+        period_start=period[0],
+        period_end=period[1],
+        report_row_locator=None,
+    )
+    rows, evidence, _ = _rows(run_id, scope, report, None, reading, [report], {})
+    assert all(
+        row.status == "unverified" and row.reported_value is None
+        for row in rows
+        if row.unit == "RUB"
+    )
+    assert not any(item.kind == "reported_value" and item.unit == "RUB" for item in evidence)

@@ -52,7 +52,10 @@ _UNKNOWN_UNIT_WORD = re.compile(
     r"[^\W\d_]{2,}(?!\w)",
     re.I,
 )
-_UPPERCASE_UNIT_CODE = re.compile(r"(?<![A-Za-z0-9])(?!(?:RUB|RUR)\b)[A-Z]{3}(?![A-Za-z0-9])")
+_UPPERCASE_UNIT_CODE = re.compile(r"(?<![A-Za-z0-9/-])(?!(?:RUB|RUR)\b)[A-Z]{3}(?![A-Za-z0-9/-])")
+_STANDALONE_UNIT_CODE = re.compile(
+    r"\s*[(\[]?\s*(?!(?:RUB|RUR)\b)[A-Za-z]{3}\s*[.,:;)\]]*\s*", re.I
+)
 _OTHER_SCALE = re.compile(
     r"(?<!\w)(?:ты[сc](?:яч\w*)?|млн|миллион\w*|млрд|миллиард\w*|коп(?:еек|ейки|ейка)?)\.?(?!\w)",
     re.I,
@@ -222,6 +225,12 @@ def _unit_declaration(line: OcrLine) -> bool:
 
 def _confirmed_rubles(header: Sequence[OcrLine], table_header: Sequence[OcrLine] = ()) -> bool:
     """Require an explicit unit for report values and veto conflicting markers."""
+    # OCR can split a heading and its unit into separate lines. The whole table
+    # heading must be checked, not just lines containing a label such as "cost".
+    if any(_STANDALONE_UNIT_CODE.fullmatch(line.text) for line in (*header, *table_header)) or any(
+        _UPPERCASE_UNIT_CODE.search(line.text) for line in table_header
+    ):
+        return False
     declarations = [line for line in (*header, *table_header) if _unit_declaration(line)]
     if any(
         _OTHER_CURRENCY.search(line.text)
