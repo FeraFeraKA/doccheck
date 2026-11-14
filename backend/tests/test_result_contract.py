@@ -549,6 +549,81 @@ def test_primary_issue_can_only_reference_a_recorded_file_error(payload: dict) -
         CheckJob.model_validate(payload)
 
 
+def test_partial_file_error_preserves_independent_verified_row(
+    payload: dict, accepts_draft: Callable[[dict], bool]
+) -> None:
+    result = payload["result"]
+    independent, dependent = result["rows"]
+    evidence = {item["id"]: item for item in result["evidence"]}
+
+    # Explicit fixture assumptions: A is fully supported by the two admitted operations.
+    evidence["report-a"].update(raw_value="120,50", normalized_value="120.50")
+    independent.update(
+        reported_value="120.50", delta="0.00", status="verified", reasons=[], root_issue_id=None
+    )
+
+    # A third operation is established for B. Its other source is still unreadable.
+    result["evidence"].extend(
+        [
+            {
+                **evidence["amount-1"],
+                "id": "amount-b-partial",
+                "raw_value": "17,35",
+                "normalized_value": "17.35",
+                "locator": {**evidence["amount-1"]["locator"], "range": "C8"},
+            },
+            {
+                **evidence["article"],
+                "id": "article-b",
+                "raw_value": "DEMO-B",
+                "normalized_value": "DEMO-B",
+                "locator": {**evidence["article"]["locator"], "range": "A8"},
+            },
+        ]
+    )
+    dependent["calculation"]["components"] = [
+        {
+            "amount": "17.35",
+            "amount_refs": ["amount-b-partial"],
+            "contract_refs": ["contract"],
+            "period_refs": ["period"],
+            "article_refs": ["article-b"],
+            "relation_reason": "Синтетическая операция B в строке 8",
+        }
+    ]
+    dependent["observed_evidence_sum"] = "17.35"
+    dependent["completeness"]["evidence_refs"] = ["amount-b-partial"]
+    dependent["reasons"][0]["evidence_refs"] = ["amount-b-partial"]
+    issue_b = next(
+        issue for issue in result["summary"]["primary_issues"] if issue["id"] == "issue-b"
+    )
+    issue_b["evidence_refs"] = ["amount-b-partial"]
+    result["summary"].update(
+        counts={"verified": 1, "discrepancy": 0, "unverified": 1},
+        primary_issues=[issue_b],
+        conclusion="Статья A подтверждена. Статья B остаётся непроверенной.",
+    )
+
+    assert accepts_draft(payload)
+    job = CheckJob.model_validate(payload)
+    assert job.status == "completed_with_issues" and job.result is not None
+    confirmed, incomplete = job.result.rows
+    assert confirmed.status == "verified" and confirmed.delta == "0.00"
+    assert confirmed.completeness.state == "complete" and confirmed.root_issue_id is None
+    assert incomplete.status == "unverified" and incomplete.completeness.state == "incomplete"
+    assert incomplete.reported_value == "0.00" and incomplete.observed_evidence_sum == "17.35"
+    assert incomplete.expected_value is None and incomplete.delta is None
+    (issue,) = job.result.summary.primary_issues
+    assert incomplete.root_issue_id == issue.id == "issue-b"
+    assert issue.evidence_refs == ["amount-b-partial"]
+    (file_error,) = next(doc for doc in job.result.documents if doc.id == "unreadable").errors
+    assert issue.file_error_refs == [file_error.id] == ["scan-read-error"]
+    assert (file_error.code, file_error.message) == ("unreadable_source", "Ошибка чтения файла")
+    encoded = job.model_dump_json()
+    assert accepts_draft(json.loads(encoded))
+    assert CheckJob.model_validate_json(encoded) == job
+
+
 @pytest.mark.parametrize("referenced", [True, False])
 @pytest.mark.parametrize("conflict", [{"normalized_value": "600.25"}, {"unit": "USD"}])
 def test_component_readings_must_agree_at_the_canonical_address(
