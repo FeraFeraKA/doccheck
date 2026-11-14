@@ -130,7 +130,7 @@ function SelectedDocumentSource({ runId, document, evidenceId, onRetry }: {
     ? <button type="button" onClick={onRetry}>Повторить загрузку источника</button> : null;
 
   return <section aria-label="Просмотр источника" className="source-viewer">
-    <div className="source-viewer-heading"><strong>{document.name}</strong>
+    <div className="source-viewer-heading"><strong className="source-viewer-name" title={document.name}>{document.name}</strong>
       {evidenceId === null && <p>Адрес фрагмента отсутствует.</p>}
       {evidenceId !== null && evidence.status === 'loading' && <p role="status">Загрузка адреса…</p>}
       {evidence.status === 'error' && <p role="alert">{evidence.message}</p>}
@@ -138,7 +138,7 @@ function SelectedDocumentSource({ runId, document, evidenceId, onRetry }: {
         ? <p>Адрес фрагмента не поддерживается для этого формата.</p>
         : <p><strong>Адрес</strong> <span>{formatLocation(address)}</span></p>)}
     </div>
-    {original.status === 'ready' && format !== 'png' && <div className="source-viewer-toolbar">
+    {original.status === 'ready' && format !== 'png' && <div className="source-viewer-toolbar" role="group" aria-label="Действия с оригиналом">
       {format === 'pdf' && page && <span>Стр. {page.page}</span>}
       {format === 'pdf' && pdfUrl && (
         <a
@@ -208,16 +208,18 @@ function SourceImage({ url, name, page, box, download, fragment, retry }: {
   }, [state, boxKey, highlight]);
 
   return <>
-    <div className="source-viewer-toolbar">
-      {page && <span>Стр. {page}</span>}
-      {state === 'ready' && <div className="source-viewer-zoom">
-        <button type="button" aria-label="Уменьшить масштаб" disabled={zoom <= 75} onClick={() => setZoom(zoom - 25)}>−</button>
-        <span aria-label="Масштаб документа">{zoom}%</span>
-        <button type="button" aria-label="Увеличить масштаб" disabled={zoom >= 175} onClick={() => setZoom(zoom + 25)}>+</button>
-        <button type="button" aria-label="Сбросить масштаб" disabled={zoom === 100} onClick={() => setZoom(100)}>↺</button>
-      </div>}
-      {box && state === 'ready' && <button type="button" aria-pressed={highlight}
-        onClick={() => setHighlight(!highlight)}>Подсветка</button>}
+    <div className="source-viewer-toolbar" role="group" aria-label="Настройки просмотра">
+      <div className="source-viewer-controls">
+        {page && <span>Стр. {page}</span>}
+        {state === 'ready' && <div className="source-viewer-zoom">
+          <button type="button" aria-label="Уменьшить масштаб" disabled={zoom <= 75} onClick={() => setZoom(zoom - 25)}>−</button>
+          <span aria-label="Масштаб документа">{zoom}%</span>
+          <button type="button" aria-label="Увеличить масштаб" disabled={zoom >= 175} onClick={() => setZoom(zoom + 25)}>+</button>
+          <button type="button" aria-label="Сбросить масштаб" disabled={zoom === 100} onClick={() => setZoom(100)}>↺</button>
+        </div>}
+        {box && state === 'ready' && <button type="button" aria-pressed={highlight}
+          onClick={() => setHighlight(!highlight)}>Подсветка</button>}
+      </div>
       {download}
     </div>
     {state === 'error' ? <div className="source-viewer-placeholder"><p role="alert">Предпросмотр изображения недоступен.</p></div>
