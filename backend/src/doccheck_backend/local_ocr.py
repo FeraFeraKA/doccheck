@@ -404,23 +404,28 @@ def _context_windows_crops(
     return tuple(result)
 
 
+def _repeated_full_frame_read(
+    source: Observation, original: tuple[Observation, ...], verification: tuple[Observation, ...]
+) -> bool:
+    text = _position_text(source.raw_text)
+    for frame in (original, verification):
+        nearby = {
+            _position_text(candidate.raw_text)
+            for candidate in frame
+            if _overlap(source.locator, candidate.locator) >= 0.55
+        }
+        if nearby != {text}:
+            return False
+    return True
+
+
 def _read_windows_page(
     first: Path, second: Path, page: int, helper: Path, executable: Path
 ) -> tuple[Observation, ...]:
     original = _windows_frame(first, page, helper, executable)
     verification = _windows_frame(second, page, helper, executable)
-    positions = {}
-    for item in verification:
-        positions.setdefault(_position_text(item.raw_text), []).append(item)
     readings = tuple(
-        replace(
-            item,
-            repeated_read=sum(
-                _overlap(item.locator, alternative.locator) >= 0.55
-                for alternative in positions.get(_position_text(item.raw_text), ())
-            )
-            == 1,
-        )
+        replace(item, repeated_read=_repeated_full_frame_read(item, original, verification))
         for item in original
     )
     from PIL import Image

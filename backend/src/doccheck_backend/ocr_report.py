@@ -3,6 +3,7 @@
 import re
 from dataclasses import dataclass
 from datetime import date
+from itertools import combinations
 
 from doccheck_backend.contracts.locators import PageLocator
 from doccheck_backend.native_observations import Observation
@@ -100,31 +101,36 @@ def _row_readings(positioned: tuple[Observation, ...], pattern: re.Pattern[str],
         pieces = _row_neighbors(item, positioned)
         if len(pieces) < 2:
             continue
-        previous = 0
-        for index, part in enumerate(pieces):
-            if index and _box(part)[0] < previous - 0.002:
-                # Context rereads can overlap their component boxes. Do not
-                # combine overlapping raw readings as if they were extra words.
-                break
-            previous = _box(part)[2]
-        else:
-            raw = " ".join(part.raw_text for part in pieces)
-            text = raw.casefold() if family == "stage" else raw
-            for match in pattern.finditer(text):
-                offset = 0
-                relevant = []
-                for part in pieces:
-                    end = offset + len(part.raw_text)
-                    if offset < match.end() and match.start() < end:
-                        relevant.append(part)
-                    offset = end + 1
-                yield match, _reading_source(relevant, family)
+        # Read every contiguous non-overlapping sequence. An alternative
+        # fragment at the same position should not hide a valid second claim.
+        for start in range(len(pieces) - 1):
+            sequences = [[pieces[start]]]
+            for part in pieces[start + 1 :]:
+                for seq in tuple(sequences):
+                    if len(seq) >= 5 or _box(part)[0] < _box(seq[-1])[2] - 0.002:
+                        continue
+                    if _box(part)[0] - _box(seq[-1])[2] > 0.18:
+                        continue
+                    next_seq = [*seq, part]
+                    sequences.append(next_seq)
+                    if len(sequences) > 48:
+                        break
+                    raw = " ".join(chunk.raw_text for chunk in next_seq)
+                    text = raw.casefold() if family == "stage" else raw
+                    for match in pattern.finditer(text):
+                        offset = 0
+                        relevant = []
+                        for chunk in next_seq:
+                            end = offset + len(chunk.raw_text)
+                            if offset < match.end() and match.start() < end:
+                                relevant.append(chunk)
+                            offset = end + 1
+                        yield match, _reading_source(relevant, family)
+                if len(sequences) > 48:
+                    break
 
 
-def _dated_stages(
-    items: tuple[Observation, ...],
-) -> dict[int, dict[str, dict[date, Observation]]]:
-    stages: dict[int, dict[str, dict[date, Observation]]] = {}
+def _date_readings(items: tuple[Observation, ...]):
     for reading, source in _row_readings(items, _STAGE_DATE, "stage"):
         label, stage, day, month, year = reading.groups()
         if month not in _MONTHS:
@@ -133,7 +139,15 @@ def _dated_stages(
             value = date(int(year), _MONTHS.index(month) + 1, int(day))
         except ValueError:
             continue
-        labels = stages.setdefault(int(stage.replace("з", "3")), {})
+        yield int(stage.replace("з", "3")), label, value, source
+
+
+def _dated_stages(
+    items: tuple[Observation, ...],
+) -> dict[int, dict[str, dict[date, Observation]]]:
+    stages: dict[int, dict[str, dict[date, Observation]]] = {}
+    for stage, label, value, source in _date_readings(items):
+        labels = stages.setdefault(stage, {})
         labels.setdefault(label, {}).setdefault(value, source)
     return stages
 
@@ -176,7 +190,7 @@ def parse_scan_report(observations: tuple[Observation, ...]) -> ScanScope | None
     if not confirmed_rows:
         return None
     row = confirmed_rows[0]
-    if any(not _same_region(row, other) for other in confirmed_rows[1:]):
+    if any(not _same_region(left, right) for left, right in combinations(confirmed_rows, 2)):
         return None
     if any(
         _page(other) != _page(row) or abs(_center(other, 1) - _center(row, 1)) > 0.004
@@ -190,13 +204,13 @@ def parse_scan_report(observations: tuple[Observation, ...]) -> ScanScope | None
         return None
     # Confidence is a promotion gate, not a reason to discard a competing
     # well-formed date in the same source region.
-    all_dates = _dated_stages(positioned)
-    for name, selected, source in (
-        ("начало", first, start_source),
-        ("окончание", last, cutoff_source),
-    ):
-        for alternative, location in all_dates.get(stage, {}).get(name, {}).items():
-            if alternative != selected and _same_region(source, location):
-                return None
+    adjudicated = {"начало": (first, start_source), "окончание": (last, cutoff_source)}
+    for read_stage, name, alternative, location in _date_readings(positioned):
+        selected, source = adjudicated[name]
+        if (read_stage != stage or alternative != selected) and _same_region(source, location):
+            return None
+    for reading, location in _row_readings(positioned, _CONTRACT, "contract"):
+        if reading[1] != contract and _same_region(contract_source, location):
+            return None
     assert isinstance(row.locator, PageLocator)
     return ScanScope(contract, start, last, row.locator, contract_source, cutoff_source)

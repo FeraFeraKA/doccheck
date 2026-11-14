@@ -171,3 +171,51 @@ def test_duplicate_reading_of_exact_same_report_row_is_not_ambiguity(scanned_sta
         repeated_read=True,
     )
     assert parse_scan_report((*scanned_stage, confirmed)) is not None
+
+
+def test_repeated_page_read_rejects_conflicting_alternative_in_either_frame():
+    from dataclasses import replace
+
+    from doccheck_backend.local_ocr import _repeated_full_frame_read
+
+    original = _box("Дата 10", 0.30, 0.10, 0.54)
+    conflict = replace(original, raw_text="Дата 11")
+    assert not _repeated_full_frame_read(original, (original, conflict), (original,))
+    assert not _repeated_full_frame_read(original, (original,), (original, conflict))
+    assert _repeated_full_frame_read(original, (original,), (original, original))
+
+
+def test_conflict_on_row_page_survives_same_date_on_earlier_page(scanned_stage):
+    from dataclasses import replace
+
+    source = scanned_stage[4]
+    alternative = replace(source, raw_text='"18" апреля 2028 г.', confidence=0.74)
+    another_page = replace(
+        alternative,
+        locator=alternative.locator.model_copy(update={"page": 2}),
+    )
+    stage_label = scanned_stage[3]
+    label_elsewhere = replace(
+        stage_label,
+        locator=stage_label.locator.model_copy(update={"page": 2}),
+        confidence=0.73,
+    )
+
+    assert parse_scan_report((another_page, label_elsewhere, *scanned_stage, alternative)) is None
+
+
+def test_low_score_contract_conflict_at_same_address_rejects_scope(scanned_stage):
+    from dataclasses import replace
+
+    selected = scanned_stage[0]
+    competing = replace(selected, raw_text="Договор № SYN-R/99", confidence=0.73)
+
+    assert parse_scan_report((*scanned_stage, competing)) is None
+
+
+def test_broad_row_box_cannot_join_two_disjoint_narrow_boxes(scanned_stage):
+    selected = scanned_stage[9]
+    narrow_left = _box(selected.raw_text, 0.04, 0.53, 0.085)
+    narrow_right = _box(selected.raw_text, 0.115, 0.53, 0.16)
+
+    assert parse_scan_report((*scanned_stage, narrow_left, narrow_right)) is None
