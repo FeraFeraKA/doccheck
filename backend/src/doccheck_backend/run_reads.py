@@ -275,7 +275,7 @@ def get_run_fragment_preview(
         except OSError:
             raise unavailable() from None
     # The parser and the hash must see the same bytes, even if the on-disk
-    # file is rewritten in place after _open_original verifies it.
+    # file is rewritten in place after open_run_original verifies it.
     if len(content) != size or sha256(content).hexdigest() != document["sha256"]:
         raise _document_not_found()
     return render_preview(BytesIO(content), document.get("format"), evidence)

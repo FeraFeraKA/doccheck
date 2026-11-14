@@ -372,7 +372,7 @@ def test_fragment_preview_reads_only_the_addressed_original_text(client, tmp_pat
     assert (changed.status_code, changed.json()["code"]) == (404, "document_not_found")
 
     path.write_bytes(original)
-    open_original = run_reads._open_original
+    open_original = run_reads.open_run_original
 
     def rewrite_after_verification(*args):
         stream, size = open_original(*args)
@@ -380,7 +380,7 @@ def test_fragment_preview_reads_only_the_addressed_original_text(client, tmp_pat
             replacement.write(bytes([original[0] ^ 1]))
         return stream, size
 
-    monkeypatch.setattr(run_reads, "_open_original", rewrite_after_verification)
+    monkeypatch.setattr(run_reads, "open_run_original", rewrite_after_verification)
     changed_after_open = client.get(url, params=query)
     assert (changed_after_open.status_code, changed_after_open.json()["code"]) == (
         404,
