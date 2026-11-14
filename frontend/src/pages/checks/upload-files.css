@@ -1,0 +1,30 @@
+.upload-spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  border: 2px solid var(--ui-line);
+  border-top-color: var(--ui-primary);
+  border-radius: 50%;
+  animation: upload-spin .8s linear infinite;
+}
+
+.upload-file-row .upload-file-status { margin-inline-end: 26px; }
+.upload-file-info > .upload-file-error { color: #8a3f2b; }
+
+.upload-transfer {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ui-secondary);
+  font-size: 13px;
+}
+.upload-transfer-progress { margin-top: 10px; }
+
+@keyframes upload-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .upload-spinner { animation: none; }
+}

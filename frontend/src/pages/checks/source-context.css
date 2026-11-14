@@ -12,14 +12,14 @@
 
 .source-context-header {
   flex-shrink: 0;
-  padding: .5rem 1rem;
+  padding: .75rem 1rem;
   overflow-wrap: anywhere;
 }
 
 .source-context-header > div { display: flex; flex-wrap: wrap; align-items: center; gap: .25rem .75rem; }
 .source-context-header h3 { margin: 0; font-size: .875rem; font-weight: 600; }
-.source-context-header > dl { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .375rem; margin-top: .375rem; }
-.source-context-header > dl > div { padding: .25rem .5rem; border-radius: .375rem; background: #edf5f4; }
+.source-context-header > dl { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .5rem; margin-top: .625rem; }
+.source-context-header > dl > div { padding: .5rem .625rem; border-radius: .375rem; background: #edf5f4; }
 .source-context-header dt,
 .source-context-header p { font-size: .75rem; }
 .source-context-header dd { font-size: .875rem; font-weight: 600; font-variant-numeric: tabular-nums; }
@@ -47,12 +47,15 @@
   white-space: nowrap;
 }
 .result-reconciliation .source-context-preview .document-picker :is(button, select) { padding-block: .25rem; }
-.source-context-rule { flex: 1; padding: .75rem 1rem; overflow: auto; overflow-wrap: anywhere; }
+.source-context-rule { flex: 1; padding: 1rem; overflow: auto; overflow-wrap: anywhere; }
+.source-context-rule > .source-context-header { padding: 0; margin-bottom: 1.25rem; }
 .source-context-rule h3 { font-size: .875rem; font-weight: 600; }
-.source-context-rule dt { margin-top: .5rem; font-size: .75rem; color: #4d6465; }
+.source-context-rule > dl { margin-top: .75rem; }
+.source-context-rule > dl > dt { margin-top: .625rem; font-size: .75rem; color: #4d6465; }
 .source-context-rule dd,
 .source-context-rule li { font-size: .8125rem; }
-.source-context-rule ul { margin-top: .5rem; }
+.source-context-rule ul { margin-top: .75rem; }
+.source-context-rule li + li { margin-top: .375rem; }
 
 @media (max-height: 650px) {
   .source-context:not(.source-context-show-rule) .source-context-header dl { display: none; }

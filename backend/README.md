@@ -225,6 +225,11 @@ uv run --frozen pytest
 
 ## Приём пакета
 
+Мастер сначала передаёт пакет через `POST /api/v0/runs/uploads`. Пакет
+сохраняется в состоянии `prepared`; `POST /api/v0/runs/uploads/{upload_id}/start`
+ставит его в очередь. Подробности описаны в
+[контракте API](../contracts/doccheck-api.v0.openapi.yaml).
+
 `POST /api/v0/runs` принимает multipart по [OpenAPI v0](../contracts/doccheck-api.v0.openapi.yaml)
 и возвращает `202` после сохранения файлов и записи задания в PostgreSQL.
 Клиент передаёт UUID `Idempotency-Key`, КФЗ (`report`) и первичные документы

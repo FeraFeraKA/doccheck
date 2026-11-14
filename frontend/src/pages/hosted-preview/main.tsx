@@ -85,7 +85,7 @@ function Preview() {
   return (
     <main>
       <h1>DocCheck</h1>
-      <p>Закрытое демо на синтетических документах</p>
+      <p>Проверки синтетических документов</p>
       {sessionRequired && (
         <form onSubmit={(event) => void enter(event)}>
           <label htmlFor="preview-token">Код приглашения</label>

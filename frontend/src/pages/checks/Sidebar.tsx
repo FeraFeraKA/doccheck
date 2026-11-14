@@ -38,10 +38,7 @@ export function Sidebar() {
     return () => window.removeEventListener('keydown', closeOnEscape);
   }, [expanded]);
 
-  const mark = <>
-    <span className="brand-symbol"><WorkspaceIcon name="scan" size={23} /></span>
-    <span className="brand-name">doccheck<span className="brand-dot" aria-hidden="true" /></span>
-  </>;
+  const mark = <span className="brand-symbol"><WorkspaceIcon name="scan" size={23} /></span>;
 
   return (
     <aside ref={sidebar} className="app-sidebar" aria-label="Меню DocCheck" data-expanded={expanded} data-mobile-open={open}
@@ -61,7 +58,7 @@ export function Sidebar() {
       onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget)) setKeyboardExpanded(false);
       }}>
-      <Link to="/checks/new" className="brand" aria-label="DocCheck">{mark}</Link>
+      <Link to="/checks/new" className="brand" aria-label="На страницу новой проверки">{mark}</Link>
       <button ref={trigger} type="button" className="brand sidebar-mobile-trigger" aria-label="Меню разделов"
         aria-expanded={open} aria-controls="doccheck-navigation" onClick={() => {
           setKeyboardExpanded(false);

@@ -59,6 +59,7 @@ class RunProgress(BaseModel):
 class RunState(RunSummary):
     progress: RunProgress | None
     archived_at: datetime | None = None
+    synthetic: bool = False
 
 
 class HistoryRun(RunSummary):
@@ -111,7 +112,8 @@ def list_runs(
         Run.archived_at,
     )
     query = select(*columns).where(
-        Run.archived_at.is_not(None) if archive else Run.archived_at.is_(None)
+        Run.archived_at.is_not(None) if archive else Run.archived_at.is_(None),
+        Run.status != "prepared",
     )
     if finding is not None:
         query = query.where(Run.status.in_(("completed", "completed_with_issues")))
@@ -206,14 +208,37 @@ def _load_run(engine: Engine, run_id: str, *, with_result: bool = False) -> Run:
     with Session(engine) as session:
         options = () if with_result else (defer(Run.result, raiseload=True),)
         run = session.get(Run, key, options=options)
-    if run is None:
+    if run is None or run.status == "prepared":
         raise RunReadError(404, "run_not_found", "Проверка не найдена")
     return run
 
 
-def get_run_state(engine: Engine, run_id: str) -> RunState:
+def get_editable_run(engine: Engine, run_id: str) -> Run:
     run = _load_run(engine, run_id)
-    total = len(run.documents)
+    if run.status not in ("completed", "completed_with_issues"):
+        raise RunReadError(409, "result_pending", "Дождитесь завершения исходной проверки")
+    return run
+
+
+def get_run_state(engine: Engine, run_id: str) -> RunState:
+    key = _run_key(run_id)
+    totals = func.jsonb_array_length(Run.documents)
+    with Session(engine) as session:
+        run = session.execute(
+            select(
+                Run.id,
+                Run.status,
+                Run.created_at,
+                Run.error,
+                Run.archived_at,
+                totals.label("document_count"),
+                Run.documents[0]["synthetic"].as_boolean().label("synthetic_package"),
+                Run.result["synthetic"].as_boolean().label("synthetic_result"),
+            ).where(Run.id == key, Run.status != "prepared")
+        ).one_or_none()
+    if run is None:
+        raise RunReadError(404, "run_not_found", "Проверка не найдена")
+    total = run.document_count
     progress = None
     if run.status == "queued":
         progress = RunProgress(processed_documents=0, total_documents=total)
@@ -226,6 +251,7 @@ def get_run_state(engine: Engine, run_id: str) -> RunState:
         error=run.error,
         progress=progress,
         archived_at=run.archived_at.astimezone(UTC) if run.archived_at is not None else None,
+        synthetic=run.synthetic_package is True or run.synthetic_result is True,
     )
 
 
@@ -250,7 +276,7 @@ def get_run_findings(engine: Engine, run_id: str) -> CheckResult:
 def set_run_archive(engine: Engine, run_id: str, archived: bool) -> ArchiveState:
     with Session(engine) as session, session.begin():
         run = session.get(Run, _run_key(run_id), with_for_update=True)
-        if run is None:
+        if run is None or run.status == "prepared":
             raise RunReadError(404, "run_not_found", "Проверка не найдена")
         if archived:
             _stored_result(run)

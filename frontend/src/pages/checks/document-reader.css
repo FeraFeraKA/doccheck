@@ -23,10 +23,22 @@
 
 .document-reader-controls label { min-width: 0; display: flex; align-items: center; gap: 6px; }
 .document-reader-controls select { max-width: 180px; min-width: 0; }
-.document-reader-paging button { display: grid; place-items: center; width: 25px; height: 25px; padding: 0; }
-.document-reader-paging button:nth-of-type(odd) svg { rotate: 180deg; }
+.reader-range { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.checks-content .document-reader-paging .reader-arrow {
+  display: grid;
+  place-items: center;
+  flex: 0 0 28px;
+  box-sizing: border-box;
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  padding: 0;
+  line-height: 1;
+}
+.reader-arrow svg { display: block; width: 15px; height: 15px; }
+.reader-arrow[data-direction="left"] svg { transform: rotate(180deg); }
 .document-reader-controls button[aria-disabled="true"] { opacity: .45; cursor: default; }
-.document-reader-paging .reader-source-jump { width: auto; padding: 0 6px; }
+.checks-content .document-reader-paging .reader-source-jump { min-height: 28px; padding: 0 6px; }
 
 .document-reader-scroll {
   flex: 1;
@@ -96,6 +108,10 @@
   box-shadow: inset 0 -2px var(--source-mark);
 }
 
+.source-viewer :is(td, p)[data-source-active="true"] {
+  box-shadow: inset 0 0 0 2px var(--source-mark);
+}
+
 .source-viewer [data-source-tone] mark {
   color: inherit;
   background: var(--source-strong);
@@ -106,4 +122,8 @@
 .source-viewer .source-viewer-highlight[data-source-tone] {
   background: color-mix(in srgb, var(--source-strong) 38%, transparent);
   border-color: var(--source-mark);
+}
+
+.source-viewer .source-viewer-highlight[data-source-active="true"] {
+  border-width: 3px;
 }
