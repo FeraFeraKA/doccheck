@@ -26,16 +26,7 @@ CMD ["uvicorn", "doccheck_backend.api:app", "--host", "0.0.0.0", "--port", "8000
 FROM runtime AS document-runtime
 ENV PYTHONPATH=/app
 COPY bench/__init__.py ./bench/
-COPY bench/e2e_v32_20261114/__init__.py \
-     bench/e2e_v32_20261114/classification.py \
-     bench/e2e_v32_20261114/decision_rules.py \
-     bench/e2e_v32_20261114/document_identity.py \
-     bench/e2e_v32_20261114/explanations.py \
-     bench/e2e_v32_20261114/native_report.py \
-     bench/e2e_v32_20261114/report_benchmark.py \
-     bench/e2e_v32_20261114/run.py \
-     bench/e2e_v32_20261114/runtime.py \
-     ./bench/e2e_v32_20261114/
+COPY bench/e2e_v32_20261114 ./bench/e2e_v32_20261114
 RUN python -c "from PIL import Image; import pypdfium2; from bench.e2e_v32_20261114 import run; from doccheck_backend.v32_adapter import process"
 
 FROM runtime AS default
