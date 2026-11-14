@@ -430,3 +430,19 @@ def test_unimplemented_native_format_has_explicit_diagnostic(tmp_path, file_form
     result = read_native_document(tmp_path / "original", file_format)
     assert not result.observations
     assert [issue.code for issue in result.issues] == ["unsupported_native_format"]
+
+
+def test_date_style_does_not_hide_text_cells(tmp_path):
+    from openpyxl import Workbook
+    from openpyxl.styles.numbers import FORMAT_DATE_YYYYMMDD2
+
+    book = Workbook()
+    sheet = book.active
+    sheet["A1"] = "Contract and period"
+    sheet["A1"].number_format = FORMAT_DATE_YYYYMMDD2
+    path = tmp_path / "styled-text.xlsx"
+    book.save(path)
+
+    result = read_native_document(path, "xlsx")
+    assert result.issues == ()
+    assert [item.raw_text for item in result.observations] == ["Contract and period"]
