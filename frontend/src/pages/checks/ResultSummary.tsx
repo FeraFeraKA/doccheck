@@ -1,8 +1,7 @@
 import { Link } from 'react-router';
 import type { ReviewResult } from './reviewResult';
-import { formatDecimal, formatLocation, formatMeasure, rowExplanation } from './reviewResult';
-import { documentDecisionLabels } from './ResultDocuments';
-import { XlsxDownload } from './XlsxDownload';
+import { formatLocation, formatMeasure, rowExplanation } from './reviewResult';
+import { isExceptionDocument } from './ResultDocuments';
 
 const indicatorList = new Intl.ListFormat('ru');
 const plural = new Intl.PluralRules('ru');
@@ -50,19 +49,16 @@ export function UnverifiedIndicators({ rows, onOpenRow }: {
   </section>;
 }
 
-export function AdditionalChecks({ result, runPath, onOpenRow, onOpenDocument, onOpenEvidence }: {
+export function AdditionalChecks({ result, runPath, onOpenRow, onOpenEvidence }: {
   result: ReviewResult;
   runPath: string;
   onOpenRow: (id: string) => void;
-  onOpenDocument?: (id: string, trigger: HTMLElement) => void;
   onOpenEvidence?: (id: string, trigger: HTMLElement) => void;
 }) {
-  const files = result.documents.filter(({ decision, errors }) =>
-    decision.state === 'include' && errors.length > 0,
-  );
-  const hasExceptions = result.documents.some(({ decision }) => decision.state !== 'include');
+  const hasExceptions = result.documents.some(isExceptionDocument);
   const rowIssueIds = new Set(result.rows.map(({ root_issue_id }) => root_issue_id));
   const issues = result.summary.primary_issues.filter(({ id }) => !rowIssueIds.has(id));
+  if (!hasExceptions && issues.length === 0 && !result.rows.some(({ status }) => status === 'unverified')) return null;
   const evidenceById = new Map(result.evidence.map((item) => [item.id, item]));
   const documentsById = new Map(result.documents.map((item) => [item.id, item.name]));
   function sourceLinks(refs: string[]) {
@@ -79,41 +75,17 @@ export function AdditionalChecks({ result, runPath, onOpenRow, onOpenDocument, o
     });
   }
 
-  return <section className="mt-6 space-y-2" aria-label="Дополнительные проверки">
-    <h2 className="text-[17px] font-medium">Дополнительные проверки</h2>
-    {files.length > 0 && <div className="result-document-scroll" role="region" aria-label="Решения по документам" tabIndex={0}>
-      <table className="result-document-table">
-        <thead><tr><th scope="col">Проверка</th><th scope="col">Документ</th>
-          <th scope="col">Решение</th><th scope="col">Причина</th></tr></thead>
-        <tbody>{files.map((file) => <tr key={file.id}>
-          <td>{decisionTypes[file.decision.reason_code] ?? 'Проверка документа'}</td>
-          <td>{onOpenDocument ? <button type="button" className="text-left underline"
-            onClick={(event) => onOpenDocument(file.id, event.currentTarget)}>{file.name}</button>
-            : <Link className="underline" to={runPath + '/documents?' + new URLSearchParams({ document: file.id })}>{file.name}</Link>}</td>
-          <td>{documentDecisionLabels[file.decision.state]}</td><td>{file.decision.message}
-            {file.errors.filter(({ message }) => message !== file.decision.message)
-              .map((error) => <p key={error.id}>{error.message}</p>)}
-            {sourceLinks(file.decision.evidence_refs)}</td>
-        </tr>)}</tbody>
-      </table>
-    </div>}
-    {issues.length > 0 && <ul className="list-disc pl-5 text-sm">{issues.map((issue) => <li key={issue.id}>{issue.message}{sourceLinks(issue.evidence_refs)}</li>)}</ul>}
+  return <section className="result-additional" aria-label="Дополнительные проверки">
+    <h2>Дополнительные проверки</h2>
+    {issues.length > 0 && <ul className="result-diagnostics">{issues.map((issue) => <li key={issue.id}>
+      <p>{issue.message}</p>{sourceLinks(issue.evidence_refs)}
+    </li>)}</ul>}
     <UnverifiedIndicators rows={result.rows} onOpenRow={onOpenRow} />
-    {hasExceptions && <Link to={runPath + '/documents#exceptions'} className="inline-block text-[13px] underline">Исключения</Link>}
-    {!hasExceptions && files.length === 0 && issues.length === 0 && result.summary.counts.unverified === 0
-      && <p className="result-summary-muted text-sm">Дополнительные замечания отсутствуют.</p>}
+    {hasExceptions && <Link to={runPath + '/documents?filter=excluded'} className="result-exceptions-link">Исключения</Link>}
   </section>;
 }
 
-const decisionTypes: Record<string, string> = {
-  byte_duplicate: 'Дублирование',
-  out_of_period: 'Документ вне периода',
-  other_contract: 'Документ другого договора',
-  ambiguous_relation: 'Неоднозначная связь',
-  ambiguous_link: 'Неоднозначная связь',
-};
-
-export function ResultConclusion({ result, exportRunId }: { result: ReviewResult; exportRunId?: string }) {
+export function ResultConclusion({ result }: { result: ReviewResult }) {
   const { counts, conclusion, rubCoverage } = result.summary;
   const tone = resultTone(counts);
   const discrepancies = result.rows.filter((row) => row.status === 'discrepancy');
@@ -132,7 +104,7 @@ export function ResultConclusion({ result, exportRunId }: { result: ReviewResult
         </li>)}
       </ul>
     </div>
-    <div className="mt-2 max-w-[930px] space-y-1 text-sm leading-relaxed tabular-nums">
+    <div className="mt-2 space-y-1 text-sm leading-relaxed tabular-nums">
       <p>{conclusion}</p>
       {discrepancies.length > 0 && <>
         <p>{discrepancyForm === 'one' ? 'Обнаружено' : 'Обнаружены'} {discrepancies.length}
@@ -141,7 +113,7 @@ export function ResultConclusion({ result, exportRunId }: { result: ReviewResult
           {discrepancies.map((row) => <li key={row.id}>
             {row.label}: в КФЗ {formatMeasure(row.reported_value, row.unit)},
             по документам {formatMeasure(row.expected_value, row.unit)}.
-            {' '}Разница {row.delta !== null && !row.delta.startsWith('-') ? '+' : ''}{formatMeasure(row.delta, row.unit)}.
+            {row.delta !== null && <> Разница {row.delta.startsWith('-') ? '' : '+'}{formatMeasure(row.delta, row.unit)}.</>}
           </li>)}
         </ul>
       </>}
@@ -150,18 +122,8 @@ export function ResultConclusion({ result, exportRunId }: { result: ReviewResult
         {' '}{indicatorList.format(unverified.map(({ label }) => label))}.</p>}
       {summaryCoverage && <p>Известные денежные статьи КФЗ: <strong className="font-medium">{formatMeasure(summaryCoverage, 'RUB')}</strong>.</p>}
       {unverified.filter((row) => row.expected_value === null && row.observed_evidence_sum !== null).map((row) => <p key={row.id}>
-        {row.label}: подтверждена часть суммы {formatMeasure(row.observed_evidence_sum, row.unit)}.
+        {row.label}: по доступным документам {formatMeasure(row.observed_evidence_sum, row.unit)}.
       </p>)}
-      {rubCoverage && <details className="text-[13px]">
-        <summary className="cursor-pointer">Покрытие по сумме</summary>
-        <ul className="mt-1 flex flex-wrap gap-x-5 gap-y-1">
-          {statuses.map(([status, label]) => <li key={status}>
-            {label}: {formatMeasure(rubCoverage[status], 'RUB')}
-            {rubCoverage.shares?.[status] !== undefined && ` · ${formatDecimal(rubCoverage.shares[status])}%`}
-          </li>)}
-        </ul>
-      </details>}
     </div>
-    {exportRunId && <div className="mt-3"><XlsxDownload key={exportRunId} runId={exportRunId} /></div>}
   </section>;
 }

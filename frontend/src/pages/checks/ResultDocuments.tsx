@@ -9,7 +9,7 @@ import './result-documents.css';
 
 type Document = ReviewResult['documents'][number];
 
-export const documentDecisionLabels: Record<string, string> = {
+const documentDecisionLabels: Record<string, string> = {
   include: 'Включён', exclude: 'Исключён', needs_review: 'Требует проверки', parse_error: 'Ошибка чтения',
 };
 
@@ -33,11 +33,8 @@ interface ResultDocumentsProps {
   result: ReviewResult;
   runPath: string;
   storedRunId?: string;
-  exportRunId?: string;
   exceptions: boolean;
   renderHeader: (filters: ReactNode) => ReactNode;
-  archiveAction?: ReactNode;
-  synthetic: boolean;
   rowEvidenceIds: (row: ReviewResult['rows'][number], issue: ReviewResult['summary']['primary_issues'][number] | undefined) => string[];
 }
 

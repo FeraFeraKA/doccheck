@@ -44,12 +44,12 @@ test('the accountant opens the synthetic reconciliation and sees discrepancies a
   await expect(row.getByRole('button', { name: 'Синтетическая статья B' })).toHaveAttribute('aria-expanded', 'true');
 
   await page.getByRole('link', { name: 'Исключения' }).click();
-  await expect(page).toHaveURL(/\/documents#exceptions$/);
-  const exceptions = page.getByRole('region', { name: 'Исключения', exact: true });
-  await expect(page.getByText('Действия бухгалтера недоступны в синтетическом режиме.')).toBeVisible();
+  await expect(page).toHaveURL(/\/documents\?filter=excluded$/);
+  const exceptions = page.getByRole('region', { name: 'Таблица документов', exact: true });
+  await expect(page.getByText('Тестовые данные', { exact: true })).toBeVisible();
   await expect(exceptions.getByText('Ошибка чтения', { exact: true })).toBeVisible();
   await page.reload();
-  await expect(page.getByText('Действия бухгалтера недоступны в синтетическом режиме.')).toBeVisible();
+  await expect(page.getByRole('button', { name: /^Исключены/ })).toHaveAttribute('aria-pressed', 'true');
   await expect(exceptions.getByText('Ошибка чтения', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Просмотреть источник' })).toHaveCount(0);
   expect(apiRequests).toEqual([]);
@@ -219,22 +219,24 @@ test('the synthetic result and its document routes have no XLSX action', async (
   for (const suffix of ['', '/documents', '/exceptions', '/conclusion']) {
     await page.goto(runPath + suffix);
     await expect(page.getByRole('navigation', { name: 'Разделы проверки' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Скачать XLSX' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Принять и скачать заключение' })).toHaveCount(0);
   }
   expect(exportCalls).toEqual([]);
 });
 
-test('documents and the direct stored conclusion download XLSX for the same run', async ({ page }) => {
+test('accepting a saved check archives it and downloads its conclusion', async ({ page }) => {
   const runId = 'saved-xlsx';
   const path = `/api/v0/runs/${runId}`;
+  let archivedAt: string | null = null;
   await page.route(`**${path}`, (route) => route.fulfill({ json: {
     run_id: runId, status: 'completed_with_issues', created_at: '2026-11-13T12:00:00Z', error: null,
-    progress: { processed_documents: 4, total_documents: 4 },
+    progress: { processed_documents: 4, total_documents: 4 }, archived_at: archivedAt,
   } }));
   await page.route(`**${path}/findings`, (route) => route.fulfill({
     json: { ...example.result, run_id: runId },
   }));
   let exportCalls = 0;
+  let archiveCalls = 0;
   await page.route(`**${path}/exports/xlsx`, (route) => {
     exportCalls += 1;
     if (exportCalls === 1) return route.fulfill({ status: 503, json: { code: 'service_unavailable' } });
@@ -243,26 +245,39 @@ test('documents and the direct stored conclusion download XLSX for the same run'
       contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     });
   });
+  await page.route(`**${path}/archive`, (route) => {
+    archiveCalls += 1;
+    archivedAt = route.request().method() === 'PUT' ? '2026-11-14T17:00:00Z' : null;
+    return route.fulfill({ json: { archived_at: archivedAt } });
+  });
 
   await page.goto(`/checks/${runId}`);
   await expect(page.getByRole('region', { name: 'Заключение по проверке' })).toBeVisible();
-  const button = page.getByRole('button', { name: 'Скачать XLSX' });
-  await expect(button).toHaveCount(0);
+  const accept = page.getByRole('button', { name: 'Принять и скачать заключение' });
+  await expect(accept).toBeVisible();
   await page.getByRole('navigation', { name: 'Разделы проверки' }).getByRole('link', { name: 'Документы' }).click();
   await expect(page).toHaveURL(`/checks/${runId}/documents`);
-  await expect(page.getByRole('button', { name: 'Скачать XLSX' })).toBeVisible();
-  await button.click();
+  await expect(accept).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Скачать XLSX' })).toHaveCount(0);
+  await page.goto(`/checks/${runId}`);
+  await accept.click();
   await expect(page.getByRole('alert')).toHaveText('Не удалось скачать XLSX. Повторите попытку.');
+  expect(archiveCalls).toBe(0);
+  const acceptedDownload = page.waitForEvent('download');
+  await accept.click();
+  expect((await acceptedDownload).suggestedFilename()).toBe(`doccheck-${runId}.xlsx`);
+  await expect(page.getByText(/^Принят ·/)).toBeVisible();
+  expect(archiveCalls).toBe(1);
 
-  for (const suffix of ['/documents', '/conclusion']) {
-    await page.goto(`/checks/${runId}${suffix}`);
-    const downloaded = page.waitForEvent('download');
-    await button.click();
-    const file = await downloaded;
-    expect(file.suggestedFilename()).toBe(`doccheck-${runId}.xlsx`);
-    expect(await file.failure()).toBeNull();
-    await expect(page).toHaveURL(`/checks/${runId}${suffix}`);
-  }
+  await page.goto(`/checks/${runId}/conclusion`);
+  await expect(page.getByText(/^Принят ·/)).toBeVisible();
+  const repeatedDownload = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Скачать XLSX' }).click();
+  expect((await repeatedDownload).suggestedFilename()).toBe(`doccheck-${runId}.xlsx`);
+  expect(archiveCalls).toBe(1);
+  await page.getByRole('button', { name: 'Вернуть из архива' }).click();
+  await expect(accept).toBeVisible();
+  expect(archiveCalls).toBe(2);
   expect(exportCalls).toBe(3);
 });
 
@@ -316,7 +331,7 @@ test('the finished check loads stored findings and can retry without repeating s
   await expect(page.getByText('Состояние проверки · Готово с замечаниями')).toBeVisible();
   await page.getByRole('button', { name: 'Повторить загрузку результата' }).click();
 
-  await expect(page.getByText('Синтетика · сохранённая проверка')).toBeVisible();
+  await expect(page.getByText('Тестовые данные', { exact: true })).toBeVisible();
   const partial = page.getByRole('row').filter({ hasText: 'Синтетическая статья A' });
   await expect(partial.getByText('Частичная сумма: 60,25 ₽')).toBeVisible();
   await expect(page.getByRole('region', { name: 'Недостаточно подтверждений' }))
@@ -388,7 +403,7 @@ test('a non-synthetic saved result with no rows has an explicit empty state', as
   await page.goto('/checks/empty-run');
   const results = page.getByRole('region', { name: 'Заключение по проверке' });
   await expect(results.getByText('Показатели отсутствуют.', { exact: true })).toBeVisible();
-  await expect(page.getByText('Синтетика · сохранённая проверка')).toHaveCount(0);
+  await expect(page.getByText('Тестовые данные', { exact: true })).toHaveCount(0);
   await expect(page.getByRole('table', { name: 'Показатели КФЗ' })).toHaveCount(0);
 });
 

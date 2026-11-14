@@ -56,7 +56,8 @@ interface ReviewCalculation {
 interface ReviewRow {
   id: string;
   label: string;
-  status: ResultStatus;
+  indicator_code?: string | null;
+  status: string;
   unit: string;
   reported_value: string | null;
   expected_value: string | null;
@@ -73,7 +74,7 @@ interface ReviewRow {
 // this projection before handing a server result to a caller.
 type ResultStatus = 'verified' | 'discrepancy' | 'unverified';
 
-const defaultExplanations: Record<ResultStatus, string> = {
+const defaultExplanations: Record<string, string> = {
   verified: 'Значение подтверждено документами.',
   discrepancy: 'Значение в КФЗ отличается от подтверждённого документами.',
   unverified: 'Недостаточно подтверждений для проверки показателя.',
@@ -123,5 +124,5 @@ export function formatMeasure(value: string | null, unit: string) {
 export function rowExplanation(row: ReviewRow, issue?: ReviewIssue) {
   const explanation = row.reasons.find(({ message }) => message.trim())?.message;
   return (explanation ?? issue?.message.trim()) || (row.status === 'unverified' && row.completeness.reason.trim()
-    ? row.completeness.reason : defaultExplanations[row.status]);
+    ? row.completeness.reason : defaultExplanations[row.status] ?? 'Пояснение недоступно.');
 }

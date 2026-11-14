@@ -3,7 +3,6 @@ import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Link, Navigate, useLocation, useParams } from 'react-router';
 import { loadCheckRun, runStatusLabels } from './checkData';
 import type { RunDetails } from './checkData';
-import { demoTitle } from './demoData';
 import { ResultSourceWorkspace, SourceWorkspace, useSourceWorkspace } from './SourceWorkspace';
 import { FindingsHttpError, loadFindings } from './loadFindings';
 import { ResultHeader } from './ResultHeader';
@@ -17,6 +16,7 @@ import { useCheckData } from './useCheckData';
 import { runQueuePath, runTitle } from './runTitle';
 import { isRunId } from './runStatusApi';
 import { RunArchiveAction } from './RunArchiveAction';
+import { XlsxDownload } from './XlsxDownload';
 import { CheckResultSkeleton } from './CheckLoadingSkeletons';
 import './result-workspace.css';
 import './result-focus.css';
@@ -140,16 +140,16 @@ function ResultContent({ id, view, result, run, synthetic, stored }: ResultConte
   const { scope } = result;
   const runPath = '/checks/' + encodeURIComponent(id);
   const exportRunId = stored && isRunId(id) ? id : undefined;
-  const syntheticLabel = synthetic ? (stored ? 'Синтетика · сохранённая проверка' : 'Синтетика') : undefined;
+  const testData = synthetic ? 'Тестовые данные' : undefined;
   const localRunId = import.meta.env.VITE_DOCCHECK_PUBLIC_DEMO === '1' ? undefined : exportRunId;
-  const archiveAction = localRunId
+  const conclusionActions = localRunId
     ? <RunArchiveAction runId={localRunId} initialArchivedAt={archivedAt} onChange={setArchivedAt} />
-    : undefined;
+    : exportRunId && <XlsxDownload runId={exportRunId} />;
 
   function renderHeader(documentFilters?: ReactNode) {
     return <>
-      <ResultHeader title={result.reportNumber ? runTitle(id, result.reportNumber) : synthetic ? demoTitle : run.title}
-        runPath={runPath} view={view} scope={scope} syntheticLabel={syntheticLabel}
+      <ResultHeader title={result.reportNumber ? runTitle(id, result.reportNumber) : run.title}
+        runPath={runPath} view={view} scope={scope} testData={testData}
         documentFilters={documentFilters}
         editPackPath={localRunId && '/checks/new?from=' + encodeURIComponent(localRunId)} />
       {stored && (run.status !== 'completed' || run.error) &&
@@ -160,8 +160,7 @@ function ResultContent({ id, view, result, run, synthetic, stored }: ResultConte
   return (
     <>
       {view !== 'documents' && view !== 'exceptions' && renderHeader()}
-      {(view === 'table' || view === 'conclusion') && <ResultConclusion result={result}
-        exportRunId={view === 'conclusion' ? exportRunId : undefined} />}
+      {(view === 'table' || view === 'conclusion') && <ResultConclusion result={result} />}
       {(view === 'conclusion' || (view === 'table' && result.rows.length === 0)) && (
         <ResultSourceWorkspace result={result} storedRunId={stored ? id : undefined} />
       )}
@@ -175,11 +174,10 @@ function ResultContent({ id, view, result, run, synthetic, stored }: ResultConte
         </div>
         {result.rows.length === 0 && <AdditionalChecks result={result} runPath={runPath} onOpenRow={() => {}} />}
       </>}
-      {view === 'table' && archiveAction && <div className="mt-6">{archiveAction}</div>}
+      {(view === 'table' || view === 'conclusion') && conclusionActions && <div className="mt-6">{conclusionActions}</div>}
       {(view === 'documents' || view === 'exceptions') && <ResultDocuments
         key={view} result={result} runPath={runPath} storedRunId={stored ? id : undefined}
-        exceptions={view === 'exceptions'} synthetic={synthetic}
-        exportRunId={exportRunId} archiveAction={archiveAction}
+        exceptions={view === 'exceptions'}
         renderHeader={renderHeader} rowEvidenceIds={resultRowEvidenceIds}
       />}
       {view === 'log' && <CheckLog synthetic={synthetic} />}
@@ -421,14 +419,13 @@ function Reconciliation({ result, storedRunId, runPath, rowJump, onOpenRow }: {
     </section>
     </dialog>
     <AdditionalChecks result={result} runPath={runPath} onOpenRow={onOpenRow}
-      onOpenDocument={(id, trigger) => sourceWorkspace.openDocument(id, trigger)}
       onOpenEvidence={(id, trigger) => sourceWorkspace.openEvidence(id, trigger)} />
     </>
   );
 }
 
 export function CheckLog({ synthetic = true }: { synthetic?: boolean }) {
-  const message = synthetic ? 'Записи журнала недоступны в синтетическом режиме.' : 'Журнал проверки пока недоступен.';
+  const message = synthetic ? 'Записи журнала недоступны для тестовых данных.' : 'Журнал проверки пока недоступен.';
   return <section className="checks-card"><h2>Журнал действий</h2><p>{message}</p></section>;
 }
 

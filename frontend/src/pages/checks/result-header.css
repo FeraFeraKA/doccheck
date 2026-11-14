@@ -9,7 +9,7 @@
   font: 500 clamp(1.5rem, 4vw, 1.75rem)/1.25 var(--font-sans);
 }
 
-.check-result-header .result-synthetic-label { color: #714c31; }
+.check-result-header .result-test-label { color: #714c31; }
 .check-result-header .check-header-controls {
   border-color: var(--ui-line);
   padding-bottom: 6px;
@@ -111,11 +111,11 @@
   .result-unverified-list > li { grid-template-columns: minmax(0, 1fr); }
 }
 
-.checks-content [aria-label="Дополнительные проверки"] h2 {
-  font-family: var(--font-sans);
-  font-weight: 500;
-  line-height: 1.5;
-}
+.result-additional { margin-top: 24px; }
+.checks-content .result-additional h2 { font: 500 18px/1.5 var(--font-sans); }
+.result-diagnostics { margin-top: 10px; font-size: 13px; }
+.result-diagnostics li { padding-block: 8px; border-bottom: 1px solid var(--ui-line); }
+.result-exceptions-link { display: inline-block; margin-top: 10px; font-size: 13px; }
 
 .result-header-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .run-archive-action { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: 13px; }
