@@ -375,10 +375,61 @@ def test_additional_or_incomplete_periods_are_not_truncated(printed):
 @pytest.mark.parametrize(
     "suffix",
     [
+        "— на два месяца",
+        "— на 2 месяца",
+        "— на 2,5 месяца",
+        "— на 2–3 месяца",
+        "— на срок от двух до трёх месяцев",
+        "— на полтора года",
+        "— сроком на три рабочих дня",
+        "— в течение двух недель",
+        "— на 12 мес.",
+        "— на 12 мес",
+        "— на год",
+        "— на весь месяц",
+        "— на двухмесячный срок",
+        "— на 2-месячный срок",
+        "— продолжительность: два месяца",
+        "— на полгода",
+        "— на неопределённый срок",
+        "— на время обслуживания",
+        "на 2 календарных месяца",
+        "| на два месяца",
+    ],
+)
+def test_explicit_duration_never_confirms_only_the_first_month(suffix):
+    first = ParagraphLocator(kind="paragraph", paragraph=3)
+    second = ParagraphLocator(kind="paragraph", paragraph=4)
+    date = Observation("Дата документа: 15.02.2031", second)
+    period = Observation(f"Период: Февраль 2031 {suffix}", first)
+    assert _periods((period, date)) == []
+
+
+def test_duration_in_an_adjacent_paragraph_is_not_reduced_to_first_month():
+    first = ParagraphLocator(kind="paragraph", paragraph=3)
+    second = ParagraphLocator(kind="paragraph", paragraph=4)
+    assert (
+        _periods(
+            (
+                Observation("Период: Февраль 2031", first),
+                Observation("на два месяца", second),
+            )
+        )
+        == []
+    )
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    [
         "по договору № A-12",
         "— по договору № A-12",
         "— услуги связи",
         "— 2 услуги связи",
+        "— на 2 услуги связи",
+        "— на обслуживание",
+        "— услуги связи за месяц",
+        "— - 100.00 руб.",
         "по 2-му договору № A-12",
         "и с использованием оборудования",
         "| Договор: A-12 | Дата документа: 01.03.2031",
@@ -460,7 +511,17 @@ def test_separate_money_or_prose_does_not_become_a_period_continuation(text):
     ]
 
 
-@pytest.mark.parametrize("suffix", ["по договору № A-12", "— услуги связи", "— расходы 2031"])
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        "по договору № A-12",
+        "— услуги связи",
+        "— расходы 2031",
+        "— на обслуживание",
+        "— услуги связи за месяц",
+        "— - 100.00 руб.",
+    ],
+)
 def test_month_period_keeps_unrelated_explanations(suffix):
     source = Observation(
         f"Период: Февраль 2031 {suffix}", ParagraphLocator(kind="paragraph", paragraph=3)
@@ -554,7 +615,9 @@ def test_weak_ocr_continuation_and_service_date_can_veto_scope(
     assert not any(item.kind == "period" for item in source.assertions)
 
 
-@pytest.mark.parametrize("weak", ["— апр. 2031", "— настоящее время", "до конца апреля 2031"])
+@pytest.mark.parametrize(
+    "weak", ["— апр. 2031", "— настоящее время", "до конца апреля 2031", "— на два месяца"]
+)
 def test_weak_ocr_month_end_vetoes_first_month(monkeypatch, tmp_path, weak):
     from doccheck_backend import grounded_amounts
 

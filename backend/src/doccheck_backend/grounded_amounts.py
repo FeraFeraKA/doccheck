@@ -73,6 +73,43 @@ _ONLY_RUBLE_VALUE = re.compile(
     r"(?:руб(?:\.|лей|ля|ль)?|р\.|₽|RUB)\.?$",
     re.I,
 )
+_DURATION_QUANTITY = (
+    r"(?:[0-9]+(?:[.,][0-9]+)?|од(?:ин|на|но|ну|ного|ной)|два|две|двух|двест\w*|"
+    r"три|тр[её]х|трист\w*|четыр\w*|пят\w*|шест\w*|сем\w*|восем\w*|восьм\w*|"
+    r"девят\w*|девяност\w*|десят\w*|одиннадцат\w*|двенадцат\w*|тринадцат\w*|"
+    r"двадцат\w*|тридцат\w*|сорок\w*|сто|ста|сот\w*|тысяч\w*|полтор\w*|"
+    r"нескольк\w*|пару|пара)"
+)
+_DURATION_UNIT = (
+    r"(?:(?:день|дня|дней|сутки|суток|недел\w*|месяц\w*|квартал\w*|"
+    r"полугоди\w*|год(?:а|ов|у|ом)?|лет|час(?:а|ов|у|ом)?|минут\w*)\b|"
+    r"(?:дн|сут|нед|мес|кв|г|ч|мин)(?:\.(?=\s|$|[,;])|(?=\s|$|[,;])))"
+)
+_DURATION = re.compile(
+    rf"^\s*(?:(?:на|за|в\s+течени[еи]|на\s+протяжении|(?:на\s+)?срок(?:ом)?(?:\s+на)?|"
+    rf"(?:продолжительност(?:ь|ью)|длительност(?:ь|ью))(?:\s+в)?)\s*[:：]?\s+)?"
+    rf"(?:(?:около|примерно|не\s+менее|не\s+более)\s+)?"
+    rf"(?:(?:от\s+)?{_DURATION_QUANTITY}"
+    rf"(?:\s*(?:[–—-]|\bдо\b)\s*{_DURATION_QUANTITY})?"
+    rf"(?:\s+{_DURATION_QUANTITY}){{0,3}}\s+"
+    rf"(?:(?:рабоч\w*|календарн\w*|полн\w*|неполн\w*)\s+){{0,2}}{_DURATION_UNIT}"
+    rf"|пол(?:года|месяца|суток|недели)\b"
+    rf"|(?:неопредел[её]нн\w*|неизвестн\w*|неограниченн\w*)\s+(?:срок|период)\b"
+    rf"|(?:время|период)\s+(?:оказания|обслуживания|работы|действия|эксплуатации)\b"
+    rf"|бессрочно\b)",
+    re.I,
+)
+_SINGLE_DURATION = re.compile(
+    rf"^\s*(?:на|за|в\s+течени[еи])\s+(?:(?:весь|всю|целый|целую|целое)\s+)?"
+    rf"{_DURATION_UNIT}",
+    re.I,
+)
+_ADJECTIVAL_DURATION = re.compile(
+    r"^\s*(?:на|сроком\s+на|продолжительностью\s+в)\s+"
+    r"(?:[0-9]+[-‑]|одно|двух|тр[её]х|четыр[её]х|полу)"
+    r"(?:летн\w*|месячн\w*|дневн\w*|недельн\w*)\s+(?:срок|период)\b",
+    re.I,
+)
 _MONTH_ABBREVIATION = r"(?:янв|фев|мар|апр|июн|июл|авг|сен|сент|окт|ноя|дек)"
 _PERIOD_BOUND_START = re.compile(
     rf"^(?:\?|[0-9]{{1,4}}(?=$|[./-][0-9?]|\s+(?:{'|'.join(_MONTH)}|г(?:ода?)?)\b"
@@ -233,6 +270,13 @@ def _following(label: Observation, value: Observation) -> bool:
     )
 
 
+def _duration_continuation(text: str) -> bool:
+    # Duration is only a veto: it does not establish a computed end date.
+    return bool(
+        _DURATION.match(text) or _SINGLE_DURATION.match(text) or _ADJECTIVAL_DURATION.match(text)
+    )
+
+
 def _period_continuation(text: str) -> bool:
     match = _PERIOD_CONTINUATION.match(text)
     if not match:
@@ -240,6 +284,8 @@ def _period_continuation(text: str) -> bool:
     rest = text[match.end() :].strip()
     if _ONLY_RUBLE_VALUE.fullmatch(rest) and _text_amount(rest)[0] is not None:
         return False
+    if _duration_continuation(rest):
+        return True
     rest = re.sub(r"^(?:по|до|на)(?:\s+|$)", "", rest, flags=re.I).strip()
     # A delimiter followed by unrelated prose (e.g. "по договору") is not
     # another period; a missing or period-shaped bound remains uncertain.
@@ -286,7 +332,7 @@ def _period_following(first: Observation, second: Observation) -> bool:
 
 def _additional_pipe_period(tail: str) -> bool:
     for part in tail.split("|")[1:]:
-        if _BARE_MONTH_PERIOD.match(part):
+        if _BARE_MONTH_PERIOD.match(part) or _duration_continuation(part):
             return True
         if match := _BARE_DATE_RANGE.match(part):
             rest = part[match.end() :].strip()
@@ -407,6 +453,7 @@ def _period_readings(
                 additional_line = bool(
                     _additional_pipe_period(next_text)
                     or _additional_period_prefix(next_text)
+                    or _duration_continuation(next_text)
                     or (
                         re.match(r"^(?:(?:и|или|а\s+также)\b|[,;+/&])", next_text, re.I)
                         and _ADDITIONAL_PERIOD.match(next_text)
@@ -426,6 +473,7 @@ def _period_readings(
                 _period_continuation(tail)
                 or _ADDITIONAL_PERIOD.match(tail)
                 or _additional_period_prefix(tail)
+                or _duration_continuation(tail)
                 or _additional_pipe_period(full_tail)
             ):
                 unresolved_period = ambiguous_period = True
@@ -446,6 +494,7 @@ def _period_readings(
             if (
                 _ADDITIONAL_PERIOD.match(tail)
                 or _additional_period_prefix(tail)
+                or _duration_continuation(tail)
                 or _additional_pipe_period(full_tail)
             ):
                 unresolved_period = ambiguous_period = True
