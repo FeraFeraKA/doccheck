@@ -1,6 +1,6 @@
 import { Fragment } from 'react';
 import type { Ref } from 'react';
-import { formatDecimal, statusLabels } from './reviewResult';
+import { formatDecimal, rowExplanation, statusLabels } from './reviewResult';
 import type { ReviewResult } from './reviewResult';
 import './result-table.css';
 
@@ -57,8 +57,9 @@ export function ResultTable({
       <div ref={tableScroll} className="reconcile-table-scroll" role="region" aria-label="Таблица показателей" tabIndex={0}>
         <table className="reconcile-table" aria-label="Показатели КФЗ">
           <thead><tr>
-            <th scope="col">Показатель</th><th scope="col">Ед. изм.</th><th scope="col">В отчёте</th>
-            <th scope="col">По документам</th><th scope="col">Разница</th><th scope="col">Статус</th>
+            <th scope="col">Показатель КФЗ</th><th scope="col">Ед. изм.</th><th scope="col">В КФЗ</th>
+            <th scope="col">Ожидаемо по документам</th><th scope="col">Разница Δ</th><th scope="col">Статус</th>
+            <th scope="col">Пояснение</th>
           </tr></thead>
           <tbody>{rows.map((row) => {
             const selected = row.id === selectedId;
@@ -82,9 +83,6 @@ export function ResultTable({
                       onClick={() => onToggle(row.id)}
                     >
                       <span className="indicator-chevron" aria-hidden="true">›</span>
-                      <span className="row-status" data-status={row.status} aria-hidden="true">
-                        {row.status === 'verified' ? '✓' : row.status === 'discrepancy' ? '!' : '–'}
-                      </span>
                       {row.label}
                     </button>
                     <span className="indicator-meta">
@@ -100,13 +98,20 @@ export function ResultTable({
                     )}
                   </td>
                   <td className="difference-cell">{formatDecimal(row.delta)}</td>
-                  <td><span className="checks-status" data-status={row.status}>{statusLabels[row.status]}</span></td>
+                  <td className="indicator-status-cell"><span className="row-status" data-status={row.status}
+                    tabIndex={0} title={statusLabels[row.status]}>
+                    <span aria-hidden="true">{row.status === 'verified' ? '✓' : row.status === 'discrepancy' ? '⚠' : '?'}</span>
+                    <span className="indicator-status-label" role="tooltip">{statusLabels[row.status]}</span>
+                  </span></td>
+                  <td className="indicator-explanation"><span>{rowExplanation(row)}</span></td>
                 </tr>
-                {isExpanded && <tr className="source-subrow"><td colSpan={6}>
+                {isExpanded && <tr className="source-subrow"><td colSpan={7}>
                   <div id={detailsId} role="region" aria-label={`Подробности: ${row.label}`} className="indicator-details">
                     {row.calculation?.formula && <p>{row.calculation.formula}</p>}
-                    <p>Основание полноты: {row.completeness.reason}</p>
-                    {row.reasons.map((reason, index) => <p key={`${reason.code}:${index}`}>{reason.message}</p>)}
+                    <p><strong>{statusLabels[row.status]}.</strong>{' '}
+                      {[...new Set([rowExplanation(row), ...row.reasons.map(({ message }) => message),
+                        row.completeness.reason])].join(' ')}
+                    </p>
                     {components.length === 0 ? <p>Нет подтверждённых слагаемых.</p> :
                       <ol className="indicator-documents" aria-label={`Слагаемые показателя: ${row.label}`}>
                         {components.map((component) => <li key={component.amount_refs[0]}>

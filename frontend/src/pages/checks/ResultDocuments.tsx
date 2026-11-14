@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
 import { DocumentSourcePreview } from './DocumentSourcePreview';
 import { FileTypeIcon } from './FileTypeIcon';
 import { SourceDrawer } from './SourceDrawer';
@@ -44,7 +44,14 @@ export function ResultDocuments({
   result, runPath, storedRunId, exportRunId, exceptions, synthetic, rowEvidenceIds, formatAddress,
 }: ResultDocumentsProps) {
   const [filter, setFilter] = useState('all');
-  const [openId, setOpenId] = useState<string>();
+  const [params, setParams] = useSearchParams();
+  const openId = params.get('document');
+  function setOpenId(id?: string) {
+    const next = new URLSearchParams(params);
+    if (id) next.set('document', id);
+    else next.delete('document');
+    setParams(next, { replace: true });
+  }
   const documents = exceptions
     ? result.documents.filter(({ decision }) => decision.state !== 'include')
     : result.documents;
@@ -114,7 +121,7 @@ export function ResultDocuments({
       <table className="result-document-table">
         <thead><tr>
           <th scope="col">Файл</th><th scope="col">Роль</th>
-          {!exceptions && <th scope="col">Чтение</th>}<th scope="col">Решение</th>
+          {!exceptions && <th scope="col">Статус</th>}<th scope="col">Решение</th>
           <th scope="col">Основание</th><th scope="col">Показатели КФЗ</th>
         </tr></thead>
         <tbody>{visible.map((document) => {

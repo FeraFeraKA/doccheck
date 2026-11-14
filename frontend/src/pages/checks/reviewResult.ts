@@ -92,12 +92,20 @@ interface ReviewRow {
 
 // Fields used by the transferred screens. The API client's decoder validates
 // this projection before handing a server result to a caller.
+type ResultStatus = 'verified' | 'discrepancy' | 'unverified';
+export interface RubCoverage extends Record<ResultStatus, string | null> {
+  total: string;
+  shares: Partial<Record<ResultStatus, string>> | null;
+}
+
 export interface ReviewResult {
+  reportNumber?: string;
   scope: { contract_number: string; period_start: string; period_end: string };
   documents: ReviewDocument[];
   evidence: SourceEvidence[];
   rows: ReviewRow[];
   summary: {
+    rubCoverage?: RubCoverage;
     counts: { verified: number; discrepancy: number; unverified: number };
     conclusion: string;
     primary_issues: PrimaryReviewIssue[];
@@ -130,4 +138,14 @@ export function formatLocation(locator: SourceAddress) {
   }
   if (locator.fragment_id != null) parts.push(`фрагмент ${locator.fragment_id}`);
   return parts.join(', ');
+}
+
+export function checkName(id: string, reportNumber?: string) {
+  const number = reportNumber?.trim();
+  return number ? `КФЗ №${number}` : `Проверка КФЗ №${id}`;
+}
+
+export function rowExplanation(row: ReviewRow) {
+  return row.reasons[0]?.message
+    ?? (row.status === 'unverified' ? row.completeness.reason : 'Суммы совпадают');
 }

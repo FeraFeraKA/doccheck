@@ -140,3 +140,42 @@
     padding: .75rem;
   }
 }
+
+.result-reconciliation .reconcile-table .indicator-status-cell {
+  width: 3rem;
+  text-align: center;
+}
+
+.result-reconciliation .indicator-status-cell .row-status {
+  position: relative;
+  width: 1.125rem;
+}
+
+.indicator-status-label {
+  position: absolute;
+  z-index: 2;
+  bottom: calc(100% + .25rem);
+  right: 0;
+  padding: .25rem .375rem;
+  border-radius: .25rem;
+  color: white;
+  background: #163735;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.row-status:hover .indicator-status-label,
+.row-status:focus .indicator-status-label { opacity: 1; }
+
+.result-reconciliation .reconcile-table .indicator-explanation {
+  min-width: 11rem;
+  text-align: left;
+}
+
+.indicator-explanation > span {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}

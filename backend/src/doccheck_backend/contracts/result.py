@@ -468,6 +468,7 @@ class ResultRow(ContractModel):
     reasons: list[Reason]
     root_issue_id: Text | None
     derived_mismatch: StrictBool
+    is_aggregate: StrictBool | None = None
 
     @model_validator(mode="after")
     def check_totals(self) -> Self:
@@ -522,10 +523,21 @@ class PrimaryIssue(Reason):
     file_error_refs: list[Text] = Field(default_factory=list)
 
 
+class RubCoverage(ContractModel):
+    """Amounts reported in the KFZ, in RUB, for the additive rows with known values."""
+
+    total: DecimalText
+    verified: DecimalText | None
+    discrepancy: DecimalText | None
+    unverified: DecimalText | None
+    shares: dict[RowStatus, DecimalText] | None
+
+
 class Summary(ContractModel):
     counts: StatusCounts
     primary_issues: list[PrimaryIssue]
     conclusion: Text
+    rub_coverage: RubCoverage | None = None
 
 
 class CheckResult(ContractModel):
@@ -551,6 +563,7 @@ class CheckResult(ContractModel):
     schema_version: Literal[RESULT_SCHEMA_VERSION]
     run_id: Text
     synthetic: StrictBool
+    report_number: Text | None = None
     scope: Scope
     versions: Versions
     documents: list[SourceDocument]

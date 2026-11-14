@@ -52,8 +52,8 @@ for (const width of [320, 390]) {
     await page.goto('/checks');
     await page.getByRole('link', { name: 'Синтетическая сверка', exact: true }).click();
 
-    const summary = page.getByRole('region', { name: 'Заключение по проверке' });
-    await expect(summary.getByText('Расхождения: 1', { exact: true })).toBeInViewport({ ratio: 1 });
+    const summary = page.getByRole('region', { name: 'Результаты проверки' });
+    await expect(summary.getByText(/^1 стр\..*150,50 ₽/)).toBeInViewport({ ratio: 1 });
     await expect(page.getByRole('heading', { name: 'Показатели отчёта' })).toBeVisible();
     await expect(page.getByRole('link', { name: 'Исключения' })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
@@ -188,7 +188,7 @@ test('documents and the direct stored conclusion download XLSX for the same run'
   });
 
   await page.goto(`/checks/${runId}`);
-  await expect(page.getByText('Вывод по проверке')).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Заключение по проверке' })).toBeVisible();
   const button = page.getByRole('button', { name: 'Скачать XLSX' });
   await expect(button).toHaveCount(0);
   await page.getByRole('navigation', { name: 'Разделы проверки' }).getByRole('link', { name: 'Документы' }).click();
@@ -259,7 +259,7 @@ test('the finished check loads stored findings and can retry without repeating s
   await expect(page.getByText('Состояние проверки · Завершена с замечаниями')).toBeVisible();
   await page.getByRole('button', { name: 'Повторить загрузку результата' }).click();
 
-  await expect(page.getByText('Синтетический результат · сохранённая проверка')).toBeVisible();
+  await expect(page.getByText('Синтетика · сохранённая проверка')).toBeVisible();
   const partial = page.getByRole('row').filter({ hasText: 'Синтетическая статья A' });
   await expect(partial.getByText('Частичная сумма: 60,25 RUB')).toBeVisible();
   await expect(page.getByRole('region', { name: 'Недостаточно подтверждений' }))
@@ -276,7 +276,7 @@ test('the finished check loads stored findings and can retry without repeating s
   await zero.getByRole('button').click();
   const reconciliation = page.getByRole('region', { name: 'Рабочее место сверки' });
   await expect(reconciliation.getByText('Источник статьи B не прочитан')).toBeVisible();
-  await expect(page.getByText(/Ошибка чтения файла/)).toBeVisible();
+  await expect(reconciliation.getByText(/Ошибка чтения файла/)).toBeVisible();
   await page.getByRole('link', { name: 'Исключения' }).click();
   await expect(page.getByText('Ошибка чтения', { exact: true })).toBeVisible();
   expect(statusCalls).toBe(1);
@@ -331,8 +331,8 @@ test('a non-synthetic saved result with no rows has an explicit empty state', as
   await page.goto('/checks/empty-run');
   const results = page.getByRole('region', { name: 'Заключение по проверке' });
   await expect(results.getByText('Показатели отсутствуют.', { exact: true })).toBeVisible();
-  await expect(page.getByText('Синтетический результат · сохранённая проверка')).toHaveCount(0);
-  await expect(page.getByRole('table')).toHaveCount(0);
+  await expect(page.getByText('Синтетика · сохранённая проверка')).toHaveCount(0);
+  await expect(page.getByRole('table', { name: 'Показатели КФЗ' })).toHaveCount(0);
 });
 
 test('mixed units stay visible even when all values in a row are unknown', async ({ page }) => {

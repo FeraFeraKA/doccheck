@@ -9,13 +9,11 @@ const tabs = [
 
 export type CheckView = 'table' | 'documents' | 'exceptions' | 'conclusion' | 'log';
 
-export function ResultHeader({ title, runPath, view, scope, conclusion, tone, syntheticLabel }: {
+export function ResultHeader({ title, runPath, view, scope, syntheticLabel }: {
   title: string;
   runPath: string;
   view: CheckView;
   scope: ReviewResult['scope'];
-  conclusion: string;
-  tone: string;
   syntheticLabel?: string;
 }) {
   return (
@@ -29,7 +27,6 @@ export function ResultHeader({ title, runPath, view, scope, conclusion, tone, sy
         <h1>{title}</h1>
         <div className="result-header-meta mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px]">
           <span className="tabular-nums">Договор {scope.contract_number} · Период {scope.period_start} — {scope.period_end}</span>
-          <span className="result-header-badge" data-tone={tone}>{conclusion}</span>
           {syntheticLabel && <span className="result-synthetic-label">{syntheticLabel}</span>}
         </div>
       </div>

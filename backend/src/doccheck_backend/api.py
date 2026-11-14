@@ -21,6 +21,7 @@ from doccheck_backend.contracts.result import Evidence
 from doccheck_backend.database import create_database_engine
 from doccheck_backend.jobs import create_job, get_job
 from doccheck_backend.models import SyntheticJob
+from doccheck_backend.result_summary import build_rub_coverage
 from doccheck_backend.run_xlsx import XLSX_MEDIA_TYPE, XlsxReportLimitError, export_check_result
 from doccheck_backend.schemas import HealthResponse, JobResponse
 from doccheck_backend.uploads import (
@@ -198,7 +199,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @document_runs.get("/{run_id}/findings")
     def get_findings(request: Request, run_id: str) -> CheckResult:
-        return run_reads.get_run_findings(request.app.state.engine, run_id)
+        result = run_reads.get_run_findings(request.app.state.engine, run_id)
+        result.summary.rub_coverage = build_rub_coverage(result)
+        return result
 
     @document_runs.get(
         "/{run_id}/exports/xlsx",

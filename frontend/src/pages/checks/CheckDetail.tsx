@@ -9,10 +9,10 @@ import { SourceContext } from './SourceContext';
 import { FindingsHttpError, loadFindings } from './loadFindings';
 import { ResultHeader } from './ResultHeader';
 import type { CheckView } from './ResultHeader';
-import { ResultSummary, UnverifiedIndicators, resultHeadline, resultTone } from './ResultSummary';
+import { AdditionalChecks, ResultConclusion, ResultSummary } from './ResultSummary';
 import { documentDecisionLabels, ResultDocuments } from './ResultDocuments';
 import { ResultTable } from './ResultTable';
-import { formatDecimal, formatLocation, statusLabels } from './reviewResult';
+import { checkName, formatDecimal, formatLocation, statusLabels } from './reviewResult';
 import type { ReviewResult } from './reviewResult';
 import { useCheckData } from './useCheckData';
 import { isRunId } from './runStatusApi';
@@ -136,28 +136,28 @@ function ResultContent({ id, view, result, run, synthetic, stored }: ResultConte
     const id = new URLSearchParams(location.search).get('indicator');
     return id !== null && result.rows.some((row) => row.id === id) ? { id, locationKey: location.key } : undefined;
   }, [location.search, location.key, result.rows]);
-  const { summary, scope } = result;
+  const { scope } = result;
   const runPath = '/checks/' + encodeURIComponent(id);
   const exportRunId = stored && isRunId(id) ? id : undefined;
-  const tone = resultTone(summary.counts);
-  const syntheticLabel = id === demoJob.run_id ? 'Синтетическая сверка · готовый пример'
-    : synthetic ? 'Синтетический результат · сохранённая проверка' : undefined;
+  const syntheticLabel = id === demoJob.run_id ? 'Синтетика · готовый пример'
+    : synthetic ? 'Синтетика · сохранённая проверка' : undefined;
 
   return (
     <>
-      <ResultHeader title={run.title} runPath={runPath} view={view} scope={scope}
-        conclusion={resultHeadline[tone]} tone={tone} syntheticLabel={syntheticLabel} />
+      <ResultHeader title={result.reportNumber ? checkName(id, result.reportNumber) : run.title} runPath={runPath} view={view} scope={scope}
+        syntheticLabel={syntheticLabel} />
       {stored && <div className="stored-run-status mt-3 text-[13px]"><RunState run={run} /></div>}
-      {(view === 'table' || view === 'conclusion') && <ResultSummary runPath={runPath} result={result}
-        exportRunId={view === 'conclusion' ? exportRunId : undefined}
-        onOpenRow={view === 'table' ? (rowId) => setRowJump({ id: rowId, locationKey: location.key }) : undefined} />}
+      {view === 'table' && <ResultSummary result={result} />}
+      {view === 'conclusion' && <ResultConclusion result={result} exportRunId={exportRunId} />}
       {view === 'table' && <>
         <div className="mt-6">
           {result.rows.length > 0
             ? <Reconciliation result={result} storedRunId={stored ? id : undefined} rowJump={rowJump?.locationKey === location.key ? rowJump : linkedRowJump} />
             : <section className="checks-card"><h2>Показатели</h2><p>Показатели отсутствуют.</p></section>}
         </div>
-        <UnverifiedIndicators rows={result.rows} />
+        <AdditionalChecks result={result} runPath={runPath}
+          onOpenRow={(rowId) => setRowJump({ id: rowId, locationKey: location.key })} />
+        <ResultConclusion result={result} />
       </>}
       {(view === 'documents' || view === 'exceptions') && <ResultDocuments
         key={view} result={result} runPath={runPath} storedRunId={stored ? id : undefined}
@@ -440,8 +440,6 @@ function Reconciliation({ result, storedRunId, rowJump }: {
             <div className="source-document-content">
             <div className="evidence-rules">
               {row.calculation && <p>{row.calculation.formula}</p>}
-              <p>Основание полноты: {row.completeness.reason}</p>
-              {row.reasons.map((reason) => <p key={reason.code}>{reason.message}</p>)}
               {row.calculation && row.calculation.components.length > 0 && <details>
                 <summary>Основания по слагаемым</summary>
                 <ol aria-label="Слагаемые" className="component-evidence-list">{row.calculation.components.map((component) => (

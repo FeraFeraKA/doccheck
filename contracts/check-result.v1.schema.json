@@ -66,6 +66,19 @@
           "title": "Synthetic",
           "type": "boolean"
         },
+        "report_number": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Report Number"
+        },
         "scope": {
           "$ref": "#/$defs/Scope"
         },
@@ -1217,6 +1230,18 @@
         "derived_mismatch": {
           "title": "Derived Mismatch",
           "type": "boolean"
+        },
+        "is_aggregate": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Is Aggregate"
         }
       },
       "required": [
@@ -1237,6 +1262,84 @@
         "derived_mismatch"
       ],
       "title": "ResultRow",
+      "type": "object"
+    },
+    "RubCoverage": {
+      "additionalProperties": false,
+      "description": "Amounts reported in the KFZ, in RUB, for the additive rows with known values.",
+      "properties": {
+        "total": {
+          "pattern": "^-?[0-9]+(?:\\.[0-9]+)?(?![\\s\\S])",
+          "title": "Total",
+          "type": "string"
+        },
+        "verified": {
+          "anyOf": [
+            {
+              "pattern": "^-?[0-9]+(?:\\.[0-9]+)?(?![\\s\\S])",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Verified"
+        },
+        "discrepancy": {
+          "anyOf": [
+            {
+              "pattern": "^-?[0-9]+(?:\\.[0-9]+)?(?![\\s\\S])",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Discrepancy"
+        },
+        "unverified": {
+          "anyOf": [
+            {
+              "pattern": "^-?[0-9]+(?:\\.[0-9]+)?(?![\\s\\S])",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Unverified"
+        },
+        "shares": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "pattern": "^-?[0-9]+(?:\\.[0-9]+)?(?![\\s\\S])",
+                "type": "string"
+              },
+              "propertyNames": {
+                "enum": [
+                  "verified",
+                  "discrepancy",
+                  "unverified"
+                ]
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Shares"
+        }
+      },
+      "required": [
+        "total",
+        "verified",
+        "discrepancy",
+        "unverified",
+        "shares"
+      ],
+      "title": "RubCoverage",
       "type": "object"
     },
     "Scope": {
@@ -1581,6 +1684,17 @@
           "minLength": 1,
           "title": "Conclusion",
           "type": "string"
+        },
+        "rub_coverage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RubCoverage"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [

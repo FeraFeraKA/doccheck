@@ -205,7 +205,8 @@
           }
         ],
         "root_issue_id": "issue-a",
-        "derived_mismatch": false
+        "derived_mismatch": false,
+        "is_aggregate": false
       },
       {
         "id": "row-b",
@@ -238,10 +239,21 @@
           }
         ],
         "root_issue_id": "issue-b",
-        "derived_mismatch": false
+        "derived_mismatch": false,
+        "is_aggregate": false
       }
     ],
     "summary": {
+      "rub_coverage": {
+        "total": "150.50",
+        "verified": null,
+        "discrepancy": "150.50",
+        "unverified": "0.00",
+        "shares": {
+          "discrepancy": "100.0",
+          "unverified": "0.0"
+        }
+      },
       "counts": {"verified": 0, "discrepancy": 1, "unverified": 1},
       "primary_issues": [
         {

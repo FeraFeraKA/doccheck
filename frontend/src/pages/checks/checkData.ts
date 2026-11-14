@@ -1,6 +1,6 @@
 import { HttpError } from '../../shared/api/requestJson';
 import { demoJob, demoTitle } from './demoData';
-import { readDocumentParseStatus } from './loadFindings';
+import { readDocumentParseStatus, readRubCoverage } from './loadFindings';
 import type { ReviewResult } from './reviewResult';
 import { isRunId, listRuns, pollRun } from './runStatusApi';
 import type { RunState } from './runStatusApi';
@@ -59,6 +59,7 @@ export async function loadDemoRun(id: string): Promise<RunDetails | null> {
   if (id !== demoJob.run_id) return null;
   const result = {
     ...demoJob.result,
+    summary: { ...demoJob.result.summary, rubCoverage: readRubCoverage(demoJob.result.summary.rub_coverage) },
     documents: demoJob.result.documents.map((document) => ({
       ...document,
       parse_status: readDocumentParseStatus(document.parse_status),
