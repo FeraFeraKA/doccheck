@@ -418,7 +418,7 @@ test('the compact wizard adapts its upload blocks and keeps the example link in 
     await page.goto('/');
 
     const example = page.getByRole('link', { name: 'Открыть готовый синтетический результат' });
-    if (width < 700) await example.scrollIntoViewIfNeeded();
+    if (width < 700) await example.evaluate((link) => link.scrollIntoView({ block: 'center' }));
     await expect(example).toBeInViewport({ ratio: 1 });
     const report = await page.getByRole('region', { name: 'КФЗ', exact: true }).boundingBox();
     const documents = await page.getByRole('region', { name: 'Первичные документы' }).boundingBox();

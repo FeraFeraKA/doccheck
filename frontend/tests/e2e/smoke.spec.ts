@@ -13,11 +13,22 @@ test('system status remains reachable with the compact sidebar', async ({ page }
     await expect(link).toHaveCount(1);
     if (width <= 700) {
       await expect(sidebar.getByRole('link', { name: 'Проверка системы' })).toHaveCount(0);
-      const sidebarBox = await sidebar.boundingBox();
-      const navigationBox = await navigation.boundingBox();
-      if (!sidebarBox || !navigationBox) throw new Error('Навигация недоступна');
-      expect(sidebarBox.y + sidebarBox.height - (navigationBox.y + navigationBox.height)).toBeLessThanOrEqual(1);
+      await expect(navigation).toBeHidden();
+      await sidebar.getByRole('button', { name: 'Развернуть меню' }).click();
+      await expect(navigation.getByRole('link', { name: 'Проверки', exact: true })).toBeVisible();
+      await navigation.getByRole('link', { name: 'Проверки', exact: true }).focus();
+      await page.keyboard.press('Escape');
+      await expect(navigation).toBeHidden();
+      await expect(sidebar.getByRole('button', { name: 'Развернуть меню' })).toBeFocused();
     } else {
+      const main = page.getByRole('main');
+      const original = await main.boundingBox();
+      expect((await sidebar.boundingBox())?.width).toBe(64);
+      await sidebar.hover({ position: { x: 4, y: 4 } });
+      expect((await sidebar.boundingBox())?.width).toBe(220);
+      expect((await main.boundingBox())?.x).toBe(original?.x);
+      await page.mouse.move(400, 5);
+      expect((await sidebar.boundingBox())?.width).toBe(64);
       await expect(sidebar.getByRole('link', { name: 'Проверка системы' })).toBeInViewport();
     }
     await link.click();

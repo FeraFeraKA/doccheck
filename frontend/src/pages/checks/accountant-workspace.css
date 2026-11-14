@@ -84,6 +84,17 @@
 .app-sidebar > nav {
   margin-top: 34px;
 }
+.brand-symbol, .app-sidebar svg { flex-shrink: 0; }
+.brand-name { display: inline-flex; gap: 4px; white-space: nowrap; }
+.brand-name .brand-dot { margin-left: 0; }
+.sidebar-toggle {
+  @apply grid place-items-center;
+  width: 42px;
+  height: 42px;
+  margin: 16px 11px 0;
+  border-radius: 6px;
+}
+.sidebar-toggle:hover, .sidebar-toggle:focus-visible { background: #d2dfe0; }
 .nav-item svg {
   width: 21px;
   height: 21px;
@@ -265,10 +276,27 @@
   font-size: 12px;
 }
 .app-sidebar .system-status-link {
-  align-self: flex-start;
-  margin: auto 22px 0;
+  @apply flex items-center;
+  gap: 14px;
+  margin-top: auto;
+  padding: 10px 21px;
 }
 .app-main .mobile-system-status-link { display: none; }
+
+@media (min-width: 701px) {
+  .app-sidebar { width: 64px; overflow: hidden; }
+  .app-content { margin-left: 64px; }
+  .app-sidebar[data-expanded="true"] {
+    width: 220px;
+    box-shadow: 4px 0 16px #16373517;
+  }
+  .app-sidebar .brand { padding-inline: 16px; }
+  .app-sidebar :is(.nav-item, .system-status-link) { padding-inline: 21px; white-space: nowrap; }
+  .app-sidebar > nav { margin-top: 14px; }
+  .app-sidebar[data-expanded="false"] :is(.brand-name, .nav-item span, .system-status-link span) {
+    visibility: hidden;
+  }
+}
 
 .accountant-workspace .workspace-button {
   display: inline-flex;
@@ -300,7 +328,7 @@
   .app-sidebar {
     position: relative;
     width: 100%;
-    padding: 20px 16px 0;
+    padding: 20px 16px 12px;
     display: block;
     border-bottom: 1px solid #cbd9d9;
   }
@@ -308,10 +336,9 @@
     padding: 0 4px;
     font-size: 24px;
   }
-  .app-sidebar nav {
-    display: flex;
-    margin: 20px -16px 0;
-  }
+  .sidebar-toggle { position: absolute; top: 15px; right: 13px; margin: 0; }
+  .app-sidebar > nav { display: none; margin: 8px -16px 0; }
+  .app-sidebar[data-expanded="true"] > nav { display: flex; }
   .nav-item {
     flex: 1;
     justify-content: center;
