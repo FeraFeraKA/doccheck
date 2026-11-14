@@ -10,15 +10,14 @@ NVIDIA. Для Linux нужен NVIDIA Container Toolkit. Первичная с�
 
 ## Подготовка
 
-Для проверки версии из PR клонируйте ветку `codex/nrt-41-docker-gpu`.
-Если репозиторий уже скачан, переключитесь на эту ветку и обновите её.
+Клонируйте репозиторий и перейдите в его корень.
 
 ```sh
-git clone --branch codex/nrt-41-docker-gpu https://github.com/VCyberPunk2077/doccheck.git
+git clone https://github.com/VCyberPunk2077/doccheck.git
 cd doccheck
 ```
 
-Скопируйте `.env.example` в `.env` из корня репозитория. В PowerShell
+Скопируйте `.env.example` в `.env`, если файла ещё нет. В PowerShell
 используйте `Copy-Item .env.example .env`, в Linux — `cp .env.example .env`.
 В `.env` задайте `DOCCHECK_DB_PASSWORD` случайной строкой из 32
 шестнадцатеричных символов. Если порт 8080 занят, измените `DOCCHECK_PORT`.
