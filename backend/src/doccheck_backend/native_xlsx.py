@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation, localcontext
 from pathlib import Path, PurePosixPath
-from typing import Literal
+from typing import BinaryIO, Literal
 from xml.etree.ElementTree import Element
 from zipfile import ZipFile
 
@@ -277,7 +277,7 @@ def _amount_role(
     return "candidate"
 
 
-def read_workbook(path: Path) -> NativeDocument:
+def read_workbook(path: Path | BinaryIO) -> NativeDocument:
     observations: list[Observation] = []
     issues: list[NativeIssue] = []
     with ZipFile(path) as archive:
