@@ -93,7 +93,7 @@ class PDFPageInput:
     image: Path | None = None
 
 
-def _needs_visible_page(page, text_page):
+def _pdf_page_content(page, text_page):
     from pypdfium2 import raw
 
     contents = text_page.get_contents()
@@ -103,15 +103,16 @@ def _needs_visible_page(page, text_page):
         operator == b"Tr" and operands and operands[0] in (3, 7)
         for operands, operator in contents.operations
     ):
-        return True
+        return None, True
     left, bottom, right, top = page.get_bbox()
     page_area = (right - left) * (top - bottom)
     image_area = 0.0
+    substantial_image = False
     for item in page.get_objects(filter=[raw.FPDF_PAGEOBJ_IMAGE, raw.FPDF_PAGEOBJ_TEXT]):
         if item.type == raw.FPDF_PAGEOBJ_TEXT:
             mode = raw.FPDFTextObj_GetTextRenderMode(item)
             if mode in (raw.FPDF_TEXTRENDERMODE_INVISIBLE, raw.FPDF_TEXTRENDERMODE_CLIP):
-                return True
+                return None, True
             continue
         # Image coordinates start as a unit square. Container matrices place nested
         # Form XObjects onto the visible page before assessing scan coverage.
@@ -121,12 +122,27 @@ def _needs_visible_page(page, text_page):
             matrix = matrix.multiply(container.get_matrix())
             container = container.container
         x0, y0, x1, y1 = matrix.on_rect(0, 0, 1, 1)
-        image_area += max(0, min(right, x1) - max(left, x0)) * max(
-            0, min(top, y1) - max(bottom, y0)
-        )
+        visible_width = max(0, min(right, x1) - max(left, x0))
+        visible_height = max(0, min(top, y1) - max(bottom, y0))
+        visible_area = visible_width * visible_height
+        image_area += visible_area
+        substantial_image |= visible_area > 0 and max(visible_width, visible_height) > 36
         if image_area >= 0.5 * page_area:
-            return True
-    return False
+            return None, True
+    text_view = page.get_textpage()
+    try:
+        text = text_view.get_text_bounded(left, bottom, right, top)
+    finally:
+        text_view.close()
+    text = text.replace("\r\n", "\n").strip() or None
+    if text is None:
+        return None, True
+
+    # The content of a visible image is uncertain. Omit only small marks
+    # (at most half an inch on either axis and 1% combined page area) when
+    # substantial native text suggests a born-digital page rather than a caption.
+    decorative_only = not substantial_image and image_area <= 0.01 * page_area
+    return text, image_area > 0 and (len(text) < 40 or not decorative_only)
 
 
 def _read_pdf_pages(path, out=None):
@@ -140,11 +156,9 @@ def _read_pdf_pages(path, out=None):
         for number, text_page in enumerate(reader.pages, 1):
             page = document[number - 1]
             try:
-                text = None
-                if not _needs_visible_page(page, text_page):
-                    text = (text_page.extract_text() or "").strip() or None
-                if text is not None or out is None:
-                    yield PDFPageInput(number, text=text)
+                text, needs_image = _pdf_page_content(page, text_page)
+                if not needs_image or out is None:
+                    yield PDFPageInput(number, text=text if not needs_image else None)
                 else:
                     width, height = page.get_size()
                     scale = min(2.5, 2000 / width, 2500 / height)
@@ -154,7 +168,7 @@ def _read_pdf_pages(path, out=None):
                         bitmap.to_pil().convert("RGB").save(target)
                     finally:
                         bitmap.close()
-                    yield PDFPageInput(number, image=target)
+                    yield PDFPageInput(number, text=text, image=target)
             finally:
                 page.close()
 
@@ -216,7 +230,7 @@ def prepare(entry, *, split_pdf=False):
     profile = b"render-v1:scale2.5:max2000x2500:ocr-v2:ru-v5:ori1:lineori1:uvdoc0:detmax1280:recbatch1"
     split_pdf = split_pdf and path.suffix.lower() == ".pdf"
     if split_pdf:
-        profile += b":primary-pdf-page-routing-v1"
+        profile += b":primary-pdf-page-routing-v2"
     key = hashlib.sha256(path.read_bytes() + profile).hexdigest()
     out = ART / "inputs" / key
     out.mkdir(parents=True, exist_ok=True)
@@ -228,7 +242,7 @@ def prepare(entry, *, split_pdf=False):
             "key": key, "images": images, "pages": pages,
             "prepare_s": time.perf_counter() - start,
         }
-        if len(images) == len(pages):
+        if all(page.text is None for page in pages):
             return {**prepared, "kind": "scan"}
         if images:
             return {**prepared, "kind": "mixed"}
@@ -339,11 +353,13 @@ def infer(entry, prepared, model, route, num_ctx=8192):
         image_number = 0
         pages = []
         for page in prepared["pages"]:
-            content = page.text
+            content = [f"Страница {page.number}"]
+            if page.text is not None:
+                content.append(page.text)
             if page.image is not None:
                 image_number += 1
-                content = f"Приложение {image_number} (изображение)"
-            pages.append(f"Страница {page.number}\n{content}")
+                content.append(f"Приложение {image_number} (изображение)")
+            pages.append("\n".join(content))
         message["content"] += (
             "\nДалее страницы одного документа в исходном порядке. "
             "Приложения перечислены в порядке приложенных изображений.\n" + "\n".join(pages)

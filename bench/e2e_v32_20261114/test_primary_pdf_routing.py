@@ -10,12 +10,12 @@ from unittest.mock import patch
 
 from PIL import Image
 from pypdf import PdfReader, PdfWriter
-from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
+from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject, RectangleObject
 
 from . import run, runtime
 
 
-def _text_page(writer, text, *, invisible=False):
+def _text_page(writer, text, *, invisible=False, y=250):
     page = writer.add_blank_page(300, 400)
     resources = page["/Resources"]
     resources[NameObject("/Font")] = DictionaryObject({
@@ -27,8 +27,8 @@ def _text_page(writer, text, *, invisible=False):
     })
     contents = DecodedStreamObject()
     mode = 3 if invisible else 0
-    contents.set_data(f"BT /F1 10 Tf {mode} Tr 10 250 Td ({text}) Tj ET".encode("ascii"))
-    page[NameObject("/Contents")] = contents
+    contents.set_data(f"BT /F1 10 Tf {mode} Tr 10 {y} Td ({text}) Tj ET".encode("ascii"))
+    page[NameObject("/Contents")] = writer._add_object(contents)
     return page
 
 
@@ -40,6 +40,72 @@ def _raster_page(writer, fill):
 
 
 class PrimaryPdfRoutingTest(unittest.TestCase):
+    def test_page_with_partial_raster_attachment_sends_caption_and_image(self):
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            path = root / "caption.pdf"
+            writer = PdfWriter()
+            page = _text_page(writer, "Scan excerpt")
+            image = _raster_page(writer, "red")
+            page.merge_scaled_page(image, 0.4)
+            del writer.pages[-1]
+            writer.write(path)
+
+            with patch.object(runtime, "ART", root / "runtime"), patch.object(runtime, "api") as api:
+                api.side_effect = [
+                    {"message": {"content": json.dumps({"amount": None})}},
+                    {"models": []},
+                ]
+                record = run.extract_primary({"id": "caption", "path": str(path)}, {})
+
+            self.assertIsNone(record["error"])
+            self.assertEqual(record["input_kind"], "mixed")
+            self.assertEqual(record["raster_pages"], (1,))
+            self.assertIsNone(record["source_native_text"])
+            message = api.call_args_list[0].args[1]["messages"][0]
+            self.assertIn("Страница 1\nScan excerpt\nПриложение 1 (изображение)", message["content"])
+            self.assertEqual(len(message["images"]), 1)
+
+    def test_small_decorative_image_preserves_native_text_route(self):
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            writer = PdfWriter()
+            page = _text_page(writer, "Terms and amount stated in the document below.")
+            image = _raster_page(writer, "red")
+            page.merge_scaled_page(image, 0.075)
+            del writer.pages[-1]
+            path = root / "logo.pdf"
+            writer.write(path)
+
+            item, = runtime.prepare_pdf_pages(path, root / "output")
+            self.assertIn("Terms and amount", item.text)
+            self.assertIsNone(item.image)
+
+    def test_cropbox_excludes_text_outside_visible_page(self):
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            writer = PdfWriter()
+            hidden = _text_page(writer, "Outside crop")
+            hidden.cropbox = RectangleObject((0, 0, 300, 100))
+            visible = _text_page(writer, "Inside crop")
+            hidden_line = _text_page(writer, "Other text outside crop", y=50)
+            visible.merge_page(hidden_line)
+            del writer.pages[-1]
+            visible.cropbox = RectangleObject((0, 200, 300, 300))
+            visible.rotate(90)
+            _text_page(writer, "Outside default crop", y=500)
+            path = root / "crop.pdf"
+            writer.write(path)
+
+            hidden_input, visible_input, off_page = runtime.prepare_pdf_pages(path, root / "output")
+            self.assertIsNone(hidden_input.text)
+            self.assertTrue(hidden_input.image.is_file())
+            self.assertIn("Inside crop", visible_input.text)
+            self.assertNotIn("outside crop", visible_input.text)
+            self.assertIsNone(visible_input.image)
+            self.assertIsNone(off_page.text)
+            self.assertTrue(off_page.image.is_file())
+
     def test_native_only_and_raster_only_keep_their_request_shapes(self):
         with TemporaryDirectory() as folder:
             root = Path(folder)
