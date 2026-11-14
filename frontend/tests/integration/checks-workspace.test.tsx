@@ -172,13 +172,15 @@ it('показывает абзац и ячейку таблицы DOCX в сп�
       result: {
         ...demo.result,
         documents: [...demo.result.documents, document],
-        rows: [first, ...otherRows],
-        summary: {
-          ...demo.result.summary,
-          primary_issues: demo.result.summary.primary_issues.map((issue) => issue.id === first.root_issue_id
-            ? { ...issue, evidence_refs: [...issue.evidence_refs, 'docx-paragraph', 'docx-cell'] }
-            : issue),
-        },
+        rows: [{
+          ...first,
+          reasons: [...first.reasons, {
+            code: 'synthetic_docx',
+            message: 'Основание из синтетического DOCX',
+            evidence_refs: ['docx-paragraph'],
+          }],
+          completeness: { ...first.completeness, evidence_refs: [...first.completeness.evidence_refs, 'docx-cell'] },
+        }, ...otherRows],
         evidence: [...demo.result.evidence, {
           id: 'docx-paragraph',
           document_id: document.id,
@@ -199,7 +201,7 @@ it('показывает абзац и ячейку таблицы DOCX в сп�
   </MemoryRouter>);
 
   fireEvent.click(await screen.findByRole('button', { name: 'Синтетическая статья A' }));
-  const links = screen.getByRole('list', { name: 'Источники замечания' });
+  const links = screen.getByRole('list', { name: 'Источники проверки' });
   for (const location of ['Абзац 3', 'Таблица 1, строка 2, ячейка 4']) {
     fireEvent.click(within(links).getByRole('button', { name: 'synthetic.docx · ' + location }));
     const panel = screen.getByRole('region', { name: 'Источник документа' });

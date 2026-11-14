@@ -195,7 +195,8 @@ export function OfficeReader({ runId, documentId, format, locator, evidenceId, s
 
   function highlight(text: string, singleSheetCell = false) {
     // Exact single-cell evidence preserves the original text (for example, 60.250).
-    if (!selectedField || !fragment?.match || (fragment.text !== text && !singleSheetCell)) return text;
+    if (!fragment?.match || (fragment.text !== text && !singleSheetCell)) return text;
+    if (!selectedField) return fragment.text;
     const [before, match, after] = fragment.match;
     return <>{before}<mark>{match}</mark>{after}</>;
   }

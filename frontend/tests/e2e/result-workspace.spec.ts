@@ -255,9 +255,16 @@ test('source pane opens the stored original at a mobile width', async ({ page })
   await amount.press('Enter');
   await expect(amount).toHaveAttribute('aria-pressed', 'true');
   await expect(preview.getByText('Лист «Синтетика», C7', { exact: true })).toBeVisible();
-  const selectedCell = preview.getByRole('cell', { name: '60.250', exact: true });
+  const selectedCell = preview.locator('td[data-source-address="C7"]');
   await expect(selectedCell.locator('mark')).toHaveText('60.250');
   await expect(selectedCell).toHaveAttribute('data-source-field', 'amount');
+  const showAmounts = preview.getByRole('checkbox', { name: 'Суммы и значения' });
+  await showAmounts.uncheck();
+  await expect(selectedCell).toHaveText('60.250');
+  await expect(selectedCell.locator('mark')).toHaveCount(0);
+  await expect(selectedCell).not.toHaveAttribute('data-source-field');
+  await showAmounts.check();
+  await expect(selectedCell.locator('mark')).toHaveText('60.250');
   await expect(preview.getByRole('link', { name: 'Скачать оригинал' })).toBeVisible();
   expect(ledgerRequests).toEqual(expect.arrayContaining([
     `/api/v0/runs/${id}/documents/ledger`,
