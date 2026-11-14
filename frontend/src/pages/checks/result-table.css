@@ -85,7 +85,7 @@
 
 .result-reconciliation .result-table-pane .kfz-result-table {
   width: 100%;
-  min-width: 730px;
+  min-width: 800px;
   margin: 0;
   table-layout: fixed;
   border-collapse: separate;
@@ -113,7 +113,7 @@
 
 .result-reconciliation .result-table-pane .kfz-result-table th:first-child { width: 25%; padding-left: 18px; }
 .result-reconciliation .result-table-pane .kfz-result-table th:nth-child(n+2):nth-child(-n+4) { width: 13%; }
-.result-reconciliation .result-table-pane .kfz-result-table th:nth-child(5) { width: 106px; text-align: center; }
+.result-reconciliation .result-table-pane .kfz-result-table th:nth-child(5) { width: 140px; text-align: center; }
 .result-reconciliation .result-table-pane .kfz-result-table th:last-child { text-align: left; }
 
 .result-reconciliation .result-table-pane .kfz-result-table tbody tr:not(.source-subrow) { cursor: pointer; background: #fff; }

@@ -11,7 +11,7 @@ from PIL import Image
 from doccheck_backend import scanned_report
 from doccheck_backend.api import create_app
 from doccheck_backend.config import Settings
-from doccheck_backend.contracts.locators import PageLocator
+from doccheck_backend.contracts.locators import PageLocator, ParagraphLocator, TableCellLocator
 from doccheck_backend.database import create_database_engine
 from doccheck_backend.grounded_amounts import _contracts, _money, _periods, _stages, format_rubles
 from doccheck_backend.native_observations import NativeDocument, NativeIssue, Observation
@@ -291,6 +291,453 @@ def test_wrapped_month_range_withholds_a_partial_period():
         )
         == []
     )
+
+
+@pytest.mark.parametrize(
+    "printed",
+    [
+        "Период: с 01.01.2031 по 31.01.2031 и с 01.03.2031 по 31.03.2031",
+        "Период: с 01.03.2031 по 31.03.2031 и с 01.01.2031 по 31.01.2031",
+        "Период: 2031-01-01 — 2031-01-31; 2031-03-01 — 2031-03-31",
+        "Период: Январь 2031 и Март 2031",
+        "Период: Январь 2031 — Февраль 2031, Апрель 2031",
+        "Период: 01.01.2031 — 31.01.2031 | Период: 01.03.2031 — 31.03.2031",
+        "Период: 01.01.2031 — 31.01.2031 и с неразборчивой даты",
+    ],
+)
+def test_multiple_or_unresolved_periods_do_not_fall_back_to_first_or_document_date(printed):
+    address = PageLocator(kind="page", page=1, bbox=(0.1, 0.2, 0.8, 0.3))
+    date = PageLocator(kind="page", page=1, bbox=(0.1, 0.4, 0.8, 0.5))
+    assert _periods((Observation(printed, address), Observation("Дата: 31.01.2031", date))) == []
+
+
+def test_period_field_keeps_unrelated_requisites_and_separate_readings():
+    first = PageLocator(kind="page", page=1, bbox=(0.1, 0.2, 0.8, 0.3))
+    second = PageLocator(kind="page", page=1, bbox=(0.1, 0.4, 0.8, 0.5))
+    observations = (
+        Observation("Период: 01.01.2031 — 31.01.2031 | Договор: A-12", first),
+        Observation("Период: 01.03.2031 — 31.03.2031", second),
+    )
+    readings = _periods(observations)
+    assert [(p.start, p.end, o.locator) for p, o in readings] == [
+        ("2031-01-01", "2031-01-31", first),
+        ("2031-03-01", "2031-03-31", second),
+    ]
+    date = Observation("Дата документа: 31.01.2031", second)
+    assert [(p.start, p.end) for p, _ in _periods((date,))] == [("2031-01-31", "2031-01-31")]
+    field = Observation("Период: 01.01.2031 — 31.01.2031; Договор № A-12 от 01.03.2031", first)
+    assert [(p.start, p.end) for p, _ in _periods((field,))] == [("2031-01-01", "2031-01-31")]
+
+
+def test_multiple_periods_wrapped_within_same_observation_are_not_truncated():
+    address = PageLocator(kind="page", page=1, bbox=(0.1, 0.2, 0.8, 0.3))
+    assert (
+        _periods(
+            (
+                Observation("Период: 01.01.2031 — 31.01.2031", address),
+                Observation("и с 01.03.2031 по 31.03.2031", address),
+            )
+        )
+        == []
+    )
+
+
+@pytest.mark.parametrize(
+    "printed",
+    [
+        "Период: 01.02.2031 — 28.02.2031 | 01.04.2031 — 30.04.2031",
+        "Период: 01.04.2031 — 30.04.2031 | 01.02.2031 — 28.02.2031",
+        "Период: Февраль 2031 | Апрель 2031",
+        "Период: 01.02.2031 — 28.02.2031 | с 01.04.2031 по",
+        "Период: 01.02.2031 — 28.02.2031 —",
+        "Период: 01.02.2031 — 28.02.2031 по",
+        "Период: 01.02.2031 — 28.02.2031 — ?",
+        "Период: 01.02.2031 — 28.02.2031 — по",
+        "Период: 01.02.2031 — 28.02.2031 — 31 января",
+        "Период: 01.02.2031 — 28.02.2031; 99.00 руб. и с 01.04.2031 по 30.04.2031",
+        "Период: Февраль 2031 — апр. 2031",
+        "Период: Апрель 2031 — июн. 2031",
+        "Период: Февраль 2031 — апр 2031",
+        "Период: Февраль 2031 — ктбр. 2031",
+        "Период: Февраль 2031 — настоящее время",
+        "Период: Февраль 2031 — до настоящего времени",
+        "Период: Февраль 2031 — по настоящий момент",
+        "Период: Февраль 2031 до конца апреля 2031",
+        "Период: Февраль 2031 до 30 апр. 2031",
+        "Период: Февраль 2031 до 15-го апреля 2031",
+        "Период: Февраль 2031 — «15» апреля 2031",
+        'Период: Январь 2031 — "15" апреля 2031',
+        "Период: Февраль 2031 до ‘15’ апр. 2031",
+        "Период: Февраль 2031 — «15-го» апреля 2031",
+        "Период: Февраль 2031 — «15.04.2031»",
+        "Период: Январь 2031 — 15-го апр. 2031",
+        "Период: Февраль 2031 до 15-го",
+        "Период: Февраль 2031 по сегодняшний день",
+        "Период: Февраль 2031 и до конца апреля 2031",
+        "Период: Апрель 2031 — окончание работ",
+    ],
+)
+def test_additional_or_incomplete_periods_are_not_truncated(printed):
+    address = ParagraphLocator(kind="paragraph", paragraph=3)
+    assert _periods((Observation(printed, address),)) == []
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        "— на два месяца",
+        "— на 2 месяца",
+        "— на 2,5 месяца",
+        "— на 2–3 месяца",
+        "— на срок от двух до трёх месяцев",
+        "— на полтора года",
+        "— сроком на три рабочих дня",
+        "— на два отчётных месяца",
+        "— на срок более двух полных месяцев",
+        "— в течение двух недель",
+        "— на 12 мес.",
+        "— на 12 мес",
+        "— на год",
+        "— на весь месяц",
+        "— на двухмесячный срок",
+        "— на 2-месячный срок",
+        "— продолжительность: два месяца",
+        "— на полгода",
+        "— на неопределённый срок",
+        "— на время обслуживания",
+        "на 2 календарных месяца",
+        "| на два месяца",
+    ],
+)
+def test_explicit_duration_never_confirms_only_the_first_month(suffix):
+    first = ParagraphLocator(kind="paragraph", paragraph=3)
+    second = ParagraphLocator(kind="paragraph", paragraph=4)
+    date = Observation("Дата документа: 15.02.2031", second)
+    period = Observation(f"Период: Февраль 2031 {suffix}", first)
+    assert _periods((period, date)) == []
+
+
+def test_duration_in_an_adjacent_paragraph_is_not_reduced_to_first_month():
+    first = ParagraphLocator(kind="paragraph", paragraph=3)
+    second = ParagraphLocator(kind="paragraph", paragraph=4)
+    assert (
+        _periods(
+            (
+                Observation("Период: Февраль 2031", first),
+                Observation("на два месяца", second),
+            )
+        )
+        == []
+    )
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        "по договору № A-12",
+        "— по договору № A-12",
+        "— услуги связи",
+        "— 2 услуги связи",
+        "— «2» услуги связи",
+        "— на 2 услуги связи",
+        "— на обслуживание",
+        "— услуги связи за месяц",
+        "— - 100.00 руб.",
+        "по 2-му договору № A-12",
+        "; 99.00 руб.",
+        "; - 99.00 руб.",
+        "и с использованием оборудования",
+        "| Договор: A-12 | Дата документа: 01.03.2031",
+        "| 01.03.2031",
+        "| 01.03.2031 — услуги связи",
+    ],
+)
+def test_unrelated_period_field_prose_and_requisites_do_not_veto_single_range(suffix):
+    address = ParagraphLocator(kind="paragraph", paragraph=3)
+    source = Observation(f"Период: 01.02.2031 — 28.02.2031 {suffix}", address)
+    assert [(period.start, period.end) for period, _ in _periods((source,))] == [
+        ("2031-02-01", "2031-02-28")
+    ]
+
+
+def test_explicit_continuation_in_adjacent_docx_paragraph_is_unresolved():
+    period = Observation(
+        "Период: 01.02.2031 — 28.02.2031", ParagraphLocator(kind="paragraph", paragraph=3)
+    )
+    continuation = Observation(
+        "и с 01.04.2031 по 30.04.2031", ParagraphLocator(kind="paragraph", paragraph=4)
+    )
+    unrelated = Observation(
+        "Дата документа: 01.04.2031", ParagraphLocator(kind="paragraph", paragraph=4)
+    )
+    explanatory = Observation("— услуги связи", ParagraphLocator(kind="paragraph", paragraph=4))
+    assert _periods((period, continuation)) == []
+    assert [(p.start, p.end) for p, _ in _periods((period, unrelated))] == [
+        ("2031-02-01", "2031-02-28")
+    ]
+    assert [(p.start, p.end) for p, _ in _periods((period, explanatory))] == [
+        ("2031-02-01", "2031-02-28")
+    ]
+
+
+def test_docx_table_continuation_requires_adjacent_row_or_column():
+    def cell(row, column, text, table=1, span=1, height=1):
+        return Observation(
+            text,
+            TableCellLocator(kind="table_cell", table=table, row=row, cell=column),
+            column_span=span,
+            row_span=height,
+        )
+
+    period = cell(1, 1, "Период: 01.02.2031 — 28.02.2031")
+    extra = "и с 01.04.2031 по 30.04.2031"
+    assert _periods((period, cell(1, 2, extra))) == []
+    merged_period = cell(1, 1, period.raw_text, span=2)
+    assert _periods((merged_period, cell(1, 3, extra))) == []
+    vertical_period = cell(1, 1, period.raw_text, height=2)
+    assert _periods((vertical_period, cell(2, 2, extra))) == []
+    assert _periods((vertical_period, cell(3, 1, extra))) == []
+    assert _periods((cell(1, 2, extra, height=2), cell(2, 1, period.raw_text))) == []
+    # Native DOCX traversal visits the second column before the next row.
+    assert _periods((period, cell(1, 2, "примечание"), cell(2, 1, extra))) == []
+    for other in (
+        cell(1, 2, "по договору № A-12"),
+        cell(1, 3, extra),
+        cell(2, 2, extra),
+        cell(1, 2, extra, 2),
+    ):
+        assert [(p.start, p.end) for p, _ in _periods((period, other))] == [
+            ("2031-02-01", "2031-02-28")
+        ]
+    assert [(p.start, p.end) for p, _ in _periods((vertical_period, cell(3, 2, extra)))] == [
+        ("2031-02-01", "2031-02-28")
+    ]
+
+
+@pytest.mark.parametrize(
+    ("period_header", "other_header", "value", "independent"),
+    [
+        ("Учётный интервал", "Трудозатраты исполнителя", "2 часа", True),
+        ("Период", "Трудоёмкость, чел.-ч.", "два часа", True),
+        ("Отчётный период", "Количество рабочих часов", "2 рабочих дня отпуска", True),
+        ("Период сверки", "Дней отпуска", "2 дня", True),
+        ("Период сверки", "Время работы", "2 часа", True),
+        ("Период", "Затрачено времени", "два часа", True),
+        ("Период", "Рабочее время", "2 часа", True),
+        ("Период", "Длительность периода", "2 месяца", False),
+        ("Период", "Примечание", "2 часа", False),
+        ("Период", "Трудозатраты", "на два месяца", False),
+        ("Период", "Трудозатраты", "— два месяца", False),
+        ("Период", "Трудозатраты", "и с 01.04.2031 по 30.04.2031", False),
+        ("Период", "Трудозатраты", "2 часа и с 01.04.2031 по 30.04.2031", False),
+        ("Период", "Трудозатраты", "2 часа — на два месяца", False),
+        ("Период", "Трудозатраты", "2 часа и до конца апреля 2031", False),
+        ("Период", "Трудозатраты", "2 часа и на два месяца", False),
+        ("Период", "Трудозатраты", "2 часа и по договору № A-12", True),
+        ("Период", "Трудозатраты", "2 часа (и с 01.04.2031 по 30.04.2031)", False),
+        ("Период", "Трудозатраты", "2 часа (в течение двух недель)", False),
+        ("Период", "Трудозатраты", "2 часа, и до конца апреля 2031", False),
+        ("Период", "Трудозатраты", "2 часа (для обслуживания)", True),
+    ],
+)
+def test_docx_distinct_heading_separates_only_unlinked_quantity(
+    period_header, other_header, value, independent
+):
+    def cell(row, col, text):
+        return Observation(text, TableCellLocator(kind="table_cell", table=1, row=row, cell=col))
+
+    readings = _periods(
+        (
+            cell(1, 1, period_header),
+            cell(1, 2, other_header),
+            cell(2, 1, "Период: 01.02.2031 — 28.02.2031"),
+            cell(2, 2, value),
+        )
+    )
+    if independent:
+        assert [(p.start, p.end) for p, _ in readings] == [("2031-02-01", "2031-02-28")]
+    else:
+        assert readings == []
+
+
+def test_empty_period_column_does_not_fall_back_to_document_date():
+    heading = Observation("Период", TableCellLocator(kind="table_cell", table=1, row=1, cell=1))
+    date = Observation(
+        "Дата документа: 15.02.2031", ParagraphLocator(kind="paragraph", paragraph=1)
+    )
+    assert _periods((heading, date)) == []
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize("unlabelled", ["01.04.2031 — 30.04.2031", "неразборчиво"])
+def test_period_column_requires_every_nonempty_value_to_be_readable(reverse, unlabelled):
+    def cell(row, text):
+        return Observation(text, TableCellLocator(kind="table_cell", table=1, row=row, cell=1))
+
+    values = ["Период: Февраль 2031", unlabelled]
+    if reverse:
+        values.reverse()
+    assert _periods((cell(1, "Период"), cell(2, values[0]), cell(3, values[1]))) == []
+
+
+def test_period_column_note_does_not_mask_a_readable_value():
+    def cell(row, text):
+        return Observation(text, TableCellLocator(kind="table_cell", table=1, row=row, cell=1))
+
+    readings = _periods((cell(1, "Период"), cell(2, "Примечание"), cell(3, "Период: Февраль 2031")))
+    assert [(p.start, p.end) for p, _ in readings] == [("2031-02-01", "2031-02-28")]
+
+
+@pytest.mark.parametrize(
+    "printed",
+    [
+        "Период: 01.02.2031 — 28.02.2031; 99.00 руб.",
+        "Период: Февраль 2031; 99.00 руб.",
+    ],
+)
+def test_ruble_value_after_period_is_not_an_additional_date(printed):
+    address = ParagraphLocator(kind="paragraph", paragraph=3)
+    assert [(p.start, p.end) for p, _ in _periods((Observation(printed, address),))] == [
+        ("2031-02-01", "2031-02-28")
+    ]
+
+
+@pytest.mark.parametrize("text", ["- 100.00 руб.", "— 1 200,50 руб.", "— услуги связи"])
+def test_separate_money_or_prose_does_not_become_a_period_continuation(text):
+    period = Observation(
+        "Период: 01.02.2031 — 28.02.2031",
+        TableCellLocator(kind="table_cell", table=1, row=1, cell=1),
+    )
+    adjacent = Observation(text, TableCellLocator(kind="table_cell", table=1, row=1, cell=2))
+    assert [(p.start, p.end) for p, _ in _periods((period, adjacent))] == [
+        ("2031-02-01", "2031-02-28")
+    ]
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        "по договору № A-12",
+        "— услуги связи",
+        "— расходы 2031",
+        "— на обслуживание",
+        "— услуги связи за месяц",
+        "— - 100.00 руб.",
+    ],
+)
+def test_month_period_keeps_unrelated_explanations(suffix):
+    source = Observation(
+        f"Период: Февраль 2031 {suffix}", ParagraphLocator(kind="paragraph", paragraph=3)
+    )
+    assert [(p.start, p.end) for p, _ in _periods((source,))] == [("2031-02-01", "2031-02-28")]
+
+
+@pytest.mark.parametrize(
+    ("document_date", "operation_line"),
+    [
+        ("Дата документа: 15.02.2031", "Услуги оказаны 20.01.2031"),
+        ("Дата: 05.03.2031", "Услуги оказаны 20.02.2031"),
+        ("Акт № ACT-1 от 05.03.2031", "Работы выполнены 20.02.2031"),
+        ("Дата документа: 15.02.2031", "Дата оказания услуги: 31.01.2031"),
+        ("Дата документа: 05.03.2031", "Дата оказания услуг: 20.02.2031"),
+    ],
+)
+@pytest.mark.parametrize("reverse", [False, True])
+def test_conflicting_operation_date_vetoes_document_date_fallback(
+    document_date, operation_line, reverse
+):
+    first = PageLocator(kind="page", page=1, bbox=(0.1, 0.2, 0.8, 0.3))
+    second = PageLocator(kind="page", page=1, bbox=(0.1, 0.4, 0.8, 0.5))
+    lines = (Observation(document_date, first), Observation(operation_line, second))
+    assert _periods(tuple(reversed(lines)) if reverse else lines) == []
+
+
+def test_explicit_period_takes_precedence_over_different_document_date():
+    first = PageLocator(kind="page", page=1, bbox=(0.1, 0.2, 0.8, 0.3))
+    second = PageLocator(kind="page", page=1, bbox=(0.1, 0.4, 0.8, 0.5))
+    third = PageLocator(kind="page", page=1, bbox=(0.1, 0.6, 0.8, 0.7))
+    readings = _periods(
+        (
+            Observation("Дата документа: 05.03.2031", first),
+            Observation("Услуги оказаны 20.02.2031", second),
+            Observation("Период: Февраль 2031", third),
+        )
+    )
+    assert [(p.start, p.end, o.locator) for p, o in readings] == [
+        ("2031-02-01", "2031-02-28", third)
+    ]
+
+
+def test_weak_ocr_operation_date_can_veto_document_date(monkeypatch, tmp_path):
+    from doccheck_backend import grounded_amounts
+
+    path = tmp_path / "synthetic.png"
+    Image.new("RGB", (300, 200), "white").save(path)
+    monkeypatch.setattr(
+        grounded_amounts,
+        "recognize_lines",
+        lambda _: [
+            OcrLine("Дата документа: 15.02.2031", (5, 10, 230, 20), 95),
+            OcrLine("Услуги оказаны 20.01.2031", (5, 30, 230, 40), 45),
+            OcrLine("Итого: 120,00 руб.", (5, 70, 200, 80), 95),
+        ],
+    )
+    source = grounded_amounts.ground_document(uuid4(), "e" * 32, path, "png", "b" * 64)
+    assert source.period is None and source.period_date_conflict
+    assert source.amount == "120.00"
+    assert not any(item.kind == "period" for item in source.assertions)
+
+
+@pytest.mark.parametrize(
+    ("first", "weak", "reason"),
+    [
+        ("Период: 01.02.2031 — 28.02.2031", "и с 01.04.2031 по 30.04.2031", "period"),
+        ("Период: 01.02.2031 — 28.02.2031", "| 01.04.2031 — 30.04.2031", "period"),
+        ("Дата документа: 05.03.2031", "Дата оказания услуг: 20.02.2031", "date"),
+    ],
+)
+def test_weak_ocr_continuation_and_service_date_can_veto_scope(
+    monkeypatch, tmp_path, first, weak, reason
+):
+    from doccheck_backend import grounded_amounts
+
+    path = tmp_path / "synthetic.png"
+    Image.new("RGB", (300, 200), "white").save(path)
+    monkeypatch.setattr(
+        grounded_amounts,
+        "recognize_lines",
+        lambda _: [
+            OcrLine(first, (5, 10, 230, 20), 95),
+            OcrLine(weak, (5, 25, 230, 35), 45),
+            OcrLine("Итого: 120,00 руб.", (5, 70, 200, 80), 95),
+        ],
+    )
+    source = grounded_amounts.ground_document(uuid4(), "e" * 32, path, "png", "b" * 64)
+    assert source.period is None and source.amount == "120.00"
+    assert source.period_ambiguous if reason == "period" else source.period_date_conflict
+    assert not any(item.kind == "period" for item in source.assertions)
+
+
+@pytest.mark.parametrize(
+    "weak", ["— апр. 2031", "— настоящее время", "до конца апреля 2031", "— на два месяца"]
+)
+def test_weak_ocr_month_end_vetoes_first_month(monkeypatch, tmp_path, weak):
+    from doccheck_backend import grounded_amounts
+
+    path = tmp_path / "synthetic.png"
+    Image.new("RGB", (300, 200), "white").save(path)
+    monkeypatch.setattr(
+        grounded_amounts,
+        "recognize_lines",
+        lambda _: [
+            OcrLine("Период: Февраль 2031", (5, 10, 230, 20), 95),
+            OcrLine(weak, (5, 25, 230, 35), 45),
+            OcrLine("Итого: 120,00 руб.", (5, 70, 200, 80), 95),
+        ],
+    )
+    source = grounded_amounts.ground_document(uuid4(), "e" * 32, path, "png", "b" * 64)
+    assert source.period is None and source.period_ambiguous and source.amount == "120.00"
+    assert not any(item.kind == "period" for item in source.assertions)
 
 
 def test_unbound_final_label_blocks_the_intermediate_total():

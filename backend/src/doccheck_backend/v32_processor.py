@@ -463,6 +463,10 @@ _CODE_ARTICLES = {code: key for key, (code, _) in _ARTICLES.items() if code is n
 _FIELD_MESSAGES = {
     "contract_missing": "В оригинале нет однозначного номера договора.",
     "period_missing": "Границы периода или дата документа не подтверждены.",
+    "period_ambiguous": "Поле периода содержит неоднозначное продолжение. Проверьте оригинал.",
+    "period_date_conflict": (
+        "Дата документа отличается от даты оказания услуг или выполнения работ. Проверьте период."
+    ),
     "category_missing": "Назначение расходов не подтверждает одну статью.",
     "amount_missing": "Однозначный итог документа не найден.",
     "duplicate_identity": "В комплекте есть другое чтение с той же идентичностью документа.",
@@ -606,7 +610,12 @@ def _amount_components(scope, documents, grounds, bound, *, stage: str | None = 
         if not contracts:
             missing.append("contract_missing")
         if not period:
-            missing.append("period_missing")
+            if source.period_ambiguous:
+                missing.append("period_ambiguous")
+            elif source.period_date_conflict:
+                missing.append("period_date_conflict")
+            else:
+                missing.append("period_missing")
         elif period.start < scope.period_start or period.end > scope.period_end:
             missing.append("period_partial")
         if stage is not None and (
