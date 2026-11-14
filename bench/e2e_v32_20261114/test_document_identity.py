@@ -166,8 +166,9 @@ class IdentityMergeTests(unittest.TestCase):
         first = native("first", text='Акт № ОС-3817\nИсполнитель: ООО «Альфа»')
         second = native("second", text='Документ № ОС-3817')
         result = compare([first, second])
-        self.assertEqual(result["rows"][0]["status"], "correct")
-        self.assertEqual(len(result["duplicates"]), 1)
+        self.assertEqual(result["rows"][0]["status"], "unverified")
+        self.assertEqual(result["duplicates"], [])
+        self.assertTrue(any(x["reason"] == "unresolved_document_identity_collision" for x in result["identity_warnings"]))
 
     def test_kind_and_issuer_fields_require_authentic_source_proof(self):
         checked = native()
@@ -176,19 +177,21 @@ class IdentityMergeTests(unittest.TestCase):
         checked = native()
         checked["number_evidence"]["issuer_key"] = "invented organisation"
         self.assertFalse(validate_number_evidence(checked)["identity_usable"])
-    def test_two_verified_full_own_ids_merge_and_count_once(self):
+    def test_two_verified_full_own_ids_with_different_hashes_require_review(self):
         first = native("first")
         second = native("second", raw="unrelated", text="Страница 1\nАкт оказанных услуг\n№ ОС-3817 от 31.03.2026")
         result = compare([first, second])
-        self.assertEqual(result["rows"][0]["status"], "correct")
-        self.assertEqual(result["rows"][0]["expected_amount"], "100.00")
-        self.assertEqual(result["duplicates"][0]["basis"], "business_identity")
+        self.assertEqual(result["rows"][0]["status"], "unverified")
+        self.assertIsNone(result["rows"][0]["expected_amount"])
+        self.assertEqual(result["rows"][0]["source_ids"], [])
+        self.assertEqual(result["duplicates"], [])
 
-    def test_recovered_same_number_still_runs_amount_and_category_conflict_checks(self):
+    def test_same_number_with_changed_amount_or_category_requires_review(self):
         for second in (native("second", amount="101.00"), native("second", category="production_overhead")):
             result = compare([native("first"), second])
             self.assertEqual(result["rows"][0]["status"], "unverified")
-            self.assertTrue(any(reason["reason"] == "conflicting_duplicate" for reason in result["rows"][0]["reasons"]))
+            self.assertTrue(any(reason["reason"] == "unresolved_document_identity_collision" for reason in result["rows"][0]["reasons"]))
+            self.assertEqual(result["duplicates"], [])
 
     def test_two_confirmed_different_prefix_or_script_ids_never_collide(self):
         for left, right in (("А-17", "Б-17"), ("A-17", "А-17"), ("ОС-17", "0C-17"), ("ОС-17", "ос-17")):

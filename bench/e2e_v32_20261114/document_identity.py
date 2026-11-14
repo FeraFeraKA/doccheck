@@ -11,6 +11,7 @@ VERSION = "native-own-number-v2"
 TITLE = re.compile(r"^(?:сч[её]т[- ]акт|сч[её]т[- ]фактура|сч[её]т\s+на\s+оплату|акт|справка|расч[её]тная\s+ведомость|ведомость|расч[её]т\s+страховых\s+взносов|служебная\s+записка|универсальный\s+передаточный\s+документ|упд)\b", re.I)
 BARE_TITLE = re.compile(r"^(?:сч[её]т[- ]акт|акт|служебная\s+записка|универсальный\s+передаточный\s+документ|упд)\s+", re.I)
 OWN_HEADER = re.compile(r"(?:сч[её]т[- ]акт|сч[её]т[- ]фактура|сч[её]т\s+на\s+оплату|акт(?:\s+(?:оказанных\s+услуг|выполненных\s+работ|при[её]ма[- ]передачи))?|справка(?:\s+расч[её]т(?:\s+страховых\s+взносов)?)?|расч[её]тная\s+ведомость(?:\s+по\s+оплате\s+труда)?|ведомость|расч[её]т\s+страховых\s+взносов|служебная\s+записка|универсальный\s+передаточный\s+документ|упд)\s*", re.I)
+COPY_ACT_HEADER = re.compile(r"копия\s+акта(?:\s+(?:оказанных\s+услуг|выполненных\s+работ|при[её]ма[- ]передачи))?\s*", re.I)
 OWN_LABEL = re.compile(r"^(?:(?:номер|№)\s+(?:настоящего\s+)?документа\b\s*[:№]?|документ\b\s*№|собственный\s+номер\s+документа\b\s*[:№]?)\s*", re.I)
 MARKER = re.compile(r"(?:№|\bномер\b)\s*[:]?\s*", re.I)
 REFERENCE = re.compile(r"\b(?:договор\w*|контракт\w*|основани\w*|согласно|приложени\w*|цитируем\w*|банк\w*|расч[её]тн\w*\s+сч[её]т|корреспондент\w*|сч[её]т\s+организации)\b|\b(?:к|по|из)\s+акту\b", re.I)
@@ -121,6 +122,9 @@ def resolve_own_number(text, *, _bounded=True):
         value = cell["text"]
         own = OWN_LABEL.match(value)
         title = TITLE.match(value)
+        copy_marker = MARKER.search(value)
+        if copy_marker and not COPY_ACT_HEADER.fullmatch(value[:copy_marker.start()]):
+            copy_marker = None
         # Labels naming another document or an organisation's account are not
         # own labels, even when their number resembles the model answer.
         if REFERENCE.search(value) and not own:
@@ -129,6 +133,10 @@ def resolve_own_number(text, *, _bounded=True):
         basis, value_start, label = None, None, None
         if own:
             basis, value_start, label = "explicit_own_label", own.end(), own.group()
+        elif copy_marker:
+            # A marked copy names the act whose identity needs review; it does
+            # not prove that differently hashed files are duplicate operations.
+            basis, value_start, label = "own_copy_header", copy_marker.end(), value[:copy_marker.end()]
         elif title:
             marker = MARKER.search(value, title.end())
             if marker and OWN_HEADER.fullmatch(value[:marker.start()]):
@@ -195,7 +203,9 @@ def source_identity_context(text):
         bare = BARE_TITLE.match(value)
         if not OWN_HEADER.fullmatch(prefix) and bare and TOKEN.fullmatch(value[bare.end():]):
             prefix = bare.group()
-        if OWN_HEADER.fullmatch(prefix):
+        if marker and COPY_ACT_HEADER.fullmatch(prefix):
+            kinds.append({"kind": "act", "start": cell["start"], "end": cell["start"] + len(prefix), "text": prefix})
+        elif OWN_HEADER.fullmatch(prefix):
             lowered = prefix.casefold().replace("ё", "е").strip()
             kind = next((kind for stem, kind in (
                 ("счет-акт", "invoice_act"), ("счет акт", "invoice_act"), ("счет-фактура", "tax_invoice"),

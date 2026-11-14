@@ -131,10 +131,9 @@ def reconcile(documents, report_rows, contract_number, period_start, period_end,
     """Return source-backed category totals/statuses, with conservative abstention.
 
     ``documents``: list of {id, prediction:{...}, source_hash?}; duplicate id/hash
-    occurrences are skipped. A business duplicate uses contract + document number
-    + covered period/date + optional counterparty. Conflicting duplicate values
-    make both affected categories unverified. The caller must not supply labels
-    or the answer key as extracted facts.
+    occurrences are skipped. Matching document numbers and context mark a possible
+    collision for review, not a proven duplicate. The caller must not supply
+    labels or the answer key as extracted facts.
     """
     target = normalize_identifier(contract_number)
     window_start, window_end = parse_date(period_start), parse_date(period_end)
@@ -148,6 +147,7 @@ def reconcile(documents, report_rows, contract_number, period_start, period_end,
     seen_sources, seen_business = {}, {}
     identity_contexts = defaultdict(list)
     identity_warnings = []
+    identity_review = set()
 
     def abstain(doc_id, category, reason, candidates=None):
         item = {"id": doc_id, "reason": reason}
@@ -247,11 +247,13 @@ def reconcile(documents, report_rows, contract_number, period_start, period_end,
                     identity_warnings.append({"id": doc_id, "related_id": previous["id"],
                         "reason": "explicit_identity_context_conflict", "conflicting_fields": context_conflict})
                 else:
-                    duplicates.append({"id": doc_id, "duplicate_of": previous["id"], "basis": "business_identity"})
-                    if previous["amount"] != amount or previous["category"] != category:
-                        abstain(doc_id, category, "conflicting_duplicate")
-                        abstain(previous["id"], previous["category"], "conflicting_duplicate")
-                    continue
+                    # Equal numbers and context are only a collision candidate.
+                    # Different source hashes must not be merged as one operation.
+                    reason = "unresolved_document_identity_collision"
+                    abstain(doc_id, category, reason)
+                    abstain(previous["id"], previous["category"], reason)
+                    identity_review.update((doc_id, previous["id"]))
+                    identity_warnings.append({"id": doc_id, "related_id": previous["id"], "reason": reason})
         else:
             # Unresolved identity alone does not invalidate a known amount.
             # It supplies neither merge authority nor a verified uniqueness
@@ -274,6 +276,7 @@ def reconcile(documents, report_rows, contract_number, period_start, period_end,
             if reason:
                 abstain(doc_id, category, reason)
                 abstain(previous["item"]["id"], previous["item"]["category"], reason)
+                identity_review.update((doc_id, previous["item"]["id"]))
                 identity_warnings.append({"id": doc_id, "related_id": previous["item"]["id"], "reason": reason})
         if number:
             seen_business[key] = item
@@ -284,7 +287,7 @@ def reconcile(documents, report_rows, contract_number, period_start, period_end,
     for report_row in report_rows:
         category = normalize_category(report_row.get("category", report_row.get("article")))
         reported = parse_amount(report_row.get("reported_amount", report_row.get("amount")))
-        supporting = known.get(category, [])
+        supporting = [item for item in known.get(category, []) if item["id"] not in identity_review]
         partial = sum((item["amount"] for item in supporting), Decimal("0"))
         reasons = list(global_uncertain) + list(uncertain.get(category, []))
         completeness_reason = completeness_issue(completeness, category)
@@ -315,7 +318,7 @@ def reconcile(documents, report_rows, contract_number, period_start, period_end,
         "completeness": completeness,
         "limitations": [
             "Completeness is an explicit user/profile declaration, not inferred or independently proven from an available partial sum.",
-            "Business duplicate merging requires a source-verified full own number on both records plus matching contract, date/period and optional counterparty.",
+            "Matching source-verified document numbers and context are review candidates, not proof that differently hashed files are duplicates.",
             "Unresolved identity alone is a warning; a contextual collision is reviewed without merging. Bare-tail suspicion never authorizes identity equivalence.",
         ],
     }
