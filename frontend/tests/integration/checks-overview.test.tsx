@@ -4,7 +4,10 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { ChecksOverview } from '../../src/pages/checks/ChecksOverview';
 import type { HistoryEntry } from '../../src/pages/checks/checkData';
 
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
+});
 
 it('applies server filters before pagination while sorting the current page locally', async () => {
   vi.stubEnv('VITE_DOCCHECK_PUBLIC_DEMO', '0');
@@ -31,6 +34,8 @@ it('applies server filters before pagination while sorting the current page loca
   expect(within(firstResult).getByText('1 из 6 показателей')).toBeVisible();
   expect(within(firstResult).getByLabelText('Покрытие по сумме недоступно')).toHaveTextContent('—');
   expect(within(firstResult).getByLabelText('Количество документов недоступно')).toHaveTextContent('—');
+  expect(within(history).getByRole('link', { name: 'Очередь' })).toHaveAttribute('href', '/checks/new?run=q#queue');
+  expect(within(history).getByRole('link', { name: 'Альфа' })).toHaveAttribute('href', '/checks/a');
   expect(within(history).getByRole('link', { name: 'Более ранние проверки' }))
     .toHaveAttribute('href', '/checks?cursor=older+%2B+opaque');
 
@@ -51,16 +56,49 @@ it('applies server filters before pagination while sorting the current page loca
   fireEvent.click(within(history).getByRole('button', { name: 'Сбросить фильтры' }));
   expect(await within(history).findByText('Бета')).toBeVisible();
   expect(within(history).queryByText('Синтетическая сверка')).not.toBeInTheDocument();
-  expect(screen.getByRole('region', { name: 'Готовый пример' })).toHaveTextContent('Синтетический пример');
+  expect(screen.queryByRole('region', { name: 'Готовый пример' })).not.toBeInTheDocument();
 });
 
-it('keeps the synthetic example separate in the public overview and never loads history', () => {
+it('shows the archive in server order with search and without a sort control', async () => {
+  vi.stubEnv('VITE_DOCCHECK_PUBLIC_DEMO', '0');
+  const fetchHistory = vi.fn().mockResolvedValueOnce(Response.json({
+    items: [
+      {
+        run_id: 'recent', report_number: '2', status: 'completed', error: null,
+        created_at: '2026-11-12T12:00:00Z', archived_at: '2026-11-14T14:00:00Z',
+      },
+      {
+        run_id: 'older', report_number: '1', status: 'completed', error: null,
+        created_at: '2026-11-13T12:00:00Z', archived_at: '2026-11-14T13:00:00Z',
+      },
+    ],
+    next_cursor: 'old-archive',
+  }));
+  vi.stubGlobal('fetch', fetchHistory);
+  render(<MemoryRouter initialEntries={['/archive']}><ChecksOverview archive /></MemoryRouter>);
+
+  const archive = screen.getByRole('region', { name: 'Архив запусков' });
+  expect(await within(archive).findAllByRole('link', { name: /КФЗ №/ })).toEqual([
+    within(archive).getByRole('link', { name: 'КФЗ №2' }),
+    within(archive).getByRole('link', { name: 'КФЗ №1' }),
+  ]);
+  expect(fetchHistory).toHaveBeenCalledWith('/api/v0/runs?view=archive', expect.any(Object));
+  expect(within(archive).queryByRole('combobox', { name: 'Сортировка' })).not.toBeInTheDocument();
+  expect(within(archive).getByRole('columnheader', { name: 'Дата архивации' })).toHaveAttribute('aria-sort', 'descending');
+  expect(within(archive).getByRole('link', { name: 'Более ранние проверки' })).toHaveAttribute('href', '/archive?cursor=old-archive');
+  fireEvent.change(within(archive).getByRole('searchbox'), { target: { value: '№1' } });
+  expect(within(archive).getByRole('link', { name: 'КФЗ №1' })).toHaveAttribute('href', '/checks/older');
+  expect(within(archive).queryByRole('link', { name: 'КФЗ №2' })).not.toBeInTheDocument();
+});
+
+it('shows the local history notice in the public overview without links to an example', () => {
   vi.stubEnv('VITE_DOCCHECK_PUBLIC_DEMO', '1');
   const loadHistory = vi.fn();
   render(<MemoryRouter><ChecksOverview loadHistory={loadHistory} /></MemoryRouter>);
   const history = screen.getByRole('region', { name: 'История запусков' });
   expect(within(history).queryByRole('table')).not.toBeInTheDocument();
   expect(within(history).queryByRole('searchbox')).not.toBeInTheDocument();
-  expect(screen.getByRole('link', { name: 'Синтетическая сверка' })).toBeVisible();
+  expect(within(history).getByText('История рабочих проверок доступна в локальной установке.')).toBeVisible();
+  expect(screen.queryByRole('link', { name: 'Синтетическая сверка' })).not.toBeInTheDocument();
   expect(loadHistory).not.toHaveBeenCalled();
 });

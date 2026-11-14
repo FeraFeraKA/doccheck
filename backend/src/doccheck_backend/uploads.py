@@ -2,19 +2,23 @@
 
 import json
 import os
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from hashlib import file_digest, sha256
 from pathlib import Path
 from shutil import rmtree
 from stat import S_ISREG
 from tempfile import TemporaryDirectory, mkdtemp
+from typing import BinaryIO
 from uuid import UUID, uuid4
 from zipfile import BadZipFile, ZipFile
 
 from pydantic import TypeAdapter, ValidationError
-from sqlalchemy import Engine, select
+from sqlalchemy import Engine, delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from starlette.datastructures import FormData, UploadFile
 
+from doccheck_backend import run_reads
 from doccheck_backend.contracts.locators import Locator
 from doccheck_backend.contracts.result import Scope
 from doccheck_backend.models import HostedClaim, Run
@@ -23,6 +27,7 @@ MAX_FILE_SIZE = 50 * 1024**2
 MAX_PACKAGE_SIZE = 250 * 1024**2
 MAX_MULTIPART_SIZE = MAX_PACKAGE_SIZE + 2 * 1024**2
 MAX_DOCUMENTS = 100
+_PREPARED_TTL = timedelta(hours=1)
 # The bundled browser example contains two generated inputs, without a stored result.
 _DEMO_INPUT_DIGESTS = (
     "4361e7581119c2416e983f21c672ac64deabca9bd94ed4076f22b60a73c2e8ee",
@@ -76,7 +81,7 @@ def _file_format(upload: UploadFile) -> str:
     raise UploadError(422, "unsupported_file_format", "Формат файла не поддерживается")
 
 
-def _get_files(form: FormData, field: str, maximum: int) -> list[UploadFile]:
+def _get_files(form: FormData, field: str, maximum: int, *, minimum: int = 1) -> list[UploadFile]:
     files: list[UploadFile] = []
     for item in form.getlist(field):
         if not isinstance(item, UploadFile) or not item.filename:
@@ -88,7 +93,7 @@ def _get_files(form: FormData, field: str, maximum: int) -> list[UploadFile]:
         if item.size > MAX_FILE_SIZE:
             raise size_error()
         files.append(item)
-    if not 1 <= len(files) <= maximum:
+    if not minimum <= len(files) <= maximum:
         raise input_error("Недопустимое количество файлов", field)
     return files
 
@@ -122,10 +127,10 @@ def _parse_scope(form: FormData, report_id: str, report_format: str) -> Scope:
         raise input_error("Некорректный договор или период") from None
 
 
-def _save_file(upload: UploadFile, path: Path) -> str:
+def _copy_file(source: BinaryIO, path: Path) -> str:
     digest = sha256()
     with path.open("xb") as target:
-        while chunk := upload.file.read(1024**2):
+        while chunk := source.read(1024**2):
             target.write(chunk)
             digest.update(chunk)
         target.flush()
@@ -144,6 +149,89 @@ def _sync_directory(path: Path) -> None:
         os.close(fd)
 
 
+@dataclass(frozen=True)
+class _PackFile:
+    role: str
+    name: str
+    size: int
+    format: str
+    upload: UploadFile | None = None
+    source_id: UUID | None = None
+    original: dict | None = None
+
+
+def _new_pack_file(upload: UploadFile, role: str) -> _PackFile:
+    return _PackFile(role, upload.filename or "", upload.size or 0, _file_format(upload), upload)
+
+
+def _pack_files(engine: Engine, form: FormData) -> tuple[list[_PackFile], bool]:
+    source_ids = form.getlist("source_run_id")
+    retained_ids = form.getlist("retained_document_id")
+    retains_synthetic = False
+    if source_ids:
+        if len(source_ids) != 1 or not isinstance(source_ids[0], str):
+            raise input_error("Некорректная исходная проверка", "source_run_id")
+        source = run_reads.get_editable_run(engine, source_ids[0])
+        if len(retained_ids) > MAX_DOCUMENTS + 1 or not all(
+            isinstance(item, str) for item in retained_ids
+        ):
+            raise input_error("Некорректный список сохранённых файлов", "retained_document_id")
+        if len(set(retained_ids)) != len(retained_ids):
+            raise input_error("Файл указан повторно", "retained_document_id")
+        retained = [run_reads._stored_document(source, document_id) for document_id in retained_ids]
+        retains_synthetic = bool(retained) and any(
+            document.get("synthetic") is True for document in source.documents
+        )
+        originals = [
+            _PackFile(
+                str(item["role"]),
+                str(item["name"]),
+                int(item["size"]),
+                str(item["format"]),
+                source_id=source.id,
+                original=item,
+            )
+            for item in retained
+        ]
+    elif retained_ids:
+        raise input_error("Укажите исходную проверку", "source_run_id")
+    else:
+        originals = []
+
+    reports = [_new_pack_file(item, "report") for item in _get_files(form, "report", 1, minimum=0)]
+    documents = [
+        _new_pack_file(item, "supporting")
+        for item in _get_files(form, "documents", MAX_DOCUMENTS, minimum=0)
+    ]
+    reports += [original for original in originals if original.role == "report"]
+    documents = [original for original in originals if original.role == "supporting"] + documents
+    if len(reports) != 1:
+        raise input_error("Выберите один файл КФЗ", "report")
+    if not 1 <= len(documents) <= MAX_DOCUMENTS:
+        raise input_error("Недопустимое количество файлов", "documents")
+    files = [*reports, *documents]
+    if any(file.size <= 0 or file.size > MAX_FILE_SIZE for file in files):
+        raise size_error()
+    if sum(file.size for file in files) > MAX_PACKAGE_SIZE:
+        raise size_error()
+    return files, retains_synthetic
+
+
+def _store_pack_file(root: Path, item: _PackFile, destination: Path) -> str:
+    if item.upload is not None:
+        return _copy_file(item.upload.file, destination)
+    if item.source_id is None or item.original is None:
+        raise ValueError("Retained file must reference a saved original")
+    stream, _ = run_reads.open_run_original(
+        root, item.source_id, str(item.original["id"]), item.original
+    )
+    with stream:
+        digest = _copy_file(stream, destination)
+    if digest != item.original["sha256"]:
+        raise UploadError(404, "document_not_found", "Оригинал документа изменился")
+    return digest
+
+
 def store_run(
     engine: Engine,
     root: Path,
@@ -153,44 +241,45 @@ def store_run(
     hosted_synthetic: bool = False,
     hosted_viewer: UUID | None = None,
     restore_hosted_originals: bool = False,
+    prepared: bool = False,
 ) -> UUID:
     if (hosted_viewer is not None or restore_hosted_originals) and not hosted_synthetic:
         raise ValueError("Hosted options require synthetic admission")
-    local_fields = {"synthetic"} if not hosted_synthetic else set()
-    if set(form) - {*SCOPE_FIELDS, "report", "documents", *local_fields}:
+    if prepared and hosted_synthetic:
+        raise ValueError("Hosted runs use their own admission")
+    local_fields = {"synthetic"} if not hosted_synthetic and not prepared else set()
+    retained_fields = {"source_run_id", "retained_document_id"} if prepared else set()
+    if set(form) - {*SCOPE_FIELDS, "report", "documents", *local_fields, *retained_fields}:
         raise input_error("Неизвестное поле")
     synthetic_values = form.getlist("synthetic")
     if synthetic_values and synthetic_values != ["true"]:
-        raise input_error("Допустимое значение для синтетического комплекта: true", "synthetic")
-    synthetic = bool(synthetic_values)
-    (report,) = _get_files(form, "report", 1)
-    uploads = [report, *_get_files(form, "documents", MAX_DOCUMENTS)]
-    if sum(upload.size or 0 for upload in uploads) > MAX_PACKAGE_SIZE:
-        raise size_error()
-    formats = [_file_format(upload) for upload in uploads]
-    ids = [uuid4().hex for _ in uploads]
+        raise input_error("Недопустимая маркировка комплекта", "synthetic")
+    files, retains_synthetic = _pack_files(engine, form)
+    ids = [uuid4().hex for _ in files]
     stored_scope = {}
     if any(field in form for field in SCOPE_FIELDS):
-        stored_scope = _parse_scope(form, ids[0], formats[0]).model_dump(mode="json")
+        stored_scope = _parse_scope(form, ids[0], files[0].format).model_dump(mode="json")
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
     staging = Path(mkdtemp(prefix=".upload-", dir=root))
     try:
         documents = [
             {
                 "id": file_id,
-                "name": upload.filename,
-                "format": file_format,
-                "size": upload.size,
-                "sha256": _save_file(upload, staging / file_id),
-                "role": "report" if index == 0 else "supporting",
+                "name": file.name,
+                "format": file.format,
+                "size": file.size,
+                "sha256": _store_pack_file(root, file, staging / file_id),
+                "role": file.role,
             }
-            for index, (upload, file_id, file_format) in enumerate(
-                zip(uploads, ids, formats, strict=True)
-            )
+            for file, file_id in zip(files, ids, strict=True)
         ]
+        is_bundled_pack = (
+            not stored_scope and tuple(doc["sha256"] for doc in documents) == _DEMO_INPUT_DIGESTS
+        )
+        if synthetic_values and not is_bundled_pack:
+            raise input_error("Недопустимая маркировка комплекта", "synthetic")
+        synthetic = bool(synthetic_values) or retains_synthetic or (prepared and is_bundled_pack)
         if synthetic:
-            if tuple(doc["sha256"] for doc in documents) != _DEMO_INPUT_DIGESTS or stored_scope:
-                raise input_error("Синтетический комплект должен совпадать с примером", "synthetic")
             documents[0]["synthetic"] = True
         fingerprint_scope = stored_scope.copy()
         fingerprint_scope.pop("report_document_id", None)
@@ -209,7 +298,8 @@ def store_run(
                     id=run_id,
                     idempotency_key=key,
                     request_digest=digest,
-                    status="queued",
+                    status="prepared" if prepared else "queued",
+                    prepared_at=func.now() if prepared else None,
                     scope=stored_scope,
                     documents=documents,
                 )
@@ -217,15 +307,23 @@ def store_run(
                 .returning(Run.id)
             )
             if connection.execute(query).scalar_one_or_none() is None:
-                existing, existing_digest, previous_documents = connection.execute(
-                    select(Run.id, Run.request_digest, Run.documents)
+                previous = connection.execute(
+                    select(Run.id, Run.request_digest, Run.documents, Run.status, Run.prepared_at)
                     .where(Run.idempotency_key == key)
                     .with_for_update()
-                ).one()
-                if existing_digest != digest:
+                ).one_or_none()
+                if previous is None:
+                    # A concurrent DELETE may have released the package after the conflict.
+                    raise UploadError(404, "upload_not_found", "Пакет больше не сохранён")
+                existing = previous.id
+                if previous.request_digest != digest or prepared != (
+                    previous.prepared_at is not None
+                ):
                     raise UploadError(
                         409, "idempotency_conflict", "Ключ уже связан с другим пакетом"
                     )
+                if previous.status == "prepared" and _is_expired(previous.prepared_at):
+                    raise _expired_upload()
                 admission = connection.execute(
                     select(HostedClaim.viewer_id).where(HostedClaim.run_id == existing)
                 ).one_or_none()
@@ -234,7 +332,7 @@ def store_run(
                 ):
                     raise UploadError(409, "idempotency_conflict", "Ключ связан с другой очередью")
                 if restore_hosted_originals:
-                    _restore_hosted_dir(root, existing, staging, previous_documents, documents)
+                    _restore_hosted_dir(root, existing, staging, previous.documents, documents)
                 return existing
             if hosted_synthetic:
                 connection.execute(
@@ -252,6 +350,82 @@ def store_run(
     finally:
         if staging.exists():
             rmtree(staging)
+
+
+def _is_expired(created: datetime) -> bool:
+    return datetime.now(UTC) >= created + _PREPARED_TTL
+
+
+def _expired_upload() -> UploadError:
+    return UploadError(410, "upload_expired", "Срок хранения пакета истёк. Загрузите файлы снова")
+
+
+def _parse_upload_id(value: str) -> UUID:
+    try:
+        return UUID(value)
+    except ValueError:
+        raise UploadError(404, "upload_not_found", "Пакет не найден") from None
+
+
+def start_prepared_run(engine: Engine, root: Path, upload_id: str) -> UUID:
+    key = _parse_upload_id(upload_id)
+    with engine.begin() as connection:
+        row = connection.execute(
+            select(Run.status, Run.prepared_at, Run.documents)
+            .where(Run.id == key, Run.prepared_at.is_not(None))
+            .with_for_update()
+        ).one_or_none()
+        if row is None:
+            raise UploadError(404, "upload_not_found", "Пакет не найден")
+        if row.status == "prepared":
+            if _is_expired(row.prepared_at):
+                raise _expired_upload()
+            for document in row.documents:
+                try:
+                    _, info = run_reads._document_path(root, key, document["id"])
+                except run_reads.RunReadError as error:
+                    if error.status != 404:
+                        raise
+                    raise UploadError(404, "upload_not_found", "Загрузите файлы снова") from None
+                if info.st_size != document["size"]:
+                    raise UploadError(404, "upload_not_found", "Загрузите файлы снова")
+            connection.execute(
+                update(Run).where(Run.id == key).values(status="queued", created_at=func.now())
+            )
+        return key
+
+
+def discard_prepared_run(engine: Engine, root: Path, upload_id: str) -> None:
+    key = _parse_upload_id(upload_id)
+    with engine.begin() as connection:
+        prepared = connection.execute(
+            select(Run.id).where(Run.id == key, Run.status == "prepared").with_for_update()
+        ).scalar_one_or_none()
+        if prepared is not None:
+            _remove_prepared_files(root, prepared)
+            connection.execute(delete(Run).where(Run.id == prepared))
+
+
+def discard_expired_uploads(engine: Engine, root: Path) -> None:
+    threshold = datetime.now(UTC) - _PREPARED_TTL
+    expired = (
+        select(Run.id)
+        .where(Run.status == "prepared", Run.prepared_at <= threshold)
+        .order_by(Run.prepared_at)
+        .limit(20)
+        .with_for_update(skip_locked=True)
+    )
+    with engine.begin() as connection:
+        for identifier in connection.scalars(expired).all():
+            _remove_prepared_files(root, identifier)
+            connection.execute(delete(Run).where(Run.id == identifier))
+
+
+def _remove_prepared_files(root: Path, identifier: UUID) -> None:
+    try:
+        rmtree(root / str(identifier))
+    except FileNotFoundError:
+        pass
 
 
 def _restore_hosted_dir(

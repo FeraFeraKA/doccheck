@@ -23,10 +23,22 @@
 
 .document-reader-controls label { min-width: 0; display: flex; align-items: center; gap: 6px; }
 .document-reader-controls select { max-width: 180px; min-width: 0; }
-.document-reader-paging button { display: grid; place-items: center; width: 25px; height: 25px; padding: 0; }
-.document-reader-paging button:nth-of-type(odd) svg { rotate: 180deg; }
+.reader-range { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.checks-content .document-reader-paging .reader-arrow {
+  display: grid;
+  place-items: center;
+  flex: 0 0 28px;
+  box-sizing: border-box;
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  padding: 0;
+  line-height: 1;
+}
+.reader-arrow svg { display: block; width: 15px; height: 15px; }
+.reader-arrow[data-direction="left"] svg { transform: rotate(180deg); }
 .document-reader-controls button[aria-disabled="true"] { opacity: .45; cursor: default; }
-.document-reader-paging .reader-source-jump { width: auto; padding: 0 6px; }
+.checks-content .document-reader-paging .reader-source-jump { min-height: 28px; padding: 0 6px; }
 
 .document-reader-scroll {
   flex: 1;
@@ -86,24 +98,53 @@
 .checks-content .document-reader-word table { width: 100%; min-width: 0; margin: 10px 0; background: #fff; }
 .checks-content .document-reader-word td { padding: 6px 9px; border: 1px solid #dce5e5; white-space: pre-wrap; overflow-wrap: anywhere; }
 
-.source-viewer [data-source-tone] { --source-tint: #e4f0fa; --source-mark: #286d9b; --source-strong: #c5e2fa; }
-.source-viewer [data-source-tone="discrepancy"] { --source-tint: #fce2df; --source-mark: #b23b42; --source-strong: #f8c4be; }
-.source-viewer [data-source-tone="unverified"] { --source-tint: #fff0cc; --source-mark: #986019; --source-strong: #ffe198; }
-.source-viewer [data-source-tone="verified"] { --source-tint: #dff1e8; --source-mark: #258257; --source-strong: #bde8d1; }
-
-.source-viewer :is(td, p)[data-source-tone] {
-  background: var(--source-tint);
-  box-shadow: inset 0 -2px var(--source-mark);
+.source-viewer {
+  --source-amount: #e17b62;
+  --source-contract: #2fa991;
+  --source-period: #629f40;
+  --source-document_identity: #a27acb;
+  --source-article: #bf8a27;
+  --source-source: #438ec1;
 }
 
-.source-viewer [data-source-tone] mark {
+.source-field-legend {
+  min-width: 0;
+  margin: 3px 10px 6px;
+  padding: 3px 8px 6px;
+  border: 1px solid var(--ui-line);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--ui-secondary);
+  font-size: 12px;
+}
+.source-field-legend legend { padding: 0 5px; }
+.source-field-legend > div { display: flex; flex-wrap: wrap; gap: 2px 12px; }
+.source-field-legend label { display: inline-flex; align-items: center; min-height: 26px; gap: 5px; cursor: pointer; }
+.source-field-legend input { width: 15px; height: 15px; accent-color: color-mix(in srgb, var(--source-color), #163735 25%); }
+
+.source-viewer :is(td, p, .source-viewer-highlight)[data-source-field] {
+  background-color: color-mix(in srgb, var(--source-color) 26%, transparent);
+  background-image: var(--source-stripe);
+  background-position: bottom;
+  background-size: 100% 2px;
+  background-repeat: no-repeat;
+}
+
+.source-viewer :is(td, p)[data-source-active="true"] {
+  box-shadow: inset 0 0 0 2px var(--source-color);
+}
+
+.source-viewer :is([data-source-field] mark, mark[data-source-field]) {
   color: inherit;
-  background: var(--source-strong);
-  text-decoration: underline solid var(--source-mark) 2px;
+  background: color-mix(in srgb, var(--source-color) 40%, white);
+  text-decoration: underline solid var(--source-color) 2px;
   text-underline-offset: .16em;
 }
 
-.source-viewer .source-viewer-highlight[data-source-tone] {
-  background: color-mix(in srgb, var(--source-strong) 38%, transparent);
-  border-color: var(--source-mark);
+.source-viewer .source-viewer-highlight[data-source-field] {
+  border-color: var(--source-color);
+}
+
+.source-viewer .source-viewer-highlight[data-source-active="true"] {
+  border-width: 3px;
 }

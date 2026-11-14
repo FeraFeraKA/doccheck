@@ -255,12 +255,17 @@ def test_run_state_and_findings_distinguish_progress_and_failure(client):
     queued = client.get(run_url)
     assert queued.status_code == 200
     assert queued.json()["status"] == "queued"
+    assert queued.json()["synthetic"] is False
     assert queued.json()["progress"] == {"processed_documents": 0, "total_documents": 2}
     pending = client.get(findings_url)
     assert (pending.status_code, pending.json()["code"]) == (409, "result_pending")
 
-    _update_run(client, run_id, status="processing")
-    assert client.get(run_url).json()["progress"] is None
+    documents = _manifest(client, run_id).documents
+    documents[0]["synthetic"] = True
+    _update_run(client, run_id, status="processing", documents=documents)
+    processing = client.get(run_url).json()
+    assert processing["progress"] is None
+    assert processing["synthetic"] is True
     pending = client.get(findings_url)
     assert (pending.status_code, pending.json()["code"]) == (409, "result_pending")
 
@@ -277,6 +282,7 @@ def test_run_state_and_findings_distinguish_progress_and_failure(client):
     expected = _complete(client, run_id)
     completed = client.get(run_url).json()
     assert completed["status"] == "completed_with_issues"
+    assert completed["synthetic"] is True
     assert completed["error"]["code"] == "processing_completed_with_issues"
     assert completed["progress"] == {"processed_documents": 2, "total_documents": 2}
     findings = client.get(findings_url)
@@ -494,7 +500,7 @@ def test_fragment_preview_reads_only_the_addressed_original_text(client, tmp_pat
     assert (changed.status_code, changed.json()["code"]) == (404, "document_not_found")
 
     path.write_bytes(original)
-    open_original = run_reads._open_original
+    open_original = run_reads.open_run_original
 
     def rewrite_after_verification(*args):
         stream, size = open_original(*args)
@@ -502,7 +508,7 @@ def test_fragment_preview_reads_only_the_addressed_original_text(client, tmp_pat
             replacement.write(bytes([original[0] ^ 1]))
         return stream, size
 
-    monkeypatch.setattr(run_reads, "_open_original", rewrite_after_verification)
+    monkeypatch.setattr(run_reads, "open_run_original", rewrite_after_verification)
     changed_after_open = client.get(url, params=query)
     assert (changed_after_open.status_code, changed_after_open.json()["code"]) == (
         404,

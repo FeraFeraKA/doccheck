@@ -8,15 +8,16 @@ import './source-context.css';
 const tabs = [['source', 'Источник'], ['rule', 'Правило проверки']] as const;
 type Panel = (typeof tabs)[number][0];
 
-export function SourceContext({ row, picker, children, compact = false }: {
+export function SourceContext({ row, children, compact = false }: {
   row: ReviewResult['rows'][number];
-  picker: ReactNode;
   compact?: boolean;
   children: (active: boolean) => ReactNode;
 }) {
   const [panel, setPanel] = useState<Panel>('source');
   const id = useId();
   const tablist = useRef<HTMLDivElement>(null);
+  const reasons = [...new Set(row.reasons.map(({ message }) => message.trim()))]
+    .filter((message) => message && message !== row.completeness.reason.trim());
 
   const heading = <header className="source-context-header">
       <div><h3>{row.label}</h3><span className="checks-status" data-status={row.status}>{statusLabels[row.status]}</span></div>
@@ -46,7 +47,6 @@ export function SourceContext({ row, picker, children, compact = false }: {
     </div>
     <div className="source-context-preview" role="tabpanel" id={id + '-source'}
       aria-labelledby={id + '-source-tab'} hidden={panel !== 'source'}>
-      {picker}
       {children(panel === 'source')}
     </div>
     <div className="source-context-rule" role="tabpanel" id={id + '-rule'} tabIndex={0}
@@ -58,8 +58,8 @@ export function SourceContext({ row, picker, children, compact = false }: {
         <dt>Формула</dt><dd>{row.calculation.formula}</dd>
         <dt>Основание полноты</dt><dd>{row.completeness.reason}</dd>
       </dl>
-      {row.reasons.length > 0 && <ul>
-        {row.reasons.map((reason) => <li key={reason.code}>{reason.message}</li>)}
+      {reasons.length > 0 && <ul>
+        {reasons.map((message) => <li key={message}>{message}</li>)}
       </ul>}
     </div>
   </section>;

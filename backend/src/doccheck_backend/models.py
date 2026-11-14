@@ -33,7 +33,9 @@ class Run(Base):
     __tablename__ = "runs"
     __table_args__ = (
         CheckConstraint(
-            "status IN ('queued', 'processing', 'completed', 'completed_with_issues', 'failed')"
+            "status IN ('prepared', 'queued', 'processing', 'completed', "
+            "'completed_with_issues', 'failed')",
+            name="runs_status_check",
         ),
     )
 
@@ -48,6 +50,7 @@ class Run(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    prepared_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     result: Mapped[dict[str, object] | None] = mapped_column(JSONB(none_as_null=True))
     error: Mapped[dict[str, object] | None] = mapped_column(JSONB(none_as_null=True))
 

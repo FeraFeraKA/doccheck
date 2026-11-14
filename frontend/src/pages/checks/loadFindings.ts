@@ -202,7 +202,7 @@ function row(value: unknown): Row {
     }),
     completeness: {
       state: choice(completeness.state, ['complete', 'incomplete', 'unknown']),
-      basis: choice(completeness.basis, ['manifest', 'user_declaration', 'dataset_fixture', 'none']),
+      basis: choice(completeness.basis, ['manifest', 'user_declaration', 'dataset_fixture', 'uploaded_package', 'none']),
       reason: text(completeness.reason),
       evidence_refs: list(completeness.evidence_refs, text),
     },

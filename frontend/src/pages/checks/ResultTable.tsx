@@ -9,6 +9,7 @@ type Row = ReviewResult['rows'][number];
 type Evidence = ReviewResult['evidence'][number];
 type Document = ReviewResult['documents'][number];
 type EvidenceField = 'amount_refs' | 'contract_refs' | 'period_refs' | 'article_refs' | 'identity_refs';
+type PrimaryIssue = ReviewResult['summary']['primary_issues'][number];
 
 interface ResultTableProps {
   rows: Row[];
@@ -25,6 +26,7 @@ interface ResultTableProps {
   evidenceFields: readonly (readonly [EvidenceField, string])[];
   evidenceById: ReadonlyMap<string, Evidence>;
   documentsById: ReadonlyMap<string, Document>;
+  issuesById: ReadonlyMap<string, PrimaryIssue>;
   formatAddress: (locator: Evidence['locator']) => string;
   onFilterChange: (value: string) => void;
   onQueryChange: (value: string) => void;
@@ -35,7 +37,7 @@ interface ResultTableProps {
 
 export function ResultTable({
   rows, total, filters, filter, query, selectedId, activeSourceRowId, selectedEvidenceId, expanded,
-  tableScroll, selectedRow, evidenceFields, evidenceById, documentsById,
+  tableScroll, selectedRow, evidenceFields, evidenceById, documentsById, issuesById,
   formatAddress, onFilterChange, onQueryChange, onReset, onToggle, onSelectSource,
 }: ResultTableProps) {
   return (
@@ -68,10 +70,24 @@ export function ResultTable({
             const isExpanded = expanded.has(row.id);
             const detailsId = `details-${row.id}`;
             const components = row.calculation?.components ?? [];
+            const issue = row.root_issue_id !== null ? issuesById.get(row.root_issue_id) : undefined;
+            const messages = new Set([
+              rowExplanation(row), ...row.reasons.map(({ message }) => message), row.completeness.reason,
+            ]);
             const reportSource = row.reported_evidence_refs.find((id) => {
               const item = evidenceById.get(id);
               return item && documentsById.has(item.document_id);
             });
+            const shownSources = new Set(
+              components.flatMap((component) => evidenceFields.flatMap(([field]) => component[field] ?? [])),
+            );
+            if (reportSource && row.reported_value !== null) shownSources.add(reportSource);
+            const otherSources = [...new Set([
+              ...(issue?.evidence_refs ?? []),
+              ...row.reasons.flatMap(({ evidence_refs }) => evidence_refs),
+              ...row.completeness.evidence_refs,
+              ...row.reported_evidence_refs,
+            ])].filter((id) => !shownSources.has(id));
             const sourceDocuments = new Set(components.flatMap((component) =>
               component.amount_refs.flatMap((id) => {
                 const item = evidenceById.get(id);
@@ -125,9 +141,28 @@ export function ResultTable({
                   <div id={detailsId} role="region" aria-label={`Подробности: ${row.label}`} className="indicator-details">
                     {row.calculation?.formula && <p>{row.calculation.formula}</p>}
                     <p><strong>{statusLabels[row.status]}.</strong>{' '}
-                      {[...new Set([rowExplanation(row), ...row.reasons.map(({ message }) => message),
-                        row.completeness.reason])].join(' ')}
+                      {[...messages].join(' ')}
                     </p>
+                    {(otherSources.length > 0 || (issue && !messages.has(issue.message))) && (
+                      <div className="indicator-issue">
+                        {issue && !messages.has(issue.message) && <p>{issue.message}</p>}
+                        {otherSources.length > 0 && (
+                          <ul className="indicator-addresses" aria-label="Источники проверки">
+                            {otherSources.map((id) => {
+                              const item = evidenceById.get(id);
+                              const document = item && documentsById.get(item.document_id);
+                              return <li key={id}>{item && document ? (
+                                <button type="button" aria-pressed={selected && selectedEvidenceId === id}
+                                  onClick={(event) => onSelectSource(row.id, id, event.currentTarget)}>
+                                  <span>{document.name} · {formatAddress(item.locator)}</span>
+                                  <span aria-hidden="true">›</span>
+                                </button>
+                              ) : <span>Адрес источника недоступен.</span>}</li>;
+                            })}
+                          </ul>
+                        )}
+                      </div>
+                    )}
                     {components.length === 0 ? <p>Нет подтверждённых слагаемых.</p> :
                       <ol className="indicator-documents" aria-label={`Слагаемые показателя: ${row.label}`}>
                         {components.map((component) => <li key={component.amount_refs[0]}>

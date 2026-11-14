@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { DocumentSourcePreview } from './DocumentSourcePreview';
-import type { DocumentImageView } from './DocumentSourcePreview';
-import type { SourceTone } from './OfficeReader';
+import type { DocumentView } from './DocumentSourcePreview';
 import { SourceContext } from './SourceContext';
 import { preserveSourceViewport } from './SourceDrawer';
 import { formatLocation } from './reviewResult';
-import type { ReviewResult } from './reviewResult';
+import type { PageAddress, ReviewResult } from './reviewResult';
+import { evidenceFields, sourceField } from './sourceHighlights';
+import { WorkspaceIcon } from './WorkspaceIcon';
 import './source-workspace.css';
 
 type Evidence = ReviewResult['evidence'][number];
@@ -15,19 +16,20 @@ type Row = ReviewResult['rows'][number];
 interface Selection {
   documentId: string;
   evidenceId?: string;
+  scopeOnly?: boolean;
   row?: Row;
-  rowEvidenceIds: readonly string[];
 }
 
 export function useSourceWorkspace({
-  result, storedRunId, initialDocumentId, initialEvidenceId, onClose, onEvidenceChange, onSelectionChange,
+  result, storedRunId, initialDocumentId, initialEvidenceId, initialScopeOnly,
+  onClose, onSelectionChange,
 }: {
   result: ReviewResult;
   storedRunId?: string;
   initialDocumentId?: string;
   initialEvidenceId?: string;
+  initialScopeOnly?: boolean;
   onClose?: () => void;
-  onEvidenceChange?: (id: string | undefined) => void;
   onSelectionChange?: (documentId: string, evidenceId?: string) => void;
 }) {
   const { documents, evidence } = result;
@@ -43,11 +45,13 @@ export function useSourceWorkspace({
     }
     return byDocument;
   }, [evidence]);
+  const fieldsByEvidenceId = useMemo(() => evidenceFields(result.rows), [result.rows]);
   const [initialSelection] = useState(() => {
     if (initialDocumentId === undefined || !documents.some(({ id }) => id === initialDocumentId)) return;
-    const sources = evidenceByDocument.get(initialDocumentId);
-    const selectedEvidence = sources?.find(({ id }) => id === initialEvidenceId) ?? sources?.[0];
-    return { documentId: initialDocumentId, evidenceId: selectedEvidence?.id, rowEvidenceIds: [] };
+    const evidenceId = evidenceByDocument.get(initialDocumentId)?.find(({ id }) => id === initialEvidenceId)?.id;
+    const scopeOnly = !evidenceId && initialScopeOnly && initialDocumentId === report?.id
+      && result.scope.report_row_locator != null && 'page' in result.scope.report_row_locator;
+    return { documentId: initialDocumentId, evidenceId, scopeOnly };
   });
   const [open, setOpen] = useState(Boolean(initialSelection));
   const [selection, setSelection] = useState<Selection | undefined>(initialSelection);
@@ -64,16 +68,15 @@ export function useSourceWorkspace({
     setOpen(true);
   }
 
-  function openEvidence(evidenceId: string, from?: HTMLElement, row?: Row, evidenceIds: readonly string[] = [evidenceId]) {
+  function openEvidence(evidenceId: string, from?: HTMLElement, row?: Row) {
     const source = evidenceById.get(evidenceId);
-    if (source) show({ documentId: source.document_id, evidenceId, row, rowEvidenceIds: evidenceIds }, from);
+    if (source) show({ documentId: source.document_id, evidenceId, row }, from);
   }
 
   function openDocument(documentId: string, from?: HTMLElement, evidenceId?: string) {
     if (!documents.some(({ id }) => id === documentId)) return;
-    const sources = evidenceByDocument.get(documentId);
-    const selectedEvidence = sources?.find(({ id }) => id === evidenceId) ?? sources?.[0];
-    show({ documentId, evidenceId: selectedEvidence?.id, rowEvidenceIds: [] }, from);
+    const selectedEvidence = evidenceByDocument.get(documentId)?.find(({ id }) => id === evidenceId);
+    show({ documentId, evidenceId: selectedEvidence?.id }, from);
   }
 
   function close() {
@@ -92,51 +95,33 @@ export function useSourceWorkspace({
     trigger.current = null;
   }, []);
 
-  function selectEvidence(evidenceId: string) {
-    const source = evidenceById.get(evidenceId);
-    if (!source) return;
-    onEvidenceChange?.(evidenceId);
-    onSelectionChange?.(source.document_id, evidenceId);
-    setSelection({ ...selection, documentId: source.document_id, evidenceId,
-      rowEvidenceIds: selection?.rowEvidenceIds ?? [] });
-  }
-
-  const rowSources = (selection?.rowEvidenceIds ?? []).flatMap((id) => {
-    const item = evidenceById.get(id);
-    return item ? [item] : [];
-  });
   const documentId = selection?.documentId ?? defaultDocumentId;
-  const documentSources = documentId ? evidenceByDocument.get(documentId) ?? [] : [];
-  const sources = [...new Map([...rowSources, ...documentSources].map((item) => [item.id, item])).values()];
+  const reportLocator = documentId === report?.id ? result.scope.report_row_locator : undefined;
+  const reportPage: PageAddress | undefined = reportLocator && 'page' in reportLocator ? reportLocator : undefined;
   const selected = selection?.evidenceId === undefined ? undefined : evidenceById.get(selection.evidenceId);
-  const row = selected && rowSources.some(({ id }) => id === selected.id) ? selection?.row : undefined;
-  const linkedStatuses = selected && (selected.kind === 'amount' || selected.kind === 'reported_value')
-    ? result.rows.filter((item) => item.reported_evidence_refs.includes(selected.id)
-      || item.calculation?.components.some(({ amount_refs }) => amount_refs.includes(selected.id)))
-      .map((item) => item.status)
-    : [];
-  const status = row?.status ?? (['discrepancy', 'unverified', 'verified'] as const)
-    .find((item) => linkedStatuses.includes(item));
-  const tone: SourceTone | undefined = status === 'discrepancy' || status === 'unverified' || status === 'verified'
-    ? status : undefined;
-
+  const row = selection?.row;
+  const highlights = useMemo(() => (documentId ? evidenceByDocument.get(documentId) ?? [] : []).flatMap((item) => {
+    const kind = sourceField(item.kind) ?? fieldsByEvidenceId.get(item.id);
+    return kind ? [{ locator: item.locator, kind }] : [];
+  }), [documentId, evidenceByDocument, fieldsByEvidenceId]);
 
   function selectDocument(id: string) {
-    const previous = selection?.documentId === id ? selected : undefined;
-    const source = previous ?? rowSources.find(({ document_id }) => document_id === id) ?? evidenceByDocument.get(id)?.[0];
-    onEvidenceChange?.(source?.id);
-    onSelectionChange?.(id, source?.id);
-    setSelection({ ...selection, documentId: id, evidenceId: source?.id, rowEvidenceIds: selection?.rowEvidenceIds ?? [] });
+    if (id === documentId) return;
+    onSelectionChange?.(id);
+    setSelection((previous) => ({ documentId: id, row: previous?.row }));
   }
 
   return {
-    open, documentId, evidenceId: selected?.id, rowId: open ? row?.id : undefined,
+    open, documentId, defaultDocumentId, evidenceId: selected?.id, rowId: open && selected ? row?.id : undefined,
     openEvidence, openDocument, close, clear, returnFocusRoot, focusRequest, row,
-    selectDocument, selectEvidence, selected, documents, sources, storedRunId,
-    tone,
-    reportLocator: documentId === report?.id ? result.scope.report_row_locator : undefined,
-
+    selectDocument, selected, documents, storedRunId, highlights,
+    reportPage: selection?.scopeOnly ? reportPage : undefined,
   };
+}
+
+export function ResultSourceWorkspace({ result, storedRunId }: { result: ReviewResult; storedRunId?: string }) {
+  const workspace = useSourceWorkspace({ result, storedRunId });
+  return <SourceWorkspace workspace={workspace} />;
 }
 
 function PanelIcon({ name }: { name: 'previous' | 'next' | 'expand' | 'collapse' | 'close' }) {
@@ -158,7 +143,7 @@ export function SourceWorkspace({ workspace }: { workspace: ReturnType<typeof us
   const lastFocus = useRef(0);
   const sizeControl = useRef<HTMLButtonElement>(null);
   const closeControl = useRef<HTMLButtonElement>(null);
-  const [imageViews, setImageViews] = useState(() => new Map<string, DocumentImageView>());
+  const [documentViews, setDocumentViews] = useState(() => new Map<string, DocumentView>());
   const [fullscreen, setFullscreen] = useState(false);
   const restoreViewport = useRef<() => void>(undefined);
   if (!open && fullscreen) setFullscreen(false);
@@ -216,21 +201,6 @@ export function SourceWorkspace({ workspace }: { workspace: ReturnType<typeof us
 
   const documentIndex = workspace.documents.findIndex(({ id }) => id === workspace.documentId);
   const selectedDocument = workspace.documents[documentIndex];
-  const filenameById = new Map(workspace.documents.map(({ id, name }) => [id, name]));
-  const evidenceIndex = workspace.sources.findIndex(({ id }) => id === workspace.evidenceId);
-  const picker = workspace.sources.length > 0 && <div className="source-document-select source-evidence-select">
-    {workspace.row && <button type="button" aria-label="Предыдущий источник" disabled={evidenceIndex <= 0}
-      onClick={() => workspace.selectEvidence(workspace.sources[evidenceIndex - 1].id)}><PanelIcon name="previous" /></button>}
-    <select aria-label={workspace.row ? 'Доказательство' : 'Адрес доказательства'} value={workspace.evidenceId ?? ''}
-      onChange={(event) => workspace.selectEvidence(event.currentTarget.value)}>
-      {!workspace.evidenceId && <option value="" disabled>Выберите фрагмент</option>}
-      {workspace.sources.map(({ id, document_id: documentId, locator }) => <option key={id} value={id}>
-        {workspace.row && `${filenameById.get(documentId) ?? 'Документ'} · `}{formatLocation(locator)}
-      </option>)}
-    </select>
-    {workspace.row && <button type="button" aria-label="Следующий источник" disabled={evidenceIndex >= workspace.sources.length - 1}
-      onClick={() => workspace.selectEvidence(workspace.sources[evidenceIndex + 1].id)}><PanelIcon name="next" /></button>}
-  </div>;
 
   function preview(active: boolean): ReactNode {
     if (!selectedDocument) return <p className="source-workspace-notice">Документы комплекта отсутствуют.</p>;
@@ -241,24 +211,31 @@ export function SourceWorkspace({ workspace }: { workspace: ReturnType<typeof us
       {workspace.storedRunId ? <DocumentSourcePreview
         runId={workspace.storedRunId} document={{ ...selectedDocument, format: selectedDocument.format ?? null }}
         evidenceId={workspace.evidenceId ?? null}
-        tone={workspace.tone}
-        reportPage={workspace.reportLocator && 'page' in workspace.reportLocator ? workspace.reportLocator : undefined}
-        active={active} compact imageView={imageViews.get(selectedDocument.id) ?? { zoom: 100, highlight: true }}
-        onImageViewChange={(view) => setImageViews((previous) => new Map(previous).set(selectedDocument.id, view))}
+        highlights={workspace.highlights}
+        reportPage={workspace.reportPage}
+        active={active} compact view={documentViews.get(selectedDocument.id)}
+        onViewChange={(view) => setDocumentViews((previous) => new Map(previous).set(selectedDocument.id, view))}
       /> : <div className="source-viewer source-workspace-empty" aria-label="Просмотр источника" role="region">
         <div className="source-viewer-placeholder">
-          <p>Оригинал в готовом примере недоступен.</p>
-          <p>{workspace.selected ? formatLocation(workspace.selected.locator) : 'Адрес фрагмента отсутствует.'}</p>
+          <p>Оригинал документа недоступен.</p>
         </div>
-        {workspace.selected?.raw_value != null && <div className="source-viewer-footer">
-          <div><small>Выбранный фрагмент</small><strong>{workspace.selected.raw_value}</strong></div>
+        {workspace.selected && <div className="source-viewer-footer">
+          <div><small>Адрес</small><strong>{formatLocation(workspace.selected.locator)}</strong></div>
+          {workspace.selected.raw_value != null && <div><small>Выбранный фрагмент</small><strong>{workspace.selected.raw_value}</strong></div>}
         </div>}
       </div>}
     </>;
   }
 
   const sizeLabel = expanded ? 'Свернуть источник в боковую панель' : 'Развернуть источник на весь экран';
+  const launchLabel = open ? 'Скрыть просмотр документов' : 'Открыть просмотр документов';
   return <div ref={returnFocusRoot} className="source-workspace" data-source-open={open}>
+    {workspace.defaultDocumentId && <button type="button" className="source-workspace-launch"
+      aria-label={launchLabel} title={launchLabel} aria-expanded={open} aria-controls={open ? panelId : undefined}
+      onClick={(event) => {
+        if (open) close();
+        else if (workspace.defaultDocumentId) workspace.openDocument(workspace.defaultDocumentId, event.currentTarget);
+      }}><WorkspaceIcon name={open ? 'eyeOff' : 'eye'} /></button>}
     {open && <dialog ref={panel} id={panelId} aria-label="Источник документа"
       role={expanded ? undefined : 'region'} className="source-workspace-panel compact-source" data-fullscreen={expanded}
       onCancel={(event) => { event.preventDefault(); close(); }}>
@@ -278,10 +255,7 @@ export function SourceWorkspace({ workspace }: { workspace: ReturnType<typeof us
           onClick={toggleFullscreen}><PanelIcon name={expanded ? 'collapse' : 'expand'} /></button>
         <button ref={closeControl} type="button" aria-label="Закрыть просмотр источника" title="К таблице" onClick={close}><PanelIcon name="close" /></button>
       </header>
-      {workspace.row ? <SourceContext row={workspace.row} picker={picker} compact>{preview}</SourceContext> : <>
-        {picker}
-        {preview(true)}
-      </>}
+      {workspace.row ? <SourceContext row={workspace.row} compact>{preview}</SourceContext> : preview(true)}
     </dialog>}
   </div>;
 }

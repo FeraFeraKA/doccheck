@@ -1,35 +1,50 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { Link, MemoryRouter, Route, Routes, useParams } from 'react-router';
-import { afterEach, expect, it, vi } from 'vitest';
-import { NewCheck } from '../../src/pages/checks';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { CheckDetail } from '../../src/pages/checks';
+import { NewCheck } from '../../src/pages/checks/NewCheck';
+import type { InitialRunPack } from '../../src/pages/checks/NewCheck';
+import { RunPackEditor } from '../../src/pages/checks/RunPackEditor';
+import { discardPreparedRun, prepareRunTransfer, RunUploadHttpError, startPreparedRun } from '../../src/pages/checks/createRun';
 
-afterEach(() => vi.unstubAllGlobals());
+vi.mock('../../src/pages/checks/createRun', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../../src/pages/checks/createRun')>();
+  return {
+    ...original,
+    prepareRunTransfer: vi.fn(),
+    startPreparedRun: vi.fn(),
+    discardPreparedRun: vi.fn(),
+  };
+});
 
-function mockUpload(...responses: Array<Response | Promise<Response> | Error>) {
-  const pending = [...responses];
-  const upload = vi.fn<typeof fetch>().mockImplementation(async () => {
-    const next = pending.shift();
-    if (next instanceof Error) throw next;
-    if (!next) throw new Error('Unexpected upload');
-    return await next;
-  });
-  vi.stubGlobal('fetch', (url: RequestInfo | URL, init?: RequestInit) =>
-    init?.method === 'POST' ? upload(url, init) : Promise.resolve(
-      Response.json({ items: [], next_cursor: null }),
-    ));
-  return upload;
+const prepareTransfer = vi.mocked(prepareRunTransfer);
+const startRun = vi.mocked(startPreparedRun);
+const discard = vi.mocked(discardPreparedRun);
+
+beforeEach(() => {
+  startRun.mockReset();
+  prepareTransfer.mockReset();
+  discard.mockReset().mockResolvedValue(undefined);
+  vi.stubGlobal('fetch', vi.fn().mockImplementation(() =>
+    Promise.resolve(Response.json({ items: [], next_cursor: null })),
+  ));
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
+
+function WizardRoute({ initialPack }: { initialPack?: InitialRunPack }) {
+  const { search } = useLocation();
+  const editing = new URLSearchParams(search).has('from');
+  return <NewCheck key={editing ? 'editing' : 'new'} initialPack={editing ? initialPack : undefined} />;
 }
 
-function RunCard() {
-  const { id } = useParams();
-  return <h1>Карточка {id}</h1>;
-}
-
-function renderWizard() {
-  render(<MemoryRouter initialEntries={['/checks/new']}>
+function renderWizard(initialPack?: InitialRunPack) {
+  render(<MemoryRouter initialEntries={[initialPack ? '/checks/new?from=saved' : '/checks/new']}>
     <Routes>
-      <Route path="/checks/new" element={<><NewCheck /><Link to="/checks/other">Другая страница</Link></>} />
-      <Route path="/checks/:id" element={<RunCard />} />
+      <Route path="/checks/new" element={<WizardRoute initialPack={initialPack} />} />
     </Routes>
   </MemoryRouter>);
 }
@@ -46,105 +61,266 @@ function selectPacket() {
   ]);
 }
 
-function accept(id: string) {
-  return Response.json({ run_id: id, status: 'queued' }, {
-    status: 202,
-    headers: { Location: '/api/v0/runs/' + id },
-  });
+function accepted(id: string): Awaited<ReturnType<typeof startPreparedRun>> {
+  return { run_id: id, status: 'queued', location: '/api/v0/runs/' + id };
 }
 
-it('отправляет только два поля, блокирует двойное действие и оставляет форму готовой к следующему комплекту', async () => {
-  let finish: ((response: Response) => void) | undefined;
-  const pending = new Promise<Response>((resolve) => { finish = resolve; });
-  const fetchMock = mockUpload(pending, accept('second-run'));
+function defer<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+it('берёт файлы после чтения, ждёт подтверждения передачи и запускает только по нажатию', async () => {
+  const pendingUpload = defer<{ upload_id: string }>();
+  const pendingStart = defer<Awaited<ReturnType<typeof startPreparedRun>>>();
+  let updateProgress: ((percent: number) => void) | undefined;
+  const send = vi.fn<ReturnType<typeof prepareRunTransfer>>().mockImplementation((_signal, progress) => {
+    updateProgress = progress;
+    return pendingUpload.promise;
+  });
+  const reading = vi.spyOn(FileReader.prototype, 'readAsArrayBuffer');
+  prepareTransfer.mockReturnValue(send);
+  startRun.mockReturnValue(pendingStart.promise);
 
   renderWizard();
   selectPacket();
+  expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+  expect(screen.queryByRole('group', { name: 'Строка КФЗ' })).not.toBeInTheDocument();
   const submit = screen.getByRole('button', { name: 'Запустить проверку' });
-  fireEvent.click(submit);
-  fireEvent.click(submit);
+  expect(screen.getByRole('status')).toHaveTextContent('Чтение файлов');
   expect(submit).toBeDisabled();
-  expect(screen.getByRole('status')).toHaveTextContent('Загрузка файлов');
-  expect(fetchMock).toHaveBeenCalledTimes(1);
+  expect(prepareTransfer).not.toHaveBeenCalled();
 
-  const [url, init] = fetchMock.mock.calls[0];
-  expect(String(url)).toMatch(/\/api\/v0\/runs$/);
-  const form = init?.body;
-  if (!(form instanceof FormData)) throw new Error('Ожидался multipart');
-  expect(Array.from(form.keys())).toEqual(['report', 'documents', 'documents']);
-  expect(form.getAll('documents')).toMatchObject([{ name: 'B.xlsx' }, { name: 'A.docx' }]);
-  finish?.(accept('saved-run'));
-  expect(await screen.findByRole('link', { name: 'Проверка КФЗ №saved-run' })).toHaveAttribute('href', '/checks/saved-run');
-  expect(screen.queryByText('report.pdf')).not.toBeInTheDocument();
+  const bar = await screen.findByRole('progressbar', { name: 'Загрузка пакета' });
+  expect(bar).toHaveAttribute('aria-valuenow', '0');
+  expect(screen.getByText('0%', { exact: true })).toBeVisible();
+  act(() => updateProgress?.(37));
+  expect(bar).toHaveAttribute('aria-valuenow', '37');
+  expect(screen.getByText('37%', { exact: true })).toBeVisible();
   expect(submit).toBeDisabled();
-  pick('Выберите КФЗ', [new File(['report two'], 'second.pdf')]);
-  pick('Выберите первичные документы', [new File(['new support'], 'support.png')]);
+  act(() => updateProgress?.(100));
+  expect(screen.getByText('Ожидаем подтверждения загрузки…')).toBeVisible();
+  expect(screen.getByText('100%', { exact: true })).toBeVisible();
+  expect(reading).toHaveBeenCalledTimes(3);
+  expect(send).toHaveBeenCalledTimes(1);
+  expect(bar).toHaveAttribute('aria-valuenow', '100');
+  expect(submit).toBeDisabled();
+  expect(startRun).not.toHaveBeenCalled();
+
+  const [packet, key] = prepareTransfer.mock.calls[0];
+  expect(key).toMatch(/^[a-f0-9-]{36}$/);
+  expect(packet.report?.name).toBe('report.pdf');
+  expect(packet.documents.map((file) => file.name)).toEqual(['B.xlsx', 'A.docx']);
+  expect(packet.scanScope).toBeUndefined();
+  pendingUpload.resolve({ upload_id: 'first-upload' });
+  await waitFor(() => expect(submit).toBeEnabled());
+  expect(bar).not.toBeInTheDocument();
+
   fireEvent.click(submit);
-  expect(await screen.findByRole('link', { name: 'Проверка КФЗ №second-run' })).toBeVisible();
-  expect(screen.getByRole('link', { name: 'Проверка КФЗ №saved-run' })).toBeVisible();
-  expect(fetchMock).toHaveBeenCalledTimes(2);
-  const firstKey = new Headers(fetchMock.mock.calls[0][1]?.headers).get('Idempotency-Key');
-  const secondKey = new Headers(fetchMock.mock.calls[1][1]?.headers).get('Idempotency-Key');
-  expect(secondKey).not.toBe(firstKey);
+  fireEvent.click(submit);
+  expect(startRun).toHaveBeenCalledExactlyOnceWith('first-upload', expect.any(AbortSignal));
+  expect(submit).toBeDisabled();
+  expect(screen.getByRole('status')).toHaveTextContent('Запуск проверки');
+  pendingStart.resolve(accepted('saved-run'));
+  const queue = screen.getByRole('region', { name: 'Последние проверки' });
+  expect(await within(queue).findByRole('heading', { name: 'Проверка КФЗ №saved-run' })).toBeVisible();
+  expect(within(queue).queryByRole('link', { name: 'Проверка КФЗ №saved-run' })).not.toBeInTheDocument();
+  expect(screen.queryByText('report.pdf')).not.toBeInTheDocument();
+  expect(discard).not.toHaveBeenCalled();
 });
 
-it('повторяет тот же ключ после потери ответа и создаёт новый при изменении пакета', async () => {
-  const fetchMock = mockUpload(
-    new TypeError('network'),
-    Response.json({ code: 'invalid_input', message: 'Проверьте КФЗ' }, { status: 422 }),
-    accept('new-run'),
-  );
+it('загружает пакет с явным выбором строки только после заполнения реквизитов', async () => {
+  prepareTransfer.mockReturnValue(vi.fn().mockResolvedValue({ upload_id: 'manual-upload' }));
+  startRun.mockResolvedValue(accepted('retry-run'));
+  vi.stubGlobal('fetch', vi.fn<typeof fetch>().mockImplementation(async (url) => {
+    if (String(url) === '/api/v0/runs/ambiguous-scan') {
+      return Response.json({
+        run_id: 'ambiguous-scan', status: 'failed', created_at: '2031-02-01T00:00:00Z',
+        progress: null, error: { code: 'scan_scope_required', message: 'Не удалось выбрать строку.' },
+      });
+    }
+    if (String(url) === '/api/v0/runs/ambiguous-scan/pack') {
+      return Response.json({ documents: [
+        { id: 'report', name: 'КФЗ.pdf', size: 512, role: 'report' },
+        { id: 'act', name: 'Акт.docx', size: 512, role: 'supporting' },
+      ] });
+    }
+    if (String(url) === '/api/v0/runs/retry-run') {
+      return Response.json({
+        run_id: 'retry-run', status: 'queued', created_at: '2031-02-01T00:00:00Z',
+        progress: { processed_documents: 0, total_documents: 2 }, error: null,
+      });
+    }
+    return Response.json({ items: [], next_cursor: null });
+  }));
+  render(<MemoryRouter initialEntries={['/checks/ambiguous-scan']}>
+    <Routes>
+      <Route path="/checks/:id" element={<CheckDetail view="table" />} />
+      <Route path="/checks/new" element={<RunPackEditor />} />
+    </Routes>
+  </MemoryRouter>);
+  fireEvent.click(await screen.findByRole('link', { name: 'Выбрать строку КФЗ вручную' }));
+  const fields = await screen.findByRole('group', { name: 'Строка КФЗ' });
+  expect(screen.getByText('КФЗ.pdf')).toBeVisible();
+  expect(screen.getByText('Акт.docx')).toBeVisible();
+  const submit = screen.getByRole('button', { name: 'Запустить проверку' });
+  expect(submit).toBeDisabled();
+  for (const [label, value] of [
+    ['Номер договора', ' СИНТ-31 '],
+    ['Начало периода', '2031-02-01'],
+    ['Конец периода', '2031-02-28'],
+    ['Этап', '2'],
+    ['Страница', '3'],
+  ]) {
+    expect(prepareTransfer).not.toHaveBeenCalled();
+    fireEvent.change(within(fields).getByLabelText(label), { target: { value } });
+  }
+  await waitFor(() => expect(submit).toBeEnabled());
+  expect(prepareTransfer.mock.calls[0][0]).toEqual({
+    sourceRunId: 'ambiguous-scan', retainedDocumentIds: ['report', 'act'], report: undefined, documents: [],
+    scanScope: {
+      contractNumber: 'СИНТ-31', periodStart: '2031-02-01', periodEnd: '2031-02-28', stage: 2, page: 3,
+    },
+  });
+  fireEvent.click(submit);
+  expect(startRun).toHaveBeenCalledExactlyOnceWith('manual-upload', expect.any(AbortSignal));
+  expect(await screen.findByRole('heading', { name: 'Новая проверка' })).toBeVisible();
+  expect(screen.queryByText('КФЗ.pdf')).not.toBeInTheDocument();
+  selectPacket();
+  expect(screen.queryByRole('group', { name: 'Строка КФЗ' })).not.toBeInTheDocument();
+});
+
+it('повторяет передачу того же пакета, а смена файлов освобождает сохранённый комплект', async () => {
+  const retry = defer<{ upload_id: string }>();
+  const send = vi.fn<ReturnType<typeof prepareRunTransfer>>()
+    .mockImplementationOnce((_signal, progress) => {
+      progress?.(55);
+      return Promise.reject(new TypeError('network'));
+    })
+    .mockReturnValueOnce(retry.promise);
+  prepareTransfer.mockReturnValueOnce(send)
+    .mockReturnValueOnce(vi.fn().mockResolvedValue({ upload_id: 'new-upload' }));
   renderWizard();
   selectPacket();
 
-  const submit = screen.getByRole('button', { name: 'Запустить проверку' });
-  fireEvent.click(submit);
   expect(await screen.findByRole('alert')).toHaveTextContent('Не удалось подтвердить приём пакета');
-  fireEvent.click(submit);
-  expect(await screen.findByRole('alert')).toHaveTextContent('Проверьте КФЗ');
+  fireEvent.click(screen.getByRole('button', { name: 'Повторить загрузку' }));
+  const submit = screen.getByRole('button', { name: 'Запустить проверку' });
+  expect(screen.getByRole('progressbar', { name: 'Загрузка пакета' })).toHaveAttribute('aria-valuenow', '0');
+  expect(submit).toBeDisabled();
+  retry.resolve({ upload_id: 'first-upload' });
+  await waitFor(() => expect(submit).toBeEnabled());
+  expect(prepareTransfer).toHaveBeenCalledTimes(1);
+  expect(send).toHaveBeenCalledTimes(2);
 
   fireEvent.click(screen.getByRole('button', { name: 'Удалить B.xlsx' }));
-  fireEvent.click(submit);
-  expect(await screen.findByRole('link', { name: 'Проверка КФЗ №new-run' })).toBeVisible();
-  const attempts = fetchMock.mock.calls.map(([, init]) => new Headers(init?.headers).get('Idempotency-Key'));
-  expect(attempts[0]).toMatch(/^[a-f0-9-]{36}$/);
-  expect(attempts[1]).toBe(attempts[0]);
-  expect(attempts[2]).not.toBe(attempts[0]);
+  await waitFor(() => expect(prepareTransfer).toHaveBeenCalledTimes(2));
+  expect(discard).toHaveBeenCalledWith('first-upload', expect.any(AbortSignal));
+  expect(prepareTransfer.mock.calls[1][0].documents.map((file) => file.name)).toEqual(['A.docx']);
+  expect(prepareTransfer.mock.calls[1][1]).not.toBe(prepareTransfer.mock.calls[0][1]);
 });
 
-it('отменяет запрос при уходе из мастера', async () => {
-  const fetchMock = vi.fn<typeof fetch>().mockImplementation((_path, init) => new Promise((_resolve, reject) => {
-    init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true });
-  }));
-  vi.stubGlobal('fetch', (url: RequestInfo | URL, init?: RequestInit) =>
-    init?.method === 'POST' ? fetchMock(url, init) : Promise.resolve(
-      Response.json({ items: [], next_cursor: null }),
-    ));
+it('не использует запоздалое подтверждение отменённой передачи', async () => {
+  const previous = defer<{ upload_id: string }>();
+  const current = defer<{ upload_id: string }>();
+  const sendFirst = vi.fn<ReturnType<typeof prepareRunTransfer>>().mockReturnValue(previous.promise);
+  prepareTransfer.mockReturnValueOnce(sendFirst).mockReturnValueOnce(vi.fn().mockReturnValue(current.promise));
+  renderWizard();
+  selectPacket();
+  await waitFor(() => expect(sendFirst).toHaveBeenCalledTimes(1));
+  const signal = sendFirst.mock.calls[0][0];
+
+  pick('Выберите КФЗ', [new File(['replacement'], 'new.pdf')]);
+  await waitFor(() => expect(prepareTransfer).toHaveBeenCalledTimes(2));
+  expect(signal?.aborted).toBe(true);
+
+  previous.resolve({ upload_id: 'stale-upload' });
+  await waitFor(() => expect(discard).toHaveBeenCalledWith('stale-upload', expect.any(AbortSignal)));
+  const submit = screen.getByRole('button', { name: 'Запустить проверку' });
+  expect(submit).toBeDisabled();
+
+  current.resolve({ upload_id: 'new-upload' });
+  await waitFor(() => expect(submit).toBeEnabled());
+});
+
+it('повторяет запуск с тем же сохранённым пакетом, если его подтверждение потерялось', async () => {
+  prepareTransfer.mockReturnValue(vi.fn().mockResolvedValue({ upload_id: 'uploaded' }));
+  startRun.mockRejectedValueOnce(new TypeError('network')).mockResolvedValueOnce(accepted('saved-run'));
   renderWizard();
   selectPacket();
 
-  fireEvent.click(screen.getByRole('button', { name: 'Запустить проверку' }));
-  const state = fetchMock.mock.calls[0][1];
-  fireEvent.click(screen.getByRole('link', { name: 'Другая страница' }));
-  expect(await screen.findByRole('heading', { name: 'Карточка other' })).toBeVisible();
-  await waitFor(() => expect(state?.signal?.aborted).toBe(true));
-  expect(fetchMock).toHaveBeenCalledTimes(1);
+  const submit = screen.getByRole('button', { name: 'Запустить проверку' });
+  await waitFor(() => expect(submit).toBeEnabled());
+  fireEvent.click(submit);
+  expect(await screen.findByRole('alert')).toHaveTextContent('Не удалось подтвердить запуск');
+  fireEvent.click(submit);
+  expect(await screen.findByRole('heading', { name: 'Проверка КФЗ №saved-run' })).toBeVisible();
+  expect(startRun.mock.calls.map(([id]) => id)).toEqual(['uploaded', 'uploaded']);
+  expect(prepareTransfer).toHaveBeenCalledTimes(1);
+  expect(discard).not.toHaveBeenCalled();
+});
+
+it('перезагружает выбранные файлы после истечения сохранённого пакета', async () => {
+  prepareTransfer.mockReturnValueOnce(vi.fn().mockResolvedValue({ upload_id: 'expired' }))
+    .mockReturnValueOnce(vi.fn().mockResolvedValue({ upload_id: 'renewed' }));
+  startRun.mockRejectedValueOnce(new RunUploadHttpError(410, null)).mockResolvedValueOnce(accepted('saved-run'));
+  renderWizard();
+  selectPacket();
+
+  const submit = screen.getByRole('button', { name: 'Запустить проверку' });
+  await waitFor(() => expect(submit).toBeEnabled());
+  fireEvent.click(submit);
+  await waitFor(() => expect(prepareTransfer).toHaveBeenCalledTimes(2));
+  expect(prepareTransfer.mock.calls[1][1]).not.toBe(prepareTransfer.mock.calls[0][1]);
+  await waitFor(() => expect(submit).toBeEnabled());
+  fireEvent.click(submit);
+  expect(await screen.findByRole('heading', { name: 'Проверка КФЗ №saved-run' })).toBeVisible();
+  expect(startRun.mock.calls.map(([id]) => id)).toEqual(['expired', 'renewed']);
+});
+
+it('переиспользует выбранные серверные документы при редактировании и возвращается в очередь', async () => {
+  prepareTransfer.mockReturnValue(vi.fn().mockResolvedValue({ upload_id: 'uploaded-edit' }));
+  startRun.mockResolvedValue(accepted('edited-run'));
+  renderWizard({
+    runId: 'saved-run',
+    documents: [
+      { id: 'report', name: 'КФЗ.pdf', size: 512, role: 'report' },
+      { id: 'existing-one', name: 'Акт.xlsx', size: 512, role: 'supporting' },
+      { id: 'existing-two', name: 'Акт.docx', size: 512, role: 'supporting' },
+    ],
+  });
+
+  expect(screen.getByRole('heading', { name: 'Изменить комплект' })).toBeVisible();
+  expect(screen.getByRole('link', { name: 'К результату' })).toHaveAttribute('href', '/checks/saved-run');
+  const submit = screen.getByRole('button', { name: 'Запустить проверку' });
+  await waitFor(() => expect(submit).toBeEnabled());
+  fireEvent.click(screen.getByRole('button', { name: 'Удалить Акт.xlsx' }));
+  await waitFor(() => expect(prepareTransfer).toHaveBeenCalledTimes(2));
+  expect(prepareTransfer.mock.calls[1][0]).toEqual({
+    report: undefined, documents: [], sourceRunId: 'saved-run', retainedDocumentIds: ['report', 'existing-two'],
+  });
+  await waitFor(() => expect(submit).toBeEnabled());
+  fireEvent.click(submit);
+  expect(await screen.findByRole('heading', { name: 'Новая проверка' })).toBeVisible();
+  expect(screen.getByRole('region', { name: 'Последние проверки' })).toHaveAttribute('id', 'queue');
 });
 
 it('принимает первичные документы до отчёта и показывает ошибки отдельно', async () => {
-  mockUpload();
+  prepareTransfer.mockReturnValue(vi.fn().mockResolvedValue({ upload_id: 'uploaded' }));
   renderWizard();
-  await screen.findByText('В очереди пока нет проверок.');
   const report = screen.getByRole('region', { name: 'КФЗ' });
   const documents = screen.getByRole('region', { name: 'Первичные документы' });
+  const submit = screen.getByRole('button', { name: 'Запустить проверку' });
 
   pick('Выберите КФЗ', [new File([], 'empty.pdf')]);
   pick('Выберите первичные документы', [new File(['support'], 'support.xlsx')]);
   expect(within(documents).getByText('support.xlsx')).toBeVisible();
   expect(within(report).getByRole('alert')).toBeVisible();
-  expect(screen.getByRole('button', { name: 'Запустить проверку' })).toBeDisabled();
+  expect(submit).toBeDisabled();
+  expect(prepareTransfer).not.toHaveBeenCalled();
 
   pick('Выберите КФЗ', [new File(['synthetic report'], 'report.docx')]);
   expect(within(report).queryByRole('alert')).not.toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Запустить проверку' })).toBeEnabled();
+  await waitFor(() => expect(submit).toBeEnabled());
 });

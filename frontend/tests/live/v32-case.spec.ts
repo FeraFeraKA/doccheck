@@ -32,7 +32,7 @@ for (const missingPayroll of [false, true]) {
       .setInputFiles(primary.map((name) => join(examples, name)));
     const [accepted] = await Promise.all([
       page.waitForResponse((response) => response.request().method() === 'POST'
-        && new URL(response.url()).pathname === '/api/v0/runs'),
+        && /^\/api\/v0\/runs\/uploads\/[^/]+\/start$/.test(new URL(response.url()).pathname)),
       page.getByRole('button', { name: 'Запустить проверку' }).click(),
     ]);
     expect(accepted.status()).toBe(202);
@@ -41,18 +41,11 @@ for (const missingPayroll of [false, true]) {
     expect(accepted.headers().location).toBe(`/api/v0/runs/${id}`);
     await testInfo.attach('run-id', { body: id, contentType: 'text/plain' });
     console.log(`Case run: ${id}`);
-    await page.locator(`a[href="/checks/${id}"]`).first().click();
+    await page.getByRole('region', { name: 'Последние проверки' })
+      .locator(`a[href="/checks/${id}"]`).click({ timeout: 25 * 60_000 });
     await expect(page).toHaveURL(`/checks/${id}`);
 
-    const status = page.getByRole('status').filter({ hasText: 'Состояние проверки' });
     const indicators = page.getByRole('table', { name: 'Показатели КФЗ' });
-    await expect.poll(async () => {
-      if (await indicators.isVisible()) return 'result';
-      if ((await status.textContent({ timeout: 2_000 }).catch(() => null))?.includes('Завершилась ошибкой')) {
-        return 'failed';
-      }
-      return 'pending';
-    }, { timeout: 25 * 60_000, intervals: [1_000, 3_000, 5_000] }).not.toBe('pending');
     await expect(indicators, `The worker must save a reconciliation for ${id}.`).toBeVisible();
     // The 2026 row intersects the stage through May 30, as printed in the PDF.
     // May 31 is a document cutoff from the case note, not a date read from the report.
@@ -74,6 +67,7 @@ for (const missingPayroll of [false, true]) {
     await expect(partialRow.getByRole('cell', { name: '—', exact: true }).last()).toBeVisible();
     await partialRow.getByRole('button').click();
     const detail = indicators.getByRole('region', { name: /^Подробности:/ });
+    await detail.getByText('Адреса и основание', { exact: true }).first().click();
     const amountSource = detail.getByRole('button', { name: /^Сумма · / }).first();
     await expect(amountSource).toBeVisible();
     const caption = await amountSource.innerText();
@@ -97,7 +91,7 @@ for (const missingPayroll of [false, true]) {
     expect(new URL(fragment.url()).pathname).toBe(`${new URL(original.url()).pathname}/fragments`);
     expect(await original.body()).toEqual(await readFile(join(examples, sourceName)));
     const viewer = page.getByRole('region', { name: 'Просмотр источника' });
-    await expect(viewer.getByText('Выбранный фрагмент')).toBeVisible();
+    await expect(page.getByLabel('Документы комплекта').locator('option:checked')).toHaveText(sourceName);
     await expect(viewer.getByRole('link', { name: 'Скачать оригинал' }))
       .toHaveAttribute('download', sourceName);
     await page.getByRole('button', { name: 'Закрыть просмотр источника' }).click();
@@ -112,7 +106,7 @@ for (const missingPayroll of [false, true]) {
 
     await documents.getByRole('button', { name: report, exact: true }).click();
     const reportViewer = page.getByRole('region', { name: 'Просмотр источника' });
-    await expect(reportViewer.getByRole('link', { name: 'Открыть страницу 1 PDF (в новой вкладке)' })).toBeVisible();
+    await expect(reportViewer.getByRole('link', { name: 'Открыть PDF (в новой вкладке)' })).toBeVisible();
     await page.getByRole('button', { name: 'Закрыть просмотр источника' }).click();
 
     const exceptionDecisions = [

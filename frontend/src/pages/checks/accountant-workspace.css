@@ -52,9 +52,6 @@
 .brand {
   @apply flex items-center;
   gap: 10px;
-  font-size: 27px;
-  font-weight: 600;
-  letter-spacing: -1.2px;
   padding: 0 24px;
   color: var(--ui-ink);
 }
@@ -66,13 +63,23 @@
   color: var(--ui-lime);
   border-radius: 7px 7px 7px 0;
 }
+.brand-name {
+  display: inline-flex;
+  gap: 4px;
+  color: var(--ui-ink);
+  font-size: 27px;
+  font-weight: 600;
+  letter-spacing: -1.2px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
 .brand-dot {
-  width: 6px;
+  flex: 0 0 6px;
   height: 6px;
-  background: var(--ui-lime);
-  border-radius: 50%;
   align-self: end;
-  margin: 0 0 7px -5px;
+  margin-block-end: 5px;
+  border-radius: 50%;
+  background: var(--ui-lime);
 }
 .nav-item {
   @apply flex items-center;
@@ -86,8 +93,6 @@
   margin-top: 34px;
 }
 .brand-symbol, .app-sidebar svg { flex-shrink: 0; }
-.brand-name { display: inline-flex; gap: 4px; white-space: nowrap; }
-.brand-name .brand-dot { margin-left: 0; }
 .nav-item svg {
   width: 21px;
   height: 21px;
@@ -285,18 +290,6 @@
   margin-top: 16px;
   color: #ac4f40;
 }
-.app-sidebar .system-status-link, .mobile-system-status-link {
-  display: inline-block;
-  color: var(--ui-secondary);
-  font-size: 12px;
-}
-.app-sidebar .system-status-link {
-  @apply flex items-center;
-  gap: 14px;
-  margin-top: auto;
-  padding: 10px 21px;
-}
-.app-main .mobile-system-status-link { display: none; }
 .app-sidebar .sidebar-mobile-trigger { display: none; }
 
 @media (min-width: 1650px) {
@@ -304,7 +297,8 @@
 }
 
 @media (max-width: 1250px) {
-  .brand { padding: 0 20px; font-size: 25px; }
+  .brand { padding: 0 20px; }
+  .brand-name { font-size: 25px; }
   .nav-item { padding: 17px 20px; font-size: 13px; }
   .app-main { padding: 28px 24px; }
 }
@@ -331,9 +325,9 @@
   }
   .app-content { margin-left: 64px; }
   .app-sidebar .brand { padding-inline: 16px; }
-  .app-sidebar :is(.nav-item, .system-status-link) { padding-inline: 21px; white-space: nowrap; }
-  .app-sidebar :is(.brand-name, .nav-item span, .system-status-link span) { opacity: 0; transition: opacity 175ms ease; }
-  .app-sidebar[data-expanded="true"] :is(.brand-name, .nav-item span, .system-status-link span) { opacity: 1; }
+  .app-sidebar .nav-item { padding-inline: 21px; white-space: nowrap; }
+  .app-sidebar :is(.brand-name, .nav-item span) { opacity: 0; transition: opacity 175ms ease; }
+  .app-sidebar[data-expanded="true"] :is(.brand-name, .nav-item span) { opacity: 1; }
 }
 
 @media (min-width: 701px) and (hover: none), (max-width: 700px) {
@@ -343,7 +337,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .app-sidebar[data-expanded="true"],
-  .app-sidebar :is(.brand-name, .nav-item span, .system-status-link span) { transition: none; }
+  .app-sidebar :is(.brand-name, .nav-item span) { transition: none; }
 }
 
 .accountant-workspace .workspace-button {
@@ -387,8 +381,8 @@
   }
   .brand {
     padding: 0 4px;
-    font-size: 24px;
   }
+  .brand-name { font-size: 24px; }
   .app-sidebar > nav { display: none; margin: 20px -16px 0; }
   .app-sidebar[data-mobile-open="true"] > nav { display: flex; }
   .nav-item {
@@ -425,6 +419,4 @@
   .checks-content .upload-remove { top: 2px; right: 2px; width: 20px; height: 20px; }
   .upload-remove svg { width: 13px; height: 13px; }
   .upload-list-actions { gap: 14px; font-size: 12px; }
-  .app-sidebar .system-status-link { display: none; }
-  .app-main .mobile-system-status-link { display: inline-block; margin: 32px 0 0; }
 }

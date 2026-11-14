@@ -2,6 +2,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import {
   InvalidRunUploadResponse,
+  prepareRunTransfer,
   prepareRunUpload,
   RunUploadHttpError,
 } from '../../src/pages/checks/createRun';
@@ -39,6 +40,39 @@ function stubFetch() {
 }
 
 afterEach(() => vi.unstubAllGlobals());
+
+it('обновляет процент по отправленным байтам и ждёт ответ после завершения передачи', async () => {
+  const request = Object.assign(new EventTarget(), {
+    upload: new EventTarget(),
+    open: vi.fn(),
+    setRequestHeader: vi.fn(),
+    getResponseHeader: () => null,
+    send: vi.fn(),
+    responseURL: postUrl + '/uploads',
+    status: 201,
+    response: { upload_id: 'saved-upload' },
+  });
+  vi.stubGlobal('location', new URL(origin + '/checks/new'));
+  vi.stubGlobal('XMLHttpRequest', class {
+    constructor() { return request; }
+  });
+  const progress = vi.fn();
+  const confirmed = vi.fn();
+  const transfer = prepareRunTransfer(upload(), key)(undefined, progress).then(confirmed);
+
+  request.upload.dispatchEvent(Object.assign(new Event('progress'), { lengthComputable: false, loaded: 100, total: 0 }));
+  expect(progress).not.toHaveBeenCalled();
+  request.upload.dispatchEvent(Object.assign(new Event('progress'), { lengthComputable: true, loaded: 57, total: 101 }));
+  expect(progress).toHaveBeenCalledExactlyOnceWith(56);
+  request.upload.dispatchEvent(new Event('load'));
+  expect(progress.mock.calls).toEqual([[56], [100]]);
+  await Promise.resolve();
+  expect(confirmed).not.toHaveBeenCalled();
+
+  request.dispatchEvent(new Event('load'));
+  await transfer;
+  expect(confirmed).toHaveBeenCalledExactlyOnceWith({ upload_id: 'saved-upload' });
+});
 
 it('отправляет multipart с файлами в заданном порядке и читает подтверждение 202', async () => {
   const fetchMock = stubFetch().mockResolvedValueOnce(accepted());
@@ -98,6 +132,24 @@ it('сохраняет исходный ключ и пакет при явном
   expect(retry.body.getAll('documents')).toMatchObject([{ name: 'B.xlsx' }, { name: 'A.docx' }]);
   expect(next.body.get('report')).toMatchObject({ name: 'new-report.pdf' });
   expect(next.body.getAll('documents')).toMatchObject([{ name: 'A.docx' }, { name: 'B.xlsx' }]);
+});
+
+it('передаёт подтверждаемые реквизиты ручного режима в multipart отложенной загрузки', async () => {
+  const fetchMock = stubFetch().mockResolvedValueOnce(Response.json({ upload_id: runId }, { status: 201 }));
+  const scanScope = {
+    contractNumber: 'TEST-31', periodStart: '2031-02-01', periodEnd: '2031-02-28', page: 3, stage: 2,
+  };
+  await expect(prepareRunTransfer({ ...upload(), scanScope }, key)()).resolves.toEqual({ upload_id: runId });
+  const [path, init] = fetchMock.mock.calls[0];
+  expect(path).toBe(postUrl + '/uploads');
+  const form = await new Request(path, init).formData();
+  expect(form.get('contract_number')).toBe('TEST-31');
+  expect(form.get('period_start')).toBe('2031-02-01');
+  expect(form.get('period_end')).toBe('2031-02-28');
+  expect(JSON.parse(String(form.get('report_row_locator')))).toEqual({
+    kind: 'page', page: 3, fragment_id: 'kfz-stage-2-2031',
+  });
+  expect(form.has('complete_package')).toBe(false);
 });
 
 it.each([

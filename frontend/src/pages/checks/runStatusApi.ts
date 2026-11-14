@@ -21,6 +21,7 @@ interface RunProgress {
 export interface RunState extends RunSummary {
   progress: RunProgress | null;
   archived_at?: string;
+  synthetic?: boolean;
 }
 
 interface RunHistoryPage {
@@ -93,7 +94,8 @@ function isRunProgress(value: unknown): value is RunProgress {
 function parseRunState(value: unknown, runId: string): RunState {
   if (!isRecord(value)) throw new InvalidRunResponseError();
   const summary = parseRunSummary(value);
-  const { progress } = value;
+  const { progress, synthetic } = value;
+  if (synthetic !== undefined && typeof synthetic !== 'boolean') throw new InvalidRunResponseError();
   if (summary.run_id !== runId || !(progress === null || isRunProgress(progress))) {
     throw new InvalidRunResponseError();
   }
@@ -105,7 +107,10 @@ function parseRunState(value: unknown, runId: string): RunState {
     throw new InvalidRunResponseError();
   }
   const archivedAt = readArchivedAt(value.archived_at);
-  return { ...summary, progress, ...(archivedAt ? { archived_at: archivedAt } : {}) };
+  return {
+    ...summary, progress, ...(archivedAt ? { archived_at: archivedAt } : {}),
+    ...(synthetic === undefined ? {} : { synthetic }),
+  };
 }
 
 async function getRunJson(path: string, signal: AbortSignal): Promise<unknown> {

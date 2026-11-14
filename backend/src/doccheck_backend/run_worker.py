@@ -44,8 +44,27 @@ _PDF_SCAN_SCOPE_UNCONFIRMED = Issue(
         "подтверждения по оригиналу."
     ),
 )
+_SCAN_SCOPE_REQUIRED = Issue(
+    code="scan_scope_required",
+    message="Не удалось однозначно выбрать строку КФЗ по скану и первичным документам.",
+)
+_ENCRYPTED_PDF = Issue(
+    code="encrypted_pdf",
+    message="Файл КФЗ защищён паролем. Загрузите доступную копию.",
+)
+_PDF_UNREADABLE = Issue(
+    code="pdf_unreadable",
+    message="Не удалось прочитать PDF КФЗ. Проверьте файл и загрузите доступную копию.",
+)
 _PUBLIC_RUN_FAILURES = {
-    error.code: error for error in (_PDF_SCAN_UNREADABLE, _PDF_SCAN_SCOPE_UNCONFIRMED)
+    error.code: error
+    for error in (
+        _PDF_SCAN_UNREADABLE,
+        _PDF_SCAN_SCOPE_UNCONFIRMED,
+        _SCAN_SCOPE_REQUIRED,
+        _ENCRYPTED_PDF,
+        _PDF_UNREADABLE,
+    )
 }
 
 
@@ -137,7 +156,7 @@ def _claim(connection: Connection) -> StoredRun | None:
             return None
         run.status = "processing"
         run.started_at = datetime.now(timezone.utc)
-        return StoredRun(run.id, None if run.scope == {} else run.scope, run.documents)
+        return StoredRun(run.id, run.scope or None, run.documents)
 
 
 @dataclass(frozen=True)
@@ -227,19 +246,20 @@ def _finish(connection: Connection, run: StoredRun, outcome: CheckJob) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--processor", required=True, help="Trusted local adapter as module:callable"
-    )
+    processors = parser.add_mutually_exclusive_group(required=True)
+    processors.add_argument("--processor", help="Trusted local adapter as module:callable")
+    processors.add_argument("--v32", action="store_true", help="Local DocCheck v3.2 with Qwen LoRA")
     parser.add_argument("--once", action="store_true", help="Process at most one run and exit")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
-    module, separator, name = args.processor.partition(":")
-    if (
-        not separator
-        or not name.isidentifier()
-        or not all(part.isidentifier() for part in module.split("."))
-    ):
-        parser.error("--processor must have the form module:callable")
+    if args.processor is not None:
+        module, separator, name = args.processor.partition(":")
+        if (
+            not separator
+            or not name.isidentifier()
+            or not all(part.isidentifier() for part in module.split("."))
+        ):
+            parser.error("--processor must have the form module:callable")
     try:
         settings = Settings.from_env()
     except ValueError as exc:
@@ -249,9 +269,14 @@ def main() -> int:
         logger.error("The local database worker must not use the hosted queue")
         return 1
     try:
-        process = getattr(import_module(module), name)
-    except Exception:
-        logger.error("Configured document processor could not be loaded")
+        if args.v32:
+            from doccheck_backend.v32_processor import create_processor
+
+            process = create_processor()
+        else:
+            process = getattr(import_module(module), name)
+    except Exception as exc:
+        logger.error("Configured document processor could not be loaded (%s)", type(exc).__name__)
         return 1
     if not callable(process):
         logger.error("Configured document processor must be callable")

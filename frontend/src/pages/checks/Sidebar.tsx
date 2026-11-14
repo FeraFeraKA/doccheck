@@ -61,8 +61,8 @@ export function Sidebar() {
       onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget)) setKeyboardExpanded(false);
       }}>
-      <Link to="/checks/new" className="brand" aria-label="DocCheck">{mark}</Link>
-      <button ref={trigger} type="button" className="brand sidebar-mobile-trigger" aria-label="Меню разделов"
+      <Link to="/checks/new" className="brand" aria-label="DocCheck — на страницу новой проверки">{mark}</Link>
+      <button ref={trigger} type="button" className="brand sidebar-mobile-trigger" aria-label="Меню разделов DocCheck"
         aria-expanded={open} aria-controls="doccheck-navigation" onClick={() => {
           setKeyboardExpanded(false);
           setOpen((previous) => !previous);
@@ -83,9 +83,6 @@ export function Sidebar() {
           </Link>;
         })}
       </nav>
-      <Link className="system-status-link" to="/system-status" aria-label="Проверка системы">
-        <WorkspaceIcon name="status" size={19} /><span>Проверка системы</span>
-      </Link>
     </aside>
   );
 }

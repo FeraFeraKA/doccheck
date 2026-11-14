@@ -5,7 +5,7 @@
 проводят синтетическое задание через FastAPI и PostgreSQL. Решения по
 расхождениям, журнал и редактор черновика здесь ещё не реализованы.
 Проект использует семантику результата NRT-85. Маршруты ниже предложены
-для согласования с NRT-13. [NRT-62][nrt62] · [Экран](../../frontend/src/pages/home/HomePage.tsx) ·
+для согласования с NRT-13. [NRT-62][nrt62] · [Исторический экран](https://github.com/VCyberPunk2077/doccheck/blob/e454fa91978527a5fb0051e3b504a9a37db08d90/frontend/src/pages/home/HomePage.tsx) ·
 [API](../../backend/src/doccheck_backend/api.py) · [Контракт результата](../result-source-contract.md) ·
 [NRT-13][nrt13]
 
@@ -510,7 +510,7 @@ NRT-61. В roadmap сначала идут ручной разбор и журн
 виды допустимых исправлений и необходимость второго согласования,
 Николай — роли и маршруты, Семён — правила для зависимых строк и
 проверку источников. Для записи в ERP или ЭДО нужен отдельный сценарий
-приёмки. [NRT-62][nrt62] · [Ответственность](../../README.md#ответственность)
+приёмки. [NRT-62][nrt62]
 
 [nrt62]: https://linear.app/andreiakimov/issue/NRT-62/dizajn-predlozhenie-i-primenenie-ispravlenij-posle-sverki
 [nrt13]: https://linear.app/andreiakimov/issue/NRT-13/kontrakt-api-i-moki-dlya-fronta

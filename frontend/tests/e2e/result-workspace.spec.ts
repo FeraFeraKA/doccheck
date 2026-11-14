@@ -35,8 +35,7 @@ for (const { width, imageHeight, bbox } of visibleFragmentCases) {
       route.fulfill({ body: Buffer.from(png, 'base64'), contentType: 'application/octet-stream' }));
 
     await page.goto('/checks/' + id);
-    await page.getByText('Основания выбранного показателя', { exact: true }).click();
-    await page.getByRole('button', { name: 'Просмотреть источник' }).click();
+    await page.getByRole('button', { name: /^150,50\s*₽$/ }).click();
     const viewport = page.getByRole('region', { name: 'Просмотр документа: synthetic-report.png' });
     const box = viewport.locator('.source-viewer-highlight');
     await expect(box).toBeInViewport({ ratio: 1 });
@@ -84,8 +83,7 @@ for (const [width, height] of [[1440, 1100], [768, 844], [390, 600]]) {
     });
 
     await page.goto(`/checks/${id}`);
-    await page.getByText('Основания выбранного показателя', { exact: true }).click();
-    const opener = page.getByRole('button', { name: 'Просмотреть источник' });
+    const opener = page.getByRole('button', { name: /^150,50\s*₽$/ });
     await opener.click();
     const drawer = page.getByLabel('Источник документа', { exact: true }).and(page.locator('.source-workspace-panel[open]'));
     const viewport = drawer.getByRole('region', { name: 'Просмотр документа: synthetic-report.png' });
@@ -121,15 +119,15 @@ for (const [width, height] of [[1440, 1100], [768, 844], [390, 600]]) {
     const zoomBefore = await drawer.getByLabel('Масштаб документа').innerText();
     const expand = drawer.getByRole('button', { name: 'Развернуть источник на весь экран' });
     const collapse = drawer.getByRole('button', { name: 'Свернуть источник в боковую панель' });
-    const highlight = drawer.getByRole('button', { name: 'Подсветка' });
-    await highlight.click();
+    const highlight = drawer.getByRole('checkbox', { name: 'Суммы и значения' });
+    await highlight.uncheck();
     await expand.press('Enter');
     await expect(collapse).toHaveAttribute('aria-pressed', 'true');
     await expect(collapse).toBeFocused();
     expect((await drawer.boundingBox())?.width).toBe(width);
     expect(await scrollRatio()).toBeCloseTo(before, 2);
     await expect(drawer.getByLabel('Масштаб документа')).toHaveText(zoomBefore);
-    await expect(highlight).toHaveAttribute('aria-pressed', 'false');
+    await expect(highlight).not.toBeChecked();
     await expect(imageElement).toHaveAttribute('src', previousSrc ?? '');
     await collapse.click();
     await expect(expand).toHaveAttribute('aria-pressed', 'false');
@@ -150,18 +148,16 @@ test('results keep the selected row and its evidence together when filtering', a
   await page.goto('/checks/synthetic-example');
   const panel = page.getByRole('region', { name: 'Рабочее место сверки' });
   const table = panel.getByRole('table');
-  await panel.getByText('Основания выбранного показателя', { exact: true }).click();
   await expect(table.getByRole('button', { name: 'Синтетическая статья A' })).toHaveAttribute('aria-pressed', 'true');
-  await expect(panel.getByRole('heading', { name: 'Синтетическая статья A' })).toBeVisible();
-  await panel.getByRole('button', { name: 'Нет данных 1' }).click();
+  await table.getByRole('button', { name: 'Синтетическая статья A' }).click();
+  await expect(panel.getByRole('region', { name: 'Подробности: Синтетическая статья A' })).toBeVisible();
+  await panel.getByRole('button', { name: 'Не проверено 1' }).click();
   await expect(table.getByRole('row')).toHaveCount(2);
-  await expect(panel.getByRole('heading', { name: 'Синтетическая статья B' })).toBeVisible();
-  await expect(panel.getByText('Страница 1, строка 4, столбец 2', { exact: true })).toBeVisible();
+  await expect(table.getByRole('button', { name: 'Синтетическая статья B' })).toHaveAttribute('aria-pressed', 'true');
   await panel.getByRole('button', { name: 'Следующее расхождение' }).click();
-  await expect(panel.getByRole('heading', { name: 'Синтетическая статья A' })).toBeVisible();
+  await expect(panel.getByRole('region', { name: 'Подробности: Синтетическая статья A' })).toBeVisible();
   await panel.getByRole('searchbox').fill('Отсутствующий показатель');
   await expect(panel.getByText('Показатели не найдены.')).toBeVisible();
-  await expect(panel.getByText('Выберите показатель, чтобы увидеть источник.')).toBeVisible();
 });
 
 test('issue navigation scrolls the selected row into the mobile table and shows its position', async ({ page }) => {
@@ -242,8 +238,8 @@ test('source pane opens the stored original at a mobile width', async ({ page })
     route.fulfill({ json: { text: '60.250', highlight: { start_byte: 0, end_byte: 6 } } }));
 
   await page.goto(`/checks/${id}`);
-  await page.getByText('Основания выбранного показателя', { exact: true }).click();
-  await page.getByRole('button', { name: 'Просмотреть источник' }).click();
+  const reported = page.getByRole('button', { name: /^150,50\s*₽$/ });
+  await reported.click();
   const preview = page.getByRole('region', { name: 'Просмотр источника' });
   const drawer = page.getByLabel('Источник документа', { exact: true }).and(page.locator('.source-workspace-panel[open]'));
   await expect(drawer).toBeVisible();
@@ -251,19 +247,24 @@ test('source pane opens the stored original at a mobile width', async ({ page })
   await expect(preview.getByRole('link', { name: /Открыть страницу 1 PDF/ })).toHaveAttribute('href', /#page=1$/);
   await page.keyboard.press('Escape');
   await expect(drawer).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Просмотреть источник' })).toBeFocused();
-  await page.getByText('Основания по слагаемым', { exact: true }).press('Enter');
+  await expect(reported).toBeFocused();
+  await page.getByRole('button', { name: 'Синтетическая статья A', exact: true }).click();
+  const breakdown = page.getByRole('region', { name: 'Подробности: Синтетическая статья A' });
+  await breakdown.getByText('Адреса и основание', { exact: true }).nth(1).press('Enter');
   const amount = page.getByRole('button', { name: /^Сумма · .*C7$/ });
   await amount.press('Enter');
   await expect(amount).toHaveAttribute('aria-pressed', 'true');
-  await expect(page.getByRole('combobox', { name: 'Доказательство' })).toHaveValue('amount-2');
-  await expect(preview).toHaveCount(0);
-  expect(ledgerRequests).toEqual([]);
-  await page.getByRole('button', { name: 'Просмотреть источник' }).click();
-  await expect(preview.getByText(/Лист «Синтетика», C7/)).toBeVisible();
-  const selectedCell = preview.getByRole('cell', { name: '60.250', exact: true });
+  await expect(preview.getByText('Лист «Синтетика», C7', { exact: true })).toBeVisible();
+  const selectedCell = preview.locator('td[data-source-address="C7"]');
   await expect(selectedCell.locator('mark')).toHaveText('60.250');
-  await expect(selectedCell).toHaveAttribute('data-source-tone', 'discrepancy');
+  await expect(selectedCell).toHaveAttribute('data-source-field', 'amount');
+  const showAmounts = preview.getByRole('checkbox', { name: 'Суммы и значения' });
+  await showAmounts.uncheck();
+  await expect(selectedCell).toHaveText('60.250');
+  await expect(selectedCell.locator('mark')).toHaveCount(0);
+  await expect(selectedCell).not.toHaveAttribute('data-source-field');
+  await showAmounts.check();
+  await expect(selectedCell.locator('mark')).toHaveText('60.250');
   await expect(preview.getByRole('link', { name: 'Скачать оригинал' })).toBeVisible();
   expect(ledgerRequests).toEqual(expect.arrayContaining([
     `/api/v0/runs/${id}/documents/ledger`,
@@ -363,28 +364,28 @@ test('sources on the same PDF page have distinct selectable boxes at 320px', asy
   await page.route(`**/api/v0/runs/${id}/documents/ledger`, (route) => route.fulfill({
     body: '%PDF-1.4 synthetic transport fixture', contentType: 'application/octet-stream',
   }));
-  await page.route(`**/api/v0/runs/${id}/documents/ledger/fragments?evidence_id=${second.id}`, (route) =>
-    route.fulfill({ json: second }));
+  await page.route(`**/api/v0/runs/${id}/documents/ledger/fragments?*`, (route) =>
+    route.fulfill({ json: new URL(route.request().url()).searchParams.get('evidence_id') === second.id ? second : first }));
   await page.goto('/checks/' + id);
-  await page.getByText('Основания выбранного показателя', { exact: true }).click();
-  await page.getByText('Основания по слагаемым', { exact: true }).click();
-  const component = page.getByRole('list', { name: 'Слагаемые' }).locator(':scope > li').first();
-  const choices = page.getByRole('combobox', { name: 'Доказательство' });
+  await page.getByRole('button', { name: 'Синтетическая статья A', exact: true }).click();
+  const component = page.getByRole('list', { name: 'Слагаемые показателя: Синтетическая статья A' })
+    .locator(':scope > li').first();
+  await component.getByText('Адреса и основание', { exact: true }).click();
+  const panel = page.getByRole('region', { name: 'Источник документа', exact: true });
   for (const item of [first, second]) {
     const coords = item.locator.bbox.join(', ');
     const label = `synthetic-ledger.pdf · Страница 1 · Рамка (${coords})`;
-    await expect(choices.getByRole('option', { name: label, exact: true })).toHaveAttribute('value', item.id);
     const button = component.getByRole('button', { name: 'Договор · ' + label, exact: true });
     await expect(button).toBeVisible();
+    const fragmentRequest = page.waitForRequest((request) =>
+      new URL(request.url()).searchParams.get('evidence_id') === item.id);
     await button.click();
-    await expect(choices).toHaveValue(item.id);
-    await expect(page.locator('.source-address-card').getByText(coords, { exact: true })).toBeVisible();
+    await expect(panel.getByRole('combobox', { name: 'Документы комплекта' })).toHaveValue('ledger');
+    await expect(panel.getByRole('checkbox', { name: 'Договоры' })).toBeChecked();
+    await expect(button).toHaveAttribute('aria-pressed', 'true');
+    await fragmentRequest;
+    await page.getByRole('button', { name: 'Закрыть просмотр источника' }).click();
+    await expect(button).toBeFocused();
   }
-  const fragmentRequest = page.waitForRequest((request) =>
-    new URL(request.url()).pathname.endsWith('/fragments'));
-  await page.getByRole('button', { name: 'Просмотреть источник' }).click();
-  expect(new URL((await fragmentRequest).url()).searchParams.get('evidence_id')).toBe(second.id);
-  await expect(page.getByRole('region', { name: 'Просмотр источника' })
-    .getByRole('link', { name: /Открыть страницу 1 PDF/ })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
 });

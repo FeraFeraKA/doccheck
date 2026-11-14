@@ -21,12 +21,16 @@ test('the result opens with a compact summary and retains legacy document routes
   await expect(indicator).toHaveAttribute('aria-expanded', 'true');
   const diagnostics = page.getByRole('region', { name: 'Дополнительные проверки' });
   await diagnostics.getByRole('link', { name: 'Исключения' }).click();
-  await expect(page).toHaveURL(/\/exceptions$/);
+  await expect(page).toHaveURL(/\/documents#exceptions$/);
   await expect(tabs.getByRole('link', { name: 'Документы' })).toHaveAttribute('aria-current', 'page');
-  await expect(page.getByText('Ошибка чтения', { exact: true })).toBeVisible();
+  const exceptions = page.getByRole('region', { name: 'Исключения', exact: true });
+  await expect(exceptions.getByText('Ошибка чтения', { exact: true })).toBeVisible();
   await tabs.getByRole('link', { name: 'Документы' }).click();
   await expect(page).toHaveURL(/\/documents$/);
   await expect(page.getByText('synthetic-report.pdf', { exact: true })).toBeVisible();
+  await page.goto('/checks/synthetic-example/exceptions');
+  await expect(exceptions.getByRole('heading', { name: 'Исключения' })).toBeInViewport();
+  await expect(tabs.getByRole('link', { name: 'Документы' })).toHaveAttribute('aria-current', 'page');
   await page.goto('/checks/synthetic-example/conclusion');
   await expect(conclusion.getByRole('button', { name: 'Скачать XLSX' })).toHaveCount(0);
   await expect(tabs.getByRole('link', { name: 'Результат' })).toHaveAttribute('aria-current', 'page');

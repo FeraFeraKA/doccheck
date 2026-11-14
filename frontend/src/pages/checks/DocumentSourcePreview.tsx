@@ -1,14 +1,17 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import './source-drawer.css';
 import { formatLocation } from './reviewResult';
 import type { PageAddress } from './reviewResult';
 import { OfficeReader } from './OfficeReader';
-import type { SourceTone } from './OfficeReader';
 import { PdfReader } from './PdfReader';
+import { SourcePreviewSkeleton } from './SourcePreviewSkeleton';
+import { isVisibleAddress, pageHighlights, sourceBox, sourceColor, sourceField, sourceFields, sourceMark } from './sourceHighlights';
+import type { SourceBox, SourceField, SourceHighlight, SourceImageHighlight } from './sourceHighlights';
 import {
   getSourceEvidence, getSourceFragmentPreview, getSourceOriginal, InvalidSourceResponseError, SourceHttpError,
 } from './sourceApi';
 import type { SourceEvidence } from './sourceApi';
+import { WorkspaceIcon } from './WorkspaceIcon';
 
 interface SourceDocument {
   id: string;
@@ -21,16 +24,16 @@ interface DocumentSourcePreviewProps {
   document: SourceDocument | null;
   evidenceId: string | null;
   reportPage?: PageAddress;
-  tone?: SourceTone;
+  highlights?: readonly SourceHighlight[];
   active?: boolean;
   compact?: boolean;
-  imageView?: DocumentImageView;
-  onImageViewChange?: (view: DocumentImageView) => void;
+  view?: DocumentView;
+  onViewChange?: (view: DocumentView) => void;
 }
 
-export interface DocumentImageView {
+export interface DocumentView {
   zoom: number;
-  highlight: boolean;
+  hiddenFields: ReadonlySet<SourceField>;
 }
 
 type RequestState<T> =
@@ -75,7 +78,10 @@ function locatorMatchesDocument(evidence: SourceEvidence, format: string | null)
   }
 }
 
-export function DocumentSourcePreview({ runId, document, evidenceId, reportPage, tone, active = true, compact = false, imageView, onImageViewChange }: DocumentSourcePreviewProps) {
+export function DocumentSourcePreview({
+  runId, document, evidenceId, reportPage, highlights,
+  active = true, compact = false, view, onViewChange,
+}: DocumentSourcePreviewProps) {
   const [attempt, setAttempt] = useState(0);
 
   if (document === null) return <p>Документ источника недоступен.</p>;
@@ -87,27 +93,36 @@ export function DocumentSourcePreview({ runId, document, evidenceId, reportPage,
     document={document}
     evidenceId={evidenceId}
     reportPage={reportPage}
-    tone={tone}
+    highlights={highlights}
     active={active}
     compact={compact}
-    imageView={imageView}
-    onImageViewChange={onImageViewChange}
+    view={view}
+    onViewChange={onViewChange}
     onRetry={() => setAttempt((current) => current + 1)}
   />;
 }
 
-function SelectedDocumentSource({ runId, document, evidenceId, reportPage, tone, active, compact, imageView, onImageViewChange, onRetry }: {
+const noHighlights: readonly SourceHighlight[] = [];
+const initialView: DocumentView = { zoom: 100, hiddenFields: new Set() };
+
+function SelectedDocumentSource({
+  runId, document, evidenceId, reportPage, highlights = noHighlights,
+  active, compact, view, onViewChange, onRetry,
+}: {
   runId: string;
   document: SourceDocument;
   evidenceId: string | null;
   reportPage?: PageAddress;
-  tone?: SourceTone;
+  highlights?: readonly SourceHighlight[];
   active: boolean;
   compact: boolean;
-  imageView?: DocumentImageView;
-  onImageViewChange?: (view: DocumentImageView) => void;
+  view?: DocumentView;
+  onViewChange?: (view: DocumentView) => void;
   onRetry: () => void;
 }) {
+  const [localView, setLocalView] = useState(initialView);
+  const { zoom, hiddenFields } = view ?? localView;
+  const updateView = onViewChange ?? setLocalView;
   const [original, setOriginal] = useState<RequestState<string>>({ status: 'loading' });
   const [selection, setSelection] = useState(evidenceId);
   const [evidence, setEvidence] = useState<RequestState<SourceEvidence>>({ status: 'loading' });
@@ -116,6 +131,13 @@ function SelectedDocumentSource({ runId, document, evidenceId, reportPage, tone,
     setEvidence({ status: 'loading' });
   }
   const { id: documentId, format } = document;
+  const visibleHighlights = useMemo(() => highlights.filter(({ locator }) => isVisibleAddress(locator, format)),
+    [format, highlights]);
+  const enabledHighlights = useMemo(() => visibleHighlights.filter(({ kind }) => !hiddenFields.has(kind)),
+    [visibleHighlights, hiddenFields]);
+  const markersByPage = useMemo(() => format === 'pdf' || format === 'png'
+    ? pageHighlights(enabledHighlights)
+    : undefined, [format, enabledHighlights]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -152,18 +174,23 @@ function SelectedDocumentSource({ runId, document, evidenceId, reportPage, tone,
   const address = evidence.status === 'ready' && locatorMatchesDocument(evidence.value, format)
     ? evidence.value.locator : null;
   const evidencePage = address?.kind === 'page' ? address : undefined;
-  const page = evidencePage ?? (evidenceId === null && format === 'pdf' ? reportPage : undefined);
+  const page = evidencePage ?? (evidenceId === null && (format === 'pdf' || format === 'png') ? reportPage : undefined);
+  const scopeBox = page === reportPage ? sourceBox(reportPage?.bbox) : undefined;
+  const hasAddressedText = compact && format === 'pdf' && evidencePage != null && evidencePage.bbox == null && evidenceId !== null;
+  const selectedField = evidence.status === 'ready' && address && (isVisibleAddress(address, format) || hasAddressedText)
+    ? sourceField(evidence.value.kind) : scopeBox ? 'source' : undefined;
+  const enabledSelection = selectedField && !hiddenFields.has(selectedField) ? selectedField : undefined;
+  const availableFields = new Set(visibleHighlights.map(({ kind }) => kind));
+  if (selectedField) availableFields.add(selectedField);
+  const addressPending = evidenceId !== null && evidence.status === 'loading';
+  const previewPending = addressPending || (original.status === 'loading' && format !== 'xlsx' && format !== 'docx');
   const canRetry = original.status === 'error' || evidence.status === 'error';
   const pdfUrl = original.status === 'ready'
     ? page ? `${original.value}#page=${page.page}` : original.value
     : null;
   const office = format === 'xlsx' || format === 'docx' ? format : undefined;
-  const usePdfReader = compact && format === 'pdf' && original.status === 'ready'
-    && (evidenceId === null || evidence.status !== 'loading');
+  const usePdfReader = compact && format === 'pdf';
   const compactImage = compact && format === 'png';
-  const embeddedPdf = compact && format === 'pdf' && navigator.pdfViewerEnabled
-    && original.status === 'ready' && (evidenceId === null || evidence.status !== 'loading')
-    ? `${original.value}#page=${page?.page ?? 1}&view=FitH&toolbar=0` : null;
   const download = original.status === 'ready'
     ? <a href={original.value} download={document.name}
         className={compactImage ? 'source-viewer-image-download' : undefined}
@@ -180,24 +207,43 @@ function SelectedDocumentSource({ runId, document, evidenceId, reportPage, tone,
   const retry = canRetry
     ? <button type="button" onClick={onRetry}>Повторить загрузку источника</button> : null;
 
-  const nativePdf = embeddedPdf && <iframe className="source-viewer-pdf"
-    title={`Просмотр документа: ${document.name}`} src={embeddedPdf} />;
-  const pdfFallback = nativePdf || <div className="source-viewer-placeholder">
-    <p>Страница открывается в PDF-просмотрщике браузера.</p>
-  </div>;
+  function pdfFallback(currentPage: number) {
+    if (!compact || !navigator.pdfViewerEnabled || original.status !== 'ready') {
+      return <div className="source-viewer-placeholder">
+        <p>Страница открывается в PDF-просмотрщике браузера.</p>
+      </div>;
+    }
+    return <iframe className="source-viewer-pdf" title={`Просмотр документа: ${document.name}`}
+      src={`${original.value}#page=${currentPage}&view=FitH&toolbar=0`} />;
+  }
 
+  const showAddress = !compact || Boolean(reportPage && page === reportPage) || evidence.status !== 'loading';
   return <section aria-label="Просмотр источника" className="source-viewer">
-    <div className="source-viewer-heading">
+    {showAddress && <div className="source-viewer-heading">
       {!compact && <strong className="source-viewer-name" title={document.name}>{document.name}</strong>}
       {evidenceId === null && (page
         ? <p>Строка КФЗ · {formatLocation(page)}</p>
-        : <p>Адрес фрагмента отсутствует.</p>)}
-      {evidenceId !== null && evidence.status === 'loading' && <p role="status">Загрузка адреса…</p>}
+        : !compact && <p>Адрес фрагмента отсутствует.</p>)}
       {evidence.status === 'error' && <p role="alert">{evidence.message}</p>}
       {evidence.status === 'ready' && (address === null
         ? <p>Адрес фрагмента не поддерживается для этого формата.</p>
         : <p><strong>Адрес</strong> <span>{formatLocation(address)}</span></p>)}
-    </div>
+    </div>}
+    {availableFields.size > 0 && <fieldset className="source-field-legend">
+      <legend>Извлечённые данные</legend>
+      <div>
+        {sourceFields.filter(([kind]) => availableFields.has(kind)).map(([kind, label]) => <label key={kind}
+          style={sourceColor(kind)}>
+          <input type="checkbox" checked={!hiddenFields.has(kind)} onChange={(event) => {
+            const next = new Set(hiddenFields);
+            if (event.currentTarget.checked) next.delete(kind);
+            else next.add(kind);
+            updateView({ zoom, hiddenFields: next });
+          }} />
+          {label}
+        </label>)}
+      </div>
+    </fieldset>}
     {original.status === 'ready' && format !== 'png' && <div className="source-viewer-toolbar" role="group" aria-label="Действия с оригиналом">
       {format === 'pdf' && page && <span>Стр. {page.page}</span>}
       {format === 'pdf' && pdfUrl && (
@@ -211,37 +257,46 @@ function SelectedDocumentSource({ runId, document, evidenceId, reportPage, tone,
       )}
       {download}
     </div>}
-    {original.status === 'loading' && !office && <div className="source-viewer-placeholder"><p role="status">Загрузка оригинала…</p></div>}
+    {previewPending && original.status !== 'error' && <SourcePreviewSkeleton />}
     {original.status === 'error' && <div className="source-viewer-placeholder"><p role="alert">{original.message}</p></div>}
-    {original.status === 'ready' && format === 'png' && (
+    {!previewPending && original.status === 'ready' && format === 'png' && (
       <SourceImage key={original.value} url={original.value} name={document.name} page={page?.page ?? (compact ? 1 : undefined)}
-        imageView={imageView} onImageViewChange={onImageViewChange}
-        box={evidencePage?.bbox} tone={tone} active={active} download={download} fragment={fragment} retry={retry} />
+        zoom={zoom} onZoomChange={(zoom) => updateView({ zoom, hiddenFields })}
+        box={sourceBox(evidencePage?.bbox) ?? scopeBox} selected={enabledSelection} markers={markersByPage?.get(1) ?? []}
+        active={active} download={download} fragment={fragment} retry={retry} />
     )}
-    {usePdfReader && <PdfReader key={page?.page ?? 1} runId={runId} documentId={documentId}
-      startPage={page?.page ?? 1} box={evidencePage?.bbox} tone={tone} fallback={pdfFallback}
-      renderPage={(url, currentPage, box, pageTone) => <SourceImage key={url} url={url}
-        name={document.name} page={currentPage} box={box} tone={pageTone} active={active}
-        imageView={imageView} onImageViewChange={onImageViewChange} />} />}
-    {original.status === 'ready' && format === 'pdf' && !usePdfReader && pdfFallback}
-    {original.status !== 'error' && office && <OfficeReader key={evidenceId ?? 'original'}
+    {!previewPending && original.status === 'ready' && format === 'pdf' && (usePdfReader ?
+      <PdfReader runId={runId} documentId={documentId} sourceId={evidenceId}
+      startPage={page?.page ?? 1} fallback={pdfFallback}
+      renderPage={(url, currentPage) => <SourceImage key={url} url={url}
+        name={document.name} page={currentPage} active={active}
+        box={page?.page === currentPage ? sourceBox(evidencePage?.bbox) ?? scopeBox : undefined}
+        selected={enabledSelection}
+        markers={markersByPage?.get(currentPage) ?? []}
+        zoom={zoom} onZoomChange={(zoom) => updateView({ zoom, hiddenFields })} />} />
+      : pdfFallback(page?.page ?? 1))}
+    {!previewPending && original.status !== 'error' && office && <OfficeReader
       runId={runId} documentId={documentId} format={office} locator={address ?? undefined}
-      evidenceId={evidenceId} tone={tone} active={active}
-      fallback={address && evidenceId ? <SourceFragmentText runId={runId} documentId={documentId} evidenceId={evidenceId} /> : null} />}
+      evidenceId={evidenceId} selectedField={enabledSelection} highlights={enabledHighlights} active={active}
+      fallback={address && evidenceId ? <SourceFragmentText runId={runId} documentId={documentId}
+        evidenceId={evidenceId} field={enabledSelection} /> : null} />}
     {original.status === 'ready' && format !== 'pdf' && format !== 'png' && !office &&
       <div className="source-viewer-placeholder"><p>Предпросмотр этого формата недоступен.</p></div>}
-    {compact && format === 'pdf' && address && evidenceId !== null &&
-      <SourceFragmentText key={evidenceId} runId={runId} documentId={documentId} evidenceId={evidenceId} />}
-    {(original.status !== 'ready' || format !== 'png') && (!office && fragment || retry) && <div className="source-viewer-footer">
-      {!office && fragment}{retry}
+    {hasAddressedText &&
+      <SourceFragmentText key={evidenceId} runId={runId} documentId={documentId}
+        evidenceId={evidenceId} field={enabledSelection} />}
+    {(original.status !== 'ready' || format !== 'png') && ((!office && !hasAddressedText && fragment) || retry) &&
+      <div className="source-viewer-footer">
+      {!office && !hasAddressedText && fragment}{retry}
     </div>}
   </section>;
 }
 
-function SourceFragmentText({ runId, documentId, evidenceId }: {
+function SourceFragmentText({ runId, documentId, evidenceId, field }: {
   runId: string;
   documentId: string;
   evidenceId: string;
+  field?: SourceField;
 }) {
   const [preview, setPreview] = useState<RequestState<Awaited<ReturnType<typeof getSourceFragmentPreview>>>>({ status: 'loading' });
   useEffect(() => {
@@ -261,39 +316,35 @@ function SourceFragmentText({ runId, documentId, evidenceId }: {
     {preview.status === 'error' && <p role="status">{preview.message}</p>}
     {preview.status === 'ready' && (preview.value
       ? <p>{preview.value.match
-        ? <>{preview.value.match[0]}<mark>{preview.value.match[1]}</mark>{preview.value.match[2]}</>
+        ? <>{preview.value.match[0]}{field
+          ? <mark {...sourceMark(undefined, field)}>{preview.value.match[1]}</mark>
+          : preview.value.match[1]}{preview.value.match[2]}</>
         : preview.value.text}</p>
       : <p>Текст фрагмента недоступен.</p>)}
   </section>;
 }
 
-function SourceImage({ url, name, page, box, tone, active, download, fragment, retry, imageView, onImageViewChange }: {
+function SourceImage({ url, name, page, box, selected, markers, active, download, fragment, retry, zoom, onZoomChange }: {
   url: string;
   name: string;
   page?: number;
-  box?: [number, number, number, number] | null;
-  tone?: SourceTone;
+  box?: SourceBox;
+  selected?: SourceField;
+  markers: readonly SourceImageHighlight[];
   active: boolean;
   download?: React.ReactNode;
   fragment?: React.ReactNode;
   retry?: React.ReactNode;
-  imageView?: DocumentImageView;
-  onImageViewChange?: (view: DocumentImageView) => void;
+  zoom: number;
+  onZoomChange: (zoom: number) => void;
 }) {
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
-  const [localView, setLocalView] = useState({ zoom: 100, highlight: true });
-  const view = imageView ?? localView;
-  const { zoom, highlight } = view;
 
-  function updateView(next: Partial<DocumentImageView>) {
-    const updated = { ...view, ...next };
-    if (onImageViewChange) onImageViewChange(updated);
-    else setLocalView(updated);
-  }
   const mark = useRef<HTMLSpanElement>(null);
   const viewport = useRef<HTMLDivElement>(null);
   const centered = useRef<string>(undefined);
   const boxKey = box?.join(',');
+  const matchingKinds = markers.find((item) => item.box.join(',') === boxKey)?.kinds;
 
   function centerFragment() {
     const container = viewport.current;
@@ -311,53 +362,68 @@ function SourceImage({ url, name, page, box, tone, active, download, fragment, r
   }
 
   useLayoutEffect(() => {
-    if (!active || state !== 'ready' || !boxKey || !highlight || centered.current === boxKey) return;
+    if (!active || state !== 'ready' || !boxKey || centered.current === boxKey) return;
     if (centerFragment()) centered.current = boxKey;
-  }, [active, state, boxKey, highlight]);
+  }, [active, state, boxKey]);
 
   return <>
     <div className="source-viewer-toolbar" role="group" aria-label="Настройки просмотра">
       <div className="source-viewer-controls">
         {page && <span>Стр. {page}</span>}
-        {state === 'ready' && <div className="source-viewer-zoom">
-          <button type="button" aria-label="Уменьшить масштаб" disabled={zoom <= 75} onClick={() => updateView({ zoom: zoom - 25 })}>−</button>
+        <div className="source-viewer-zoom">
+          <button type="button" aria-label="Уменьшить масштаб" disabled={state !== 'ready' || zoom <= 75}
+            onClick={() => onZoomChange(zoom - 25)}><WorkspaceIcon name="minus" size={18} /></button>
           <span aria-label="Масштаб документа">{zoom}%</span>
-          <button type="button" aria-label="Увеличить масштаб" disabled={zoom >= 175} onClick={() => updateView({ zoom: zoom + 25 })}>+</button>
-          <button type="button" aria-label="Сбросить масштаб" disabled={zoom === 100} onClick={() => updateView({ zoom: 100 })}>↺</button>
-        </div>}
-        {box && state === 'ready' && <button type="button" aria-pressed={highlight}
-          onClick={() => updateView({ highlight: !highlight })}>Подсветка</button>}
+          <button type="button" aria-label="Увеличить масштаб" disabled={state !== 'ready' || zoom >= 175}
+            onClick={() => onZoomChange(zoom + 25)}><WorkspaceIcon name="plus" size={18} /></button>
+          <button type="button" aria-label="Сбросить масштаб" disabled={state !== 'ready' || zoom === 100}
+            onClick={() => onZoomChange(100)}><WorkspaceIcon name="reset" size={18} /></button>
+        </div>
       </div>
       {download}
     </div>
     {state === 'error' ? <div className="source-viewer-placeholder"><p role="alert">Предпросмотр изображения недоступен.</p></div>
       : <div ref={viewport} className="source-viewer-viewport" role="region" tabIndex={0} aria-label={`Просмотр документа: ${name}`}>
-      {state === 'loading' && <p role="status">Загрузка изображения…</p>}
+      {state === 'loading' && <SourcePreviewSkeleton />}
       <div className="source-viewer-sheet" style={{ width: `${zoom}%` }}>
         <img
           src={url}
           alt={name}
+          hidden={state === 'loading'}
           draggable={false}
           onLoad={() => setState('ready')}
           onError={() => setState('error')}
         />
-        {state === 'ready' && box && highlight && <span
-          ref={mark}
-          aria-hidden="true"
-          className="source-viewer-highlight" data-source-tone={tone ?? 'source'}
-          style={{
-            left: `${box[0] * 100}%`,
-            top: `${box[1] * 100}%`,
-            width: `${(box[2] - box[0]) * 100}%`,
-            height: `${(box[3] - box[1]) * 100}%`,
-          }}
-        />}
+        {state === 'ready' && markers.map((item) => {
+          const key = item.box.join(',');
+          return key !== boxKey && <ImageHighlight key={key} box={item.box} kinds={item.kinds} />;
+        })}
+        {state === 'ready' && box &&
+          <ImageHighlight mark={mark} box={box} kinds={matchingKinds} selected={selected} />}
       </div>
     </div>}
     {(fragment || retry || (box && state === 'ready')) && <div className="source-viewer-footer">
       {fragment}
-      {box && state === 'ready' && <button type="button" disabled={!highlight} onClick={centerFragment}>К фрагменту</button>}
+      {box && state === 'ready' && <button type="button" onClick={centerFragment}>К фрагменту</button>}
       {retry}
     </div>}
   </>;
+}
+
+function ImageHighlight({ box, kinds, selected, mark }: {
+  box: SourceBox;
+  kinds?: ReadonlySet<SourceField>;
+  selected?: SourceField;
+  mark?: React.Ref<HTMLSpanElement>;
+}) {
+  const decoration = sourceMark(kinds, selected);
+  return <span ref={mark} aria-hidden="true" className="source-viewer-highlight"
+    {...decoration} data-hidden={!decoration}
+    style={{
+      ...decoration?.style,
+      left: `${box[0] * 100}%`,
+      top: `${box[1] * 100}%`,
+      width: `${(box[2] - box[0]) * 100}%`,
+      height: `${(box[3] - box[1]) * 100}%`,
+    }} />;
 }
