@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
+from typing import BinaryIO
 from unicodedata import category
 from xml.etree.ElementTree import ParseError
 from zipfile import BadZipFile, ZipFile
@@ -220,7 +221,7 @@ def _observe(
     )
 
 
-def _read_docx(path: Path, collected: _Collected) -> None:
+def _read_docx(path: Path | BinaryIO, collected: _Collected) -> None:
     with ZipFile(path) as archive:
         if sum(part.file_size for part in archive.infolist()) > 128 * 1024**2:
             raise ValueError("DOCX archive exceeds the native reader limit")
@@ -253,7 +254,7 @@ def _read_docx(path: Path, collected: _Collected) -> None:
                 _observe(collected, cell.text, locator, rub_column=cell_index in rub_columns)
 
 
-def read_native_document(path: Path, file_format: str) -> NativeDocument:
+def read_native_document(path: Path | BinaryIO, file_format: str) -> NativeDocument:
     """Extract candidates, formulas and diagnostics without making business decisions."""
     collected = _Collected()
     try:

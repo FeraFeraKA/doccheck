@@ -249,6 +249,38 @@ paths:
         '409': {$ref: '#/components/responses/ResultUnavailable'}
         '422': {$ref: '#/components/responses/InvalidInput'}
         '503': {$ref: '#/components/responses/Unavailable'}
+  /api/v0/runs/{run_id}/documents/{document_id}/fragment-preview:
+    parameters:
+      - $ref: '#/components/parameters/RunId'
+      - $ref: '#/components/parameters/DocumentId'
+      - name: evidence_id
+        in: query
+        required: true
+        schema: {type: string, minLength: 1}
+        description: Точный ID доказательства. Кодируется через URLSearchParams.
+    get:
+      operationId: getFragmentPreview
+      summary: Прочитать текст подтверждённого адреса в оригинале
+      description: |
+        Действуют те же проверки принадлежности и контрольной суммы, что для
+        GET /fragments. Текст берётся из оригинала, а не из сохранённого raw_value.
+        Поддерживаются абзацы и ячейки DOCX, одиночные ячейки XLSX и точно
+        адресованные текстовые фрагменты PDF. Для PNG используются только
+        координаты из GET /fragments. При недоступном или слишком большом
+        текстовом фрагменте возвращаются text=null и highlight=null.
+      responses:
+        '200':
+          description: Ограниченный текстовый фрагмент и необязательная подсветка.
+          headers:
+            Cache-Control:
+              schema: {type: string, const: no-store}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FragmentPreview'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/ResultUnavailable'}
+        '422': {$ref: '#/components/responses/InvalidInput'}
+        '503': {$ref: '#/components/responses/Unavailable'}
   /api/v0/runs/{run_id}/exports/xlsx:
     parameters:
       - $ref: '#/components/parameters/RunId'
@@ -371,6 +403,26 @@ components:
               then:
                 properties:
                   progress: {type: object}
+    FragmentPreview:
+      type: object
+      additionalProperties: false
+      required: [text, highlight]
+      properties:
+        text:
+          type: [string, 'null']
+          description: Текст только адресованного фрагмента. До 4096 байт UTF-8.
+          maxLength: 4096
+        highlight:
+          type: [object, 'null']
+          additionalProperties: false
+          required: [start_byte, end_byte]
+          properties:
+            start_byte: {type: integer, minimum: 0, maximum: 4095}
+            end_byte: {type: integer, minimum: 1, maximum: 4096}
+          description: |
+            Полуоткрытый диапазон байтов UTF-8 [start_byte, end_byte) внутри text.
+            Отсчитывается от нуля. Обе границы совпадают с границами символов.
+            Неподтверждённое или неоднозначное совпадение передаётся как null.
     ApiError:
       type: object
       required: [code, message]
