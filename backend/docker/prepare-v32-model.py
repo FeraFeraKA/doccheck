@@ -3,15 +3,20 @@
 from hashlib import file_digest
 from pathlib import Path
 
-from doccheck_ml.qwen import MODEL_FILES
 from huggingface_hub import snapshot_download
 
 REPOSITORY = "mlx-community/Qwen3.5-4B-MLX-4bit"
 REVISION = "32f3e8ecf65426fc3306969496342d504bfa13f3"
 WEIGHTS_SHA256 = "5fb9acd0246866381cf8c5c354c6db1019f6498eec4ccb4f5edcc71ffeacb2db"
 FILES = (
-    *MODEL_FILES,
+    "chat_template.jinja",
+    "config.json",
+    "model.safetensors",
     "model.safetensors.index.json",
+    "preprocessor_config.json",
+    "processor_config.json",
+    "tokenizer.json",
+    "tokenizer_config.json",
     "video_preprocessor_config.json",
     "vocab.json",
 )

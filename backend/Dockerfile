@@ -23,6 +23,14 @@ USER 10001:10001
 EXPOSE 8000
 CMD ["uvicorn", "doccheck_backend.api:app", "--host", "0.0.0.0", "--port", "8000"]
 
+FROM python AS model-prepare
+COPY --from=uv /uv /usr/local/bin/uv
+COPY backend/requirements-v32-cuda.lock /tmp/requirements-v32-cuda.lock
+RUN uv pip install --system --no-cache --constraint /tmp/requirements-v32-cuda.lock huggingface-hub
+WORKDIR /app
+COPY backend/docker/prepare-v32-model.py ./
+CMD ["python", "/app/prepare-v32-model.py"]
+
 FROM python AS document-build
 COPY --from=uv /uv /usr/local/bin/uv
 WORKDIR /build
@@ -43,7 +51,6 @@ RUN apt-get update \
        ca-certificates libgl1 libglib2.0-0t64 libportaudio2 tesseract-ocr-eng tesseract-ocr-rus \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=document-build /opt/doccheck-v32 /opt/doccheck-v32
-COPY backend/docker/prepare-v32-model.py ./
 ENV PATH="/opt/doccheck-v32/bin:$PATH" PYTHONPATH=/app \
     HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 COPY bench/__init__.py ./bench/

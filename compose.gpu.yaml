@@ -3,17 +3,15 @@ services:
     profiles: [synthetic]
 
   model-prepare:
-    image: doccheck-document-worker:v32-cuda
+    image: doccheck-model-prepare:v32
     build:
       context: .
       dockerfile: backend/Dockerfile
-      target: document-runtime
-    user: "0:0"
+      target: model-prepare
     environment:
       HF_HUB_OFFLINE: "0"
       HF_HUB_DISABLE_TELEMETRY: "1"
       HF_HOME: /tmp/huggingface
-    command: ["python", "/app/prepare-v32-model.py"]
     volumes:
       - qwen-base:/models/qwen
     networks: [model-download]
