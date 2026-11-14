@@ -44,6 +44,7 @@ from doccheck_backend.grounded_amounts import GroundedDocument, format_rubles, g
 from doccheck_backend.native_pdf import read_pdf
 from doccheck_backend.normalization import normalize_contract_number, normalize_document_period
 from doccheck_backend.page_ocr import OcrError, render_pages
+from doccheck_backend.report_identity import report_number
 from doccheck_backend.result_summary import build_summary
 from doccheck_backend.run_reads import RunReadError, open_run_original
 from doccheck_backend.run_worker import StoredRun
@@ -1182,10 +1183,14 @@ class V32Processor:
                 )
             ]
         )
+        number = report_number(native.get("header_text", [])) if native else None
+        if scanned is not None:
+            number = scanned.number
         result = CheckResult(
             schema_version=RESULT_SCHEMA_VERSION,
             run_id=run_id,
             synthetic=os.environ.get("DOCCHECK_TRIAL_MODE") == "1",
+            report_number=number,
             scope=scope,
             documents=documents,
             evidence=evidence,

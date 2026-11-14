@@ -1,5 +1,7 @@
 import { requestJson } from '../../shared/api/requestJson';
 import type { FindingFilter, FindingCounts, RunStatus } from './checkData';
+import { readRubCoverage } from './loadFindings';
+import type { RubCoverage } from './reviewResult';
 
 interface RunError {
   code: string;
@@ -11,6 +13,8 @@ interface RunSummary {
   status: RunStatus;
   created_at: string;
   error: RunError | null;
+  report_name?: string;
+  report_number?: string;
 }
 
 interface RunProgress {
@@ -25,7 +29,7 @@ export interface RunState extends RunSummary {
 }
 
 interface RunHistoryPage {
-  items: (RunSummary & { counts?: FindingCounts; report_number?: string; synthetic?: boolean;
+  items: (RunSummary & { counts?: FindingCounts; rub_coverage?: RubCoverage; synthetic?: boolean;
     document_count?: number; contract_number?: string; archived_at?: string })[];
   next_cursor: string | null;
 }
@@ -73,12 +77,17 @@ function parseRunSummary(value: unknown): RunSummary {
     || !(value.error === null || isRunError(value.error))) {
     throw new InvalidRunResponseError();
   }
+  const { report_name, report_number } = value;
+  if (report_name != null && typeof report_name !== 'string') throw new InvalidRunResponseError();
+  if (report_number != null && typeof report_number !== 'string') throw new InvalidRunResponseError();
 
   return {
     run_id: value.run_id,
     status: value.status,
     created_at: value.created_at,
     error: value.error,
+    ...(report_name == null ? {} : { report_name }),
+    ...(report_number == null ? {} : { report_number }),
   };
 }
 
@@ -150,9 +159,9 @@ export async function listRuns(
 function parseHistoryRun(value: unknown): RunHistoryPage['items'][number] {
   const run = parseRunSummary(value);
   if (!isRecord(value)) throw new InvalidRunResponseError();
-  const { counts, report_number: number, synthetic, document_count, contract_number } = value;
+  const { counts, synthetic, document_count, contract_number } = value;
   const archivedAt = readArchivedAt(value.archived_at);
-  if (number != null && typeof number !== 'string') throw new InvalidRunResponseError();
+  const coverage = readRubCoverage(value.rub_coverage);
   if (synthetic != null && typeof synthetic !== 'boolean') throw new InvalidRunResponseError();
   if (contract_number != null && typeof contract_number !== 'string') throw new InvalidRunResponseError();
   if (document_count != null && (typeof document_count !== 'number' || !Number.isSafeInteger(document_count)
@@ -160,7 +169,7 @@ function parseHistoryRun(value: unknown): RunHistoryPage['items'][number] {
   return {
     ...run,
     ...(counts == null ? {} : { counts: parseCounts(counts) }),
-    ...(number == null ? {} : { report_number: number }),
+    ...(coverage === undefined ? {} : { rub_coverage: coverage }),
     ...(synthetic == null ? {} : { synthetic }),
     ...(document_count == null ? {} : { document_count }),
     ...(contract_number == null ? {} : { contract_number }),

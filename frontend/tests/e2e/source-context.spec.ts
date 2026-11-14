@@ -113,7 +113,7 @@ for (const width of [390, 768]) {
     const rule = drawer.getByRole('tab', { name: 'Правило проверки' });
     await source.press('ArrowRight');
     await expect(rule).toBeFocused();
-    await expect(drawer.getByText('demo-sum/1', { exact: true })).toBeVisible();
+    await expect(drawer.getByText(example.result.rows[0].calculation.formula, { exact: true })).toBeVisible();
     await rule.press('Alt+ArrowDown');
     await expect(rule).toBeFocused();
     await rule.press('Home');
@@ -144,12 +144,21 @@ for (const width of [390, 768]) {
 
     await docPicker.selectOption('ledger');
     await expect(docPicker).toHaveValue('ledger');
+    await expect(rule).toBeVisible();
+    await rule.click();
+    await expect(drawer.getByText(example.result.rows[0].calculation.formula, { exact: true })).toBeVisible();
+    await source.click();
     await expect(drawer.getByRole('link', { name: 'Скачать оригинал' })).toBeVisible();
     expect(originals).toContain('ledger');
     await docPicker.selectOption('report');
     await expect(contract).not.toBeChecked();
     await expect(drawer.getByText('125%', { exact: true })).toBeVisible();
     await expect(drawer).toHaveAttribute('data-fullscreen', 'true');
+    const zoomIn = drawer.getByRole('button', { name: 'Увеличить масштаб' });
+    await zoomIn.click();
+    await zoomIn.click();
+    await zoomIn.click();
+    await expect(drawer.getByLabel('Масштаб документа')).toHaveText('200%');
     await page.keyboard.press('Escape');
     await expect(opener).toBeFocused();
     await expect(drawer).toHaveCount(0);

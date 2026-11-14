@@ -14,11 +14,13 @@ from typing import BinaryIO, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ValidationError
-from sqlalchemy import Engine, and_, func, select, tuple_
+from sqlalchemy import Engine, and_, cast, func, select, tuple_, type_coerce
+from sqlalchemy.dialects.postgresql import JSONB, JSONPATH
 from sqlalchemy.orm import Session, defer
+from sqlalchemy.sql import ColumnElement
 
 from doccheck_backend.contracts import CheckResult
-from doccheck_backend.contracts.result import Evidence, Issue, JobStatus, StatusCounts
+from doccheck_backend.contracts.result import Evidence, Issue, JobStatus, RubCoverage, StatusCounts
 from doccheck_backend.document_preview import (
     MAX_PREVIEW_BYTES,
     PREVIEW_ERRORS,
@@ -30,6 +32,7 @@ from doccheck_backend.document_preview import (
 )
 from doccheck_backend.fragment_preview import MAX_INPUT_BYTES, FragmentPreview, render_preview
 from doccheck_backend.models import Run
+from doccheck_backend.result_summary import build_rub_coverage
 
 _STORED_FILE_ID = re.compile(r"[0-9a-f]{32}")
 _URL_ID = re.compile(r"[A-Za-z0-9_-]+")
@@ -60,10 +63,14 @@ class RunState(RunSummary):
     progress: RunProgress | None
     archived_at: datetime | None = None
     synthetic: bool = False
+    report_name: str | None = None
+    report_number: str | None = None
 
 
 class HistoryRun(RunSummary):
     counts: StatusCounts | None = None
+    rub_coverage: RubCoverage | None = None
+    report_name: str | None = None
     report_number: str | None = None
     synthetic: bool | None = None
     document_count: int
@@ -84,6 +91,13 @@ class RunPage(BaseModel):
     next_cursor: str | None
 
 
+def _report_document() -> ColumnElement[dict[str, object]]:
+    return type_coerce(
+        func.jsonb_path_query_first(Run.documents, cast('$[*] ? (@.role == "report")', JSONPATH)),
+        JSONB,
+    )
+
+
 def unavailable() -> RunReadError:
     return RunReadError(503, "service_unavailable", "Хранилище проверок недоступно")
 
@@ -96,6 +110,7 @@ def list_runs(
     view: RunView = "active",
 ) -> RunPage:
     counts = Run.result["summary"]["counts"]
+    report = _report_document()
     archive = view == "archive"
     sort_date = Run.archived_at if archive else Run.created_at
     columns = (
@@ -106,10 +121,12 @@ def list_runs(
         counts,
         Run.result["report_number"].as_string(),
         Run.result["synthetic"].as_boolean(),
-        Run.documents[0]["synthetic"].as_boolean(),
+        report["synthetic"].as_boolean(),
         func.jsonb_array_length(Run.documents),
         Run.result["scope"]["contract_number"].as_string(),
         Run.archived_at,
+        report["name"].as_string(),
+        Run.result,
     )
     query = select(*columns).where(
         Run.archived_at.is_not(None) if archive else Run.archived_at.is_(None),
@@ -131,47 +148,55 @@ def list_runs(
         query = query.where(tuple_(sort_date, Run.id) < _decode_cursor(cursor))
     query = query.order_by(sort_date.desc(), Run.id.desc()).limit(limit + 1)
     with Session(engine) as session:
-        items = []
-        for (
-            run_id,
-            status,
-            created_at,
-            error,
-            row_counts,
-            number,
-            synthetic,
-            demo,
-            document_count,
-            contract_number,
-            archived_at,
-        ) in session.execute(query):
-            item = HistoryRun(
-                run_id=run_id,
-                status=status,
-                created_at=created_at,
-                error=error,
-                document_count=document_count,
-            )
-            if archived_at is not None:
-                item.archived_at = archived_at
-            if demo is True:
-                item.synthetic = True
-            if contract_number is not None:
-                item.contract_number = contract_number
-            if status in ("completed", "completed_with_issues") and row_counts is not None:
-                item.counts = StatusCounts.model_validate(row_counts)
-                item.report_number = number
-                if synthetic is not None:
-                    item.synthetic = synthetic or demo is True
-            items.append(item)
-    if len(items) <= limit:
+        page = session.execute(query).all()
+    items = []
+    for (
+        run_id,
+        status,
+        created_at,
+        error,
+        row_counts,
+        number,
+        synthetic,
+        demo,
+        document_count,
+        contract_number,
+        archived_at,
+        report_name,
+        result_payload,
+    ) in page[:limit]:
+        item = HistoryRun(
+            run_id=run_id,
+            status=status,
+            created_at=created_at,
+            error=error,
+            document_count=document_count,
+        )
+        if archived_at is not None:
+            item.archived_at = archived_at
+        if report_name:
+            item.report_name = report_name
+        if demo is True:
+            item.synthetic = True
+        if contract_number is not None:
+            item.contract_number = contract_number
+        if status in ("completed", "completed_with_issues") and row_counts is not None:
+            item.counts = StatusCounts.model_validate(row_counts)
+            item.report_number = number
+            result = _validated_result(run_id, result_payload)
+            if result is not None:
+                item.rub_coverage = build_rub_coverage(result)
+            if synthetic is not None:
+                item.synthetic = synthetic or demo is True
+        items.append(item)
+    if len(page) <= limit:
         return RunPage(items=items, next_cursor=None)
-    last = items[limit - 1]
+    last = items[-1]
     moment = last.archived_at if archive else last.created_at
     assert moment is not None
     position = json.dumps([moment.isoformat(), str(last.run_id)]).encode("ascii")
     token = urlsafe_b64encode(position).decode("ascii").rstrip("=")
-    return RunPage(items=items[:limit], next_cursor=token)
+    return RunPage(items=items, next_cursor=token)
 
 
 def _decode_cursor(token: str) -> tuple[datetime, UUID]:
@@ -228,6 +253,7 @@ def get_editable_run(engine: Engine, run_id: str) -> Run:
 def get_run_state(engine: Engine, run_id: str) -> RunState:
     key = _run_key(run_id)
     totals = func.jsonb_array_length(Run.documents)
+    report = _report_document()
     with Session(engine) as session:
         run = session.execute(
             select(
@@ -237,8 +263,10 @@ def get_run_state(engine: Engine, run_id: str) -> RunState:
                 Run.error,
                 Run.archived_at,
                 totals.label("document_count"),
-                Run.documents[0]["synthetic"].as_boolean().label("synthetic_package"),
+                report["synthetic"].as_boolean().label("synthetic_package"),
                 Run.result["synthetic"].as_boolean().label("synthetic_result"),
+                report["name"].as_string().label("report_name"),
+                Run.result["report_number"].as_string().label("report_number"),
             ).where(Run.id == key, Run.status != "prepared")
         ).one_or_none()
     if run is None:
@@ -257,6 +285,8 @@ def get_run_state(engine: Engine, run_id: str) -> RunState:
         progress=progress,
         archived_at=run.archived_at.astimezone(UTC) if run.archived_at is not None else None,
         synthetic=run.synthetic_package is True or run.synthetic_result is True,
+        report_name=run.report_name,
+        report_number=run.report_number,
     )
 
 
@@ -265,13 +295,18 @@ def _stored_result(run: Run) -> CheckResult:
         raise RunReadError(409, "result_pending", "Проверка ещё не завершена")
     if run.status == "failed":
         raise RunReadError(409, "run_failed", "Проверка завершилась без результата")
-    try:
-        result = CheckResult.model_validate(run.result)
-    except ValidationError:
-        raise unavailable() from None
-    if result.run_id != str(run.id):
+    result = _validated_result(run.id, run.result)
+    if result is None:
         raise unavailable()
     return result
+
+
+def _validated_result(run_id: UUID, payload: object) -> CheckResult | None:
+    try:
+        result = CheckResult.model_validate(payload)
+    except ValidationError:
+        return None
+    return result if result.run_id == str(run_id) else None
 
 
 def get_run_findings(engine: Engine, run_id: str) -> CheckResult:

@@ -9,7 +9,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it('applies server filters before pagination while sorting the current page locally', async () => {
+it('applies server filters before pagination and preserves server order', async () => {
   vi.stubEnv('VITE_DOCCHECK_PUBLIC_DEMO', '0');
   const entries: HistoryEntry[] = [
     { id: 'b', title: 'Бета', status: 'completed', counts: { verified: 1, discrepancy: 2, unverified: 3 }, createdAt: '2026-11-14T10:00:00Z' },
@@ -39,8 +39,8 @@ it('applies server filters before pagination while sorting the current page loca
   expect(within(history).getByRole('link', { name: 'Более ранние проверки' }))
     .toHaveAttribute('href', '/checks?cursor=older+%2B+opaque');
 
-  fireEvent.change(within(history).getByRole('combobox', { name: 'Сортировка' }), { target: { value: 'name' } });
-  expect(within(table).getAllByRole('row')[1]).toHaveTextContent('Альфа');
+  expect(within(history).queryByRole('combobox', { name: 'Сортировка' })).not.toBeInTheDocument();
+  expect(within(table).getByRole('columnheader', { name: 'Дата' })).toHaveAttribute('aria-sort', 'descending');
   for (const [label, filter] of [['Есть расхождения', 'discrepancy'], ['Неполные данные', 'unverified']]) {
     fireEvent.click(within(history).getByRole('button', { name: label }));
     expect(await within(history).findByRole('link', { name: 'Бета' })).toHaveAttribute('href', '/checks/b');
@@ -66,10 +66,17 @@ it('shows the archive in server order with search and without a sort control', a
       {
         run_id: 'recent', report_number: '2', status: 'completed', error: null,
         created_at: '2026-11-12T12:00:00Z', archived_at: '2026-11-14T14:00:00Z',
+        report_name: 'Именованный файл.xlsx',
+        rub_coverage: {
+          total: '1200.00', verified: '0.00', discrepancy: '100.00', unverified: '1100.00',
+          shares: { verified: '0.0', discrepancy: '8.3', unverified: '91.7' },
+        },
+        synthetic: true,
       },
       {
-        run_id: 'older', report_number: '1', status: 'completed', error: null,
+        run_id: 'older', report_name: 'Другой отчёт.xlsx', status: 'completed', error: null,
         created_at: '2026-11-13T12:00:00Z', archived_at: '2026-11-14T13:00:00Z',
+        rub_coverage: { total: '0.00', verified: '0.00', discrepancy: null, unverified: null, shares: null },
       },
     ],
     next_cursor: 'old-archive',
@@ -78,16 +85,21 @@ it('shows the archive in server order with search and without a sort control', a
   render(<MemoryRouter initialEntries={['/archive']}><ChecksOverview archive /></MemoryRouter>);
 
   const archive = screen.getByRole('region', { name: 'Архив запусков' });
-  expect(await within(archive).findAllByRole('link', { name: /КФЗ №/ })).toEqual([
+  expect(await within(archive).findAllByRole('link', { name: /КФЗ/ })).toEqual([
     within(archive).getByRole('link', { name: 'КФЗ №2' }),
-    within(archive).getByRole('link', { name: 'КФЗ №1' }),
+    within(archive).getByRole('link', { name: 'КФЗ · Другой отчёт.xlsx' }),
   ]);
+  expect(within(archive).getByRole('img', { name: 'Подтверждено 0,0%, Расхождения 8,3%, Не проверено 91,7%' })).toBeVisible();
+  expect(within(archive).getByText('0,0%', { exact: true })).toBeVisible();
+  expect(within(archive).getByText('Подтверждено 0,00 ₽')).toBeVisible();
+  expect(within(archive).getAllByText('Принят', { exact: true })).toHaveLength(2);
+  expect(within(archive).getByText('Тестовые данные')).toBeVisible();
   expect(fetchHistory).toHaveBeenCalledWith('/api/v0/runs?view=archive', expect.any(Object));
   expect(within(archive).queryByRole('combobox', { name: 'Сортировка' })).not.toBeInTheDocument();
   expect(within(archive).getByRole('columnheader', { name: 'Дата архивации' })).toHaveAttribute('aria-sort', 'descending');
   expect(within(archive).getByRole('link', { name: 'Более ранние проверки' })).toHaveAttribute('href', '/archive?cursor=old-archive');
-  fireEvent.change(within(archive).getByRole('searchbox'), { target: { value: '№1' } });
-  expect(within(archive).getByRole('link', { name: 'КФЗ №1' })).toHaveAttribute('href', '/checks/older');
+  fireEvent.change(within(archive).getByRole('searchbox'), { target: { value: 'Другой отчёт' } });
+  expect(within(archive).getByRole('link', { name: 'КФЗ · Другой отчёт.xlsx' })).toHaveAttribute('href', '/checks/older');
   expect(within(archive).queryByRole('link', { name: 'КФЗ №2' })).not.toBeInTheDocument();
 });
 

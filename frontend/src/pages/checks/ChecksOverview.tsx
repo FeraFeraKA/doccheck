@@ -5,6 +5,8 @@ import { classes } from '../../shared/lib/classes';
 import { loadRunHistory, runStatusLabels } from './checkData';
 import type { CheckHistory, FindingCounts, FindingFilter, HistoryEntry, RunStatus } from './checkData';
 import { OverviewIcon } from './OverviewIcon';
+import { formatDecimal, formatMeasure } from './reviewResult';
+import type { RubCoverage } from './reviewResult';
 import { runQueuePath } from './runTitle';
 import { useRunHistory } from './useRunHistory';
 import './checks-overview.css';
@@ -21,7 +23,11 @@ const filters = [
   ['verified', 'Без расхождений'],
 ] as const;
 type Filter = typeof filters[number][0];
-type Sort = 'recent' | 'name';
+const coverageLabels = [
+  ['verified', 'Подтверждено'],
+  ['discrepancy', 'Расхождения'],
+  ['unverified', 'Не проверено'],
+] as const;
 
 function readFinding(value: string | null): FindingFilter | undefined {
   if (value === 'discrepancy' || value === 'unverified' || value === 'verified') return value;
@@ -81,15 +87,11 @@ interface LayoutProps {
 
 function OverviewLayout({ demo, archive, cursor, page, loading, error, retry, finding, changeFilter }: LayoutProps) {
   const [query, setQuery] = useState('');
-  const [sort, setSort] = useState<Sort>('recent');
-  const order = archive ? 'recent' : sort;
   const entries = page?.entries ?? [];
   const search = query.trim().toLocaleLowerCase('ru');
   const shown = entries.filter((entry) =>
     `${entry.title} ${entry.contractNumber ?? ''}`.toLocaleLowerCase('ru').includes(search),
   );
-  // The default order follows the server cursor. Name sorting applies to this page.
-  if (order === 'name') shown.sort((a, b) => a.title.localeCompare(b.title, 'ru', { numeric: true }));
 
   function pageLink(key?: string) {
     const params = new URLSearchParams();
@@ -121,14 +123,6 @@ function OverviewLayout({ demo, archive, cursor, page, loading, error, retry, fi
                 onClick={() => changeFilter?.(value)}>{label}</button>
             ))}
           </div>}
-          {!archive && <label className="overview-sort">
-            <span>Сортировка</span>
-            <select className="overview-secondary" value={sort}
-              onChange={(event) => setSort(event.target.value === 'name' ? 'name' : 'recent')}>
-              <option value="recent">Сначала новые</option>
-              <option value="name">По названию</option>
-            </select>
-          </label>}
         </div>}
         {demo && <p className="overview-notice">История рабочих проверок доступна в локальной установке.</p>}
         {loading && <p className="overview-notice" role="status">Загрузка проверок…</p>}
@@ -139,7 +133,6 @@ function OverviewLayout({ demo, archive, cursor, page, loading, error, retry, fi
         {page && <HistoryTable
           entries={shown}
           archive={archive}
-          sort={order}
           filtered={!!finding || !!search}
           reset={() => { setQuery(''); changeFilter?.('all'); }}
         />}
@@ -160,13 +153,14 @@ function CheckTitle({ to, title, tone, synthetic, contractNumber, active }: {
     <div>
       <Link to={to} title={active ? 'К очереди проверок' : undefined}>{title}</Link>
       {contractNumber && <small>Договор {contractNumber}</small>}
-      {synthetic && <small>Синтетика</small>}
+      {synthetic && <small>Тестовые данные</small>}
     </div>
   </div>;
 }
 
 function CheckResult({ entry }: { entry: HistoryEntry }) {
-  const { counts, status, error } = entry;
+  const { archivedAt, counts, status, error } = entry;
+  if (archivedAt) return <span className="overview-chip mint">Принят</span>;
   const finding = counts && (status === 'completed' || status === 'completed_with_issues') ? findingLabel(counts) : undefined;
   return <>
     <span className={classes('overview-chip', finding?.tone ?? tones[status])}>
@@ -179,10 +173,37 @@ function CheckResult({ entry }: { entry: HistoryEntry }) {
   </>;
 }
 
-function HistoryTable({ entries, archive, sort, filtered, reset }: {
+function AmountCoverage({ coverage, counts }: { coverage?: RubCoverage; counts?: FindingCounts }) {
+  const total = counts && (counts.verified + counts.discrepancy + counts.unverified);
+  const shares = coverage?.shares;
+  const verified = shares?.verified;
+  const segments = coverageLabels.flatMap(([key, label]) => {
+    const share = shares?.[key];
+    return share === undefined ? [] : [{ key, label, share }];
+  });
+
+  return <>
+    <span className="overview-coverage-label">Покрытие по сумме</span>
+    {!coverage ? <span aria-label="Покрытие по сумме недоступно">—</span>
+      : verified !== undefined ? <span className="overview-coverage-value tabular-nums">
+        {formatDecimal(verified)}%
+      </span> : <span className="overview-coverage-value tabular-nums">
+        {coverage.verified !== null
+          ? 'Подтверждено ' + formatMeasure(coverage.verified, 'RUB')
+          : 'Всего ' + formatMeasure(coverage.total, 'RUB')}
+      </span>}
+    {segments.length > 0 && <span className="overview-coverage-track" role="img" aria-label={
+      segments.map(({ label, share }) => `${label} ${formatDecimal(share)}%`).join(', ')
+    }>
+      {segments.map(({ key, share }) => <span key={key} data-status={key} style={{ width: `${share}%` }} />)}
+    </span>}
+    {counts && !!total && <small>{counts.verified} из {total} показателей</small>}
+  </>;
+}
+
+function HistoryTable({ entries, archive, filtered, reset }: {
   archive?: boolean;
   entries: HistoryEntry[];
-  sort: Sort;
   filtered: boolean;
   reset: () => void;
 }) {
@@ -202,24 +223,21 @@ function HistoryTable({ entries, archive, sort, filtered, reset }: {
           <th scope="col">Результат</th>
           <th scope="col">Покрытие по сумме</th>
           <th scope="col">Документы</th>
-          <th scope="col" aria-sort={sort === 'recent' ? 'descending' : 'none'}>{archive ? 'Дата архивации' : 'Дата'}</th>
+          <th scope="col" aria-sort="descending">{archive ? 'Дата архивации' : 'Дата'}</th>
         </tr></thead>
         <tbody>{entries.map((entry) => {
           const { id, title, counts, status, synthetic, createdAt } = entry;
           const active = status === 'queued' || status === 'processing';
           const to = active ? runQueuePath(id) : '/checks/' + encodeURIComponent(id);
-          const tone = counts ? findingLabel(counts).tone : tones[status];
-          const total = counts ? counts.verified + counts.discrepancy + counts.unverified : 0;
+          const tone = entry.archivedAt ? 'mint' : counts ? findingLabel(counts).tone : tones[status];
           return <tr key={id} className="overview-check-row" onClick={(event) => openRow(event, to)}>
             <td><CheckTitle to={to} title={title} tone={tone} synthetic={synthetic}
               contractNumber={entry.contractNumber} active={active} /></td>
             <td className="overview-result">
-              {archive && <span className="overview-chip neutral">В архиве</span>}
               <CheckResult entry={entry} />
             </td>
             <td className="overview-coverage">
-              <span aria-label="Покрытие по сумме недоступно">—</span>
-              {counts && total > 0 && <small>{counts.verified} из {total} показателей</small>}
+              <AmountCoverage coverage={entry.rubCoverage} counts={counts} />
             </td>
             <td className="overview-documents">
               {entry.documentCount === undefined ? <span aria-label="Количество документов недоступно">—</span>

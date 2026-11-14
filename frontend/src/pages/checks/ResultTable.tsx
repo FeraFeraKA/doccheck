@@ -72,7 +72,7 @@ export function ResultTable({
             const detailsId = `details-${row.id}`;
             const components = row.calculation?.components ?? [];
             const issue = row.root_issue_id !== null ? issuesById.get(row.root_issue_id) : undefined;
-            const explanation = rowExplanation(row);
+            const explanation = rowExplanation(row, issue);
             const reportSources = [...new Set(row.reported_evidence_refs)];
             const issueSources = [...new Set(issue?.evidence_refs)];
             const matchingReason = issue ? row.reasons.findIndex(({ message }) => message === issue.message) : -1;
@@ -111,7 +111,8 @@ export function ResultTable({
                       <span>{row.label}{row.unit !== 'RUB' && <small className="ml-1">({row.unit})</small>}</span>
                     </button>
                     <span className="indicator-meta">
-                      {sourceDocuments.size ? `${sourceDocuments.size} док.` : 'Нет источника'}
+                      {row.indicator_code && <span>{row.indicator_code}</span>}
+                      {sourceDocuments.size ? `${sourceDocuments.size} док.` : reportSource ? 'Только КФЗ' : 'Нет источника'}
                     </span>
                   </td>
                   <td>{reportSource && row.reported_value !== null
@@ -129,7 +130,7 @@ export function ResultTable({
                   </td>
                   <td className="difference-cell"><Measure value={row.delta} unit={row.unit} /></td>
                   <td className="indicator-status-cell"><span className="row-status" data-status={row.status}
-                    role="img" aria-label={statusLabels[row.status]} tabIndex={0} title={statusLabels[row.status]}>
+                    role="img" aria-label={statusLabels[row.status]}>
                     <WorkspaceIcon name={row.status === 'verified' ? 'check' : row.status === 'discrepancy' ? 'warning' : 'help'} size={14} />
                     <span className="indicator-status-label" aria-hidden="true">{statusLabels[row.status]}</span>
                   </span></td>
@@ -139,14 +140,11 @@ export function ResultTable({
                 </tr>
                 {isExpanded && <tr className="source-subrow"><td colSpan={6}>
                   <div id={detailsId} role="region" aria-label={`Подробности: ${row.label}`} className="indicator-details">
-                    {row.calculation?.formula && <p>{row.calculation.formula}</p>}
-                    <p><strong>{statusLabels[row.status]}.</strong>{' '}
-                      {row.reasons.length === 0 && issue?.message !== explanation && explanation}
-                    </p>
                     {row.reasons.map((reason, index) => {
                       const sources = [...new Set([
                         ...reason.evidence_refs, ...(index === matchingReason ? issueSources : []),
                       ])];
+                      if (sources.length === 0 && reason.message.trim() === explanation.trim()) return null;
                       return <div className="indicator-issue" key={`${reason.code}:${index}`}>
                         <p>{reason.message}</p>
                         {sources.length > 0 && <SourceReferences

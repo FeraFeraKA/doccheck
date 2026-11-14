@@ -14,12 +14,14 @@ from PIL import Image
 from doccheck_backend.contracts.locators import PageLocator
 from doccheck_backend.normalization import normalize_document_date
 from doccheck_backend.page_ocr import (
+    OcrError,
     OcrLine,
     PixelBox,
     page_locator,
     recognize_crop,
     recognize_lines,
 )
+from doccheck_backend.report_identity import report_number
 
 _GROUP_HEADER = {
     "0200": re.compile(r"оплат\w*\s+труд\w*"),
@@ -81,6 +83,7 @@ class ReportReading:
     complete: bool
     details: tuple[ReportDetailCell, ...] = ()
     stage: str | None = None
+    number: str | None = None
 
 
 @dataclass(frozen=True)
@@ -153,6 +156,22 @@ class ScanPage:
 _SIMPLE_LINE = re.compile(rf"(.*?)\s+({_MONEY.pattern})$")
 
 
+def _scan_report_number(image: Image.Image, headings: list[OcrLine]) -> str | None:
+    visible = [line for line in headings if line.box[1] < image.height * 0.35]
+    number = report_number(line.text for line in visible)
+    if number is None:
+        return None
+    for line in visible:
+        if line.confidence < _MIN_SCOPE_CONFIDENCE or report_number([line.text]) != number:
+            continue
+        try:
+            if report_number([recognize_crop(image, line.box)]) == number:
+                return number
+        except OcrError:
+            return None
+    return None
+
+
 def _parse_money(text: str) -> Decimal | None:
     if _MONEY.fullmatch(text):
         return Decimal(text.replace(" ", "").replace(",", "."))
@@ -208,6 +227,7 @@ def _simple_table(
         result,
         {code for code in _SIMPLE_LABELS.values() if code != "other"}
         <= {cell.code for cell in result},
+        number=_scan_report_number(image, lines),
     )
 
 
@@ -608,4 +628,10 @@ def read_report_row(
                     code,
                 )
             )
-    return ReportReading(cells, {*_GROUP_HEADER, "total"} <= groups.keys(), tuple(details), stage)
+    return ReportReading(
+        cells,
+        {*_GROUP_HEADER, "total"} <= groups.keys(),
+        tuple(details),
+        stage,
+        number=_scan_report_number(image, lines),
+    )

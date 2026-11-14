@@ -245,7 +245,6 @@ function SelectedDocumentSource({
       </div>
     </fieldset>}
     {original.status === 'ready' && format !== 'png' && <div className="source-viewer-toolbar" role="group" aria-label="Действия с оригиналом">
-      {format === 'pdf' && page && <span>Стр. {page.page}</span>}
       {format === 'pdf' && pdfUrl && (
         <a
           href={pdfUrl}
@@ -269,7 +268,7 @@ function SelectedDocumentSource({
       <PdfReader runId={runId} documentId={documentId} sourceId={evidenceId}
       startPage={page?.page ?? 1} fallback={pdfFallback}
       renderPage={(url, currentPage) => <SourceImage key={url} url={url}
-        name={document.name} page={currentPage} active={active}
+        name={document.name} active={active}
         box={page?.page === currentPage ? sourceBox(evidencePage?.bbox) ?? scopeBox : undefined}
         selected={enabledSelection}
         markers={markersByPage?.get(currentPage) ?? []}
@@ -374,7 +373,7 @@ function SourceImage({ url, name, page, box, selected, markers, active, download
           <button type="button" aria-label="Уменьшить масштаб" disabled={state !== 'ready' || zoom <= 75}
             onClick={() => onZoomChange(zoom - 25)}><WorkspaceIcon name="minus" size={18} /></button>
           <span aria-label="Масштаб документа">{zoom}%</span>
-          <button type="button" aria-label="Увеличить масштаб" disabled={state !== 'ready' || zoom >= 175}
+          <button type="button" aria-label="Увеличить масштаб" disabled={state !== 'ready'}
             onClick={() => onZoomChange(zoom + 25)}><WorkspaceIcon name="plus" size={18} /></button>
           <button type="button" aria-label="Сбросить масштаб" disabled={state !== 'ready' || zoom === 100}
             onClick={() => onZoomChange(100)}><WorkspaceIcon name="reset" size={18} /></button>
