@@ -275,17 +275,49 @@
   padding: 10px 21px;
 }
 .app-main .mobile-system-status-link { display: none; }
+.app-sidebar .sidebar-mobile-trigger { display: none; }
 
 @media (min-width: 1650px) {
   .app-main { padding: 42px 48px; }
 }
 
 @media (max-width: 1250px) {
-  .app-sidebar { width: 210px; }
-  .app-content { margin-left: 210px; }
   .brand { padding: 0 20px; font-size: 25px; }
   .nav-item { padding: 17px 20px; font-size: 13px; }
   .app-main { padding: 28px 24px; }
+}
+
+@media (min-width: 701px) {
+  .app-sidebar {
+    width: 64px;
+    overflow-x: hidden;
+    scrollbar-width: none;
+    pointer-events: none;
+    transition: width 175ms ease, box-shadow 175ms ease;
+  }
+  .app-sidebar::before {
+    content: '';
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 64px;
+    pointer-events: auto;
+  }
+  .app-sidebar :is(a, button) { position: relative; pointer-events: auto; }
+  .app-sidebar[data-expanded="true"] { width: 220px; box-shadow: 4px 0 16px #16373517; }
+  .app-content { margin-left: 64px; }
+  .app-sidebar .brand { padding-inline: 16px; }
+  .app-sidebar :is(.nav-item, .system-status-link) { padding-inline: 21px; white-space: nowrap; }
+  .app-sidebar :is(.brand-name, .nav-item span, .system-status-link span) { opacity: 0; transition: opacity 175ms ease; }
+  .app-sidebar[data-expanded="true"] :is(.brand-name, .nav-item span, .system-status-link span) { opacity: 1; }
+}
+
+@media (min-width: 701px) and (hover: none), (max-width: 700px) {
+  .app-sidebar > .brand:not(.sidebar-mobile-trigger) { display: none; }
+  .app-sidebar .sidebar-mobile-trigger { display: flex; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-sidebar, .app-sidebar :is(.brand-name, .nav-item span, .system-status-link span) { transition: none; }
 }
 
 .accountant-workspace .workspace-button {
@@ -318,7 +350,7 @@
   .app-sidebar {
     position: relative;
     width: 100%;
-    padding: 20px 16px 0;
+    padding: 20px 16px 12px;
     overflow-y: visible;
     display: block;
     border-bottom: 1px solid #cbd9d9;
@@ -327,7 +359,8 @@
     padding: 0 4px;
     font-size: 24px;
   }
-  .app-sidebar > nav { display: flex; margin: 20px -16px 0; }
+  .app-sidebar > nav { display: none; margin: 20px -16px 0; }
+  .app-sidebar[data-mobile-open="true"] > nav { display: flex; }
   .nav-item {
     flex: 1;
     justify-content: center;

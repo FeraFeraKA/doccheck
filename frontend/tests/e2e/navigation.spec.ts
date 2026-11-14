@@ -1,12 +1,5 @@
 import { expect, test } from '@playwright/test';
 
-const viewports = [
-  { width: 320, rail: 320 }, { width: 700, rail: 700 },
-  { width: 701, rail: 210 }, { width: 768, rail: 210 },
-  { width: 1250, rail: 210 }, { width: 1251, rail: 240 },
-  { width: 1650, rail: 240 },
-];
-
 test('Tab scrolls the fixed sidebar to system status in a short window', async ({ page }) => {
   await page.setViewportSize({ width: 768, height: 200 });
   await page.route('**/health', (route) => route.fulfill({ json: { status: 'ok', database: 'ok' } }));
@@ -22,6 +15,7 @@ test('Tab scrolls the fixed sidebar to system status in a short window', async (
     await expect(sidebar.getByRole('link', { name, exact: true })).toBeFocused();
   }
   await expect(status).toBeInViewport({ ratio: 1 });
+  await expect(sidebar).toHaveCSS('width', '220px');
   expect(await scroll()).toBeGreaterThan(0);
   expect(await page.evaluate(() => window.scrollY)).toBe(0);
 
@@ -32,43 +26,124 @@ test('Tab scrolls the fixed sidebar to system status in a short window', async (
   await expect(page.getByText('API и PostgreSQL доступны.')).toBeVisible();
 });
 
-for (const { width, rail } of viewports) {
-  test(`persistent navigation and system status are reachable at ${width}px`, async ({ page }) => {
-    await page.route('**/health', (route) => route.fulfill({ json: { status: 'ok', database: 'ok' } }));
-    await page.route('**/api/v0/runs', (route) => route.fulfill({ json: { items: [], next_cursor: null } }));
+for (const width of [701, 768, 1250, 1251, 1650]) {
+  test('desktop navigation overlays content at ' + width + 'px', async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await page.goto('/');
-
     const sidebar = page.getByRole('complementary', { name: 'Меню DocCheck' });
     const navigation = sidebar.getByRole('navigation', { name: 'Основная навигация' });
-    const newCheck = navigation.getByRole('link', { name: 'Новая проверка', exact: true });
     const checks = navigation.getByRole('link', { name: 'Проверки', exact: true });
-    await expect(newCheck).toHaveAttribute('aria-current', 'page');
-    await expect(checks.getByText('Проверки', { exact: true })).toBeInViewport();
-    await expect(sidebar.getByRole('button')).toHaveCount(0);
+    await expect(navigation.getByRole('link', { name: 'Новая проверка' })).toHaveAttribute('aria-current', 'page');
+    await expect(sidebar.getByRole('button', { name: 'Меню разделов' })).toHaveCount(0);
+    await expect(sidebar).toHaveCSS('width', '64px');
     const main = page.getByRole('main');
-    const sidebarBounds = await sidebar.boundingBox();
-    const mainBounds = await main.boundingBox();
-    if (!sidebarBounds || !mainBounds) throw new Error('Место навигации недоступно');
-    expect(sidebarBounds.width).toBe(rail);
-    expect(mainBounds.x).toBe(width <= 700 ? 0 : rail);
-    if (width <= 700) {
-      expect(mainBounds.y).toBe(sidebarBounds.y + sidebarBounds.height);
-    } else {
-      const padding = width >= 1650 ? '48px' : width <= 1250 ? '24px' : '36px';
-      await expect(main).toHaveCSS('padding-left', padding);
-    }
+    const padding = width >= 1650 ? '48px' : width <= 1250 ? '24px' : '36px';
+    await expect(main).toHaveCSS('padding-left', padding);
+    expect((await main.boundingBox())?.x).toBe(64);
+    await sidebar.hover({ position: { x: 30, y: 30 } });
+    await expect(sidebar).toHaveCSS('width', '220px');
+    await expect(checks.getByText('Проверки')).toHaveCSS('opacity', '1');
+    expect((await main.boundingBox())?.x).toBe(64);
+    await page.mouse.move(width - 4, 5);
+    await expect(sidebar).toHaveCSS('width', '64px');
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
-
-    await checks.press('Enter');
-    await expect(checks).toHaveAttribute('aria-current', 'page');
-    await expect(page).toHaveURL(/\/checks$/);
-    await expect(navigation).toBeVisible();
-    const status = page.getByRole('link', { name: 'Проверка системы', exact: true });
-    await expect(status).toHaveCount(1);
-    await expect(status).toBeVisible();
-    await status.click();
-    await expect(page).toHaveURL(/\/system-status$/);
-    await expect(page.getByText('API и PostgreSQL доступны.')).toBeVisible();
   });
 }
+
+for (const width of [320, 700]) {
+  test('the mobile logo toggles navigation and Escape restores focus at ' + width + 'px', async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.route('**/api/v0/runs', (route) => route.fulfill({ json: { items: [], next_cursor: null } }));
+    await page.route('**/health', (route) => route.fulfill({ json: { status: 'ok', database: 'ok' } }));
+    await page.goto('/');
+    const sidebar = page.getByRole('complementary', { name: 'Меню DocCheck' });
+    const trigger = sidebar.getByRole('button', { name: 'Меню разделов' });
+    const navigation = sidebar.getByRole('navigation', { name: 'Основная навигация' });
+    await expect(navigation).toBeHidden();
+    await trigger.press('Enter');
+    await expect(trigger).toHaveAttribute('aria-expanded', 'true');
+    const checks = navigation.getByRole('link', { name: 'Проверки', exact: true });
+    await checks.focus();
+    await page.keyboard.press('Escape');
+    await expect(navigation).toBeHidden();
+    await expect(trigger).toBeFocused();
+    await trigger.click();
+    await checks.click();
+    await expect(page).toHaveURL(/\/checks$/);
+    await expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    await expect(trigger).toBeFocused();
+    await page.getByRole('link', { name: 'Проверка системы' }).click();
+    await expect(page).toHaveURL(/\/system-status$/);
+  });
+}
+
+test.describe('touch tablet', () => {
+  test.use({ hasTouch: true, viewport: { width: 768, height: 900 } });
+
+  test('the logo opens or closes the icon rail without moving the content', async ({ page }) => {
+    await page.route('**/api/v0/runs', (route) => route.fulfill({ json: { items: [], next_cursor: null } }));
+    await page.goto('/');
+    const sidebar = page.getByRole('complementary');
+    const trigger = sidebar.getByRole('button', { name: 'Меню разделов' });
+    await expect(sidebar).toHaveCSS('width', '64px');
+    await trigger.tap();
+    await expect(trigger).toHaveAttribute('aria-expanded', 'true');
+    await expect(sidebar).toHaveCSS('width', '220px');
+    expect((await page.getByRole('main').boundingBox())?.x).toBe(64);
+    await trigger.tap();
+    await expect(sidebar).toHaveCSS('width', '64px');
+    await trigger.tap();
+    await sidebar.getByRole('link', { name: 'Проверки', exact: true }).tap();
+    await expect(page).toHaveURL(/\/checks$/);
+    await expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    await expect(sidebar).toHaveCSS('width', '64px');
+    await expect(sidebar.getByRole('link', { name: 'Проверки', exact: true })).toBeFocused();
+  });
+});
+
+test('Escape dismisses hover navigation without taking focus from the search or modal', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/checks/synthetic-example');
+  const sidebar = page.getByRole('complementary');
+  const search = page.getByRole('searchbox', { name: 'Поиск показателя или документа' });
+  await search.focus();
+  await sidebar.hover({ position: { x: 30, y: 30 } });
+  await expect(sidebar).toHaveCSS('width', '220px');
+  await page.keyboard.press('Escape');
+  await expect(sidebar).toHaveCSS('width', '64px');
+  await expect(search).toBeFocused();
+
+  const fullscreen = page.getByRole('button', { name: 'На весь экран', exact: true });
+  await fullscreen.click();
+  const dialog = page.getByRole('dialog', { name: 'Полноэкранная сверка' });
+  await expect(dialog).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await expect(fullscreen).toBeFocused();
+});
+
+test('the expanded desktop rail does not cover history pagination', async ({ page }) => {
+  await page.setViewportSize({ width: 701, height: 900 });
+  await page.route(/\/api\/v0\/runs(?:\?.*)?$/, (route) => {
+    const older = new URL(route.request().url()).searchParams.has('cursor');
+    return route.fulfill({ json: {
+      items: [{
+        run_id: older ? 'older-run' : 'recent-run', status: 'queued',
+        created_at: '2026-11-14T10:00:00Z', error: null,
+      }],
+      next_cursor: older ? null : 'next-page',
+    } });
+  });
+  await page.goto('/checks');
+  const sidebar = page.getByRole('complementary', { name: 'Меню DocCheck' });
+  const older = page.getByRole('link', { name: 'Более ранние проверки' });
+  await sidebar.hover({ position: { x: 30, y: 30 } });
+  await expect(sidebar).toHaveCSS('width', '220px');
+  const reachable = await older.evaluate((element) => {
+    const { x, y, width, height } = element.getBoundingClientRect();
+    return element.contains(document.elementFromPoint(x + width / 2, y + height / 2));
+  });
+  expect(reachable).toBe(true);
+  await older.click();
+  await expect(page.getByRole('link', { name: 'Проверка older-run', exact: true })).toBeVisible();
+});
