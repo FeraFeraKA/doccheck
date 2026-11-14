@@ -429,11 +429,24 @@ def _money(
             and o.locator.row == 1
             and _AMOUNT_CELL_HEADER.fullmatch(o.raw_text.strip())
         }
+        money_tables = {table for table, _ in headings}
+        populated_rows = {
+            (o.locator.table, o.locator.row)
+            for o in native.observations
+            if isinstance(o.locator, TableCellLocator)
+            and o.locator.table in money_tables
+            and o.locator.row > 1
+            and o.raw_text.strip()
+        }
+        # Without a printed total the only supported table layout is one
+        # populated charge row with one unambiguous ruble cell.
+        if len(populated_rows) != 1 or len(headings) != 1:
+            return None, []
         candidates = [
             o
             for o in native.observations
             if isinstance(o.locator, TableCellLocator)
-            and o.locator.row > 1
+            and (o.locator.table, o.locator.row) in populated_rows
             and (o.locator.table, o.locator.cell) in headings
             and o.amount is not None
         ]
