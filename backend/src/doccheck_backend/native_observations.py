@@ -16,6 +16,7 @@ class Observation:
     cached_value: Decimal | None = None
     component_locators: tuple[Locator, ...] = ()
     column_span: int = 1
+    row_span: int = 1
 
 
 @dataclass(frozen=True)

@@ -75,9 +75,14 @@ _ONLY_RUBLE_VALUE = re.compile(
 )
 _MONTH_ABBREVIATION = r"(?:янв|фев|мар|апр|июн|июл|авг|сен|сент|окт|ноя|дек)"
 _PERIOD_BOUND_START = re.compile(
-    rf"^(?:\?|[0-9]{{1,4}}(?=$|[./-][0-9?]|\s+(?:{'|'.join(_MONTH)}|г(?:ода?)?)\b)"
+    rf"^(?:\?|[0-9]{{1,4}}(?=$|[./-][0-9?]|\s+(?:{'|'.join(_MONTH)}|г(?:ода?)?)\b"
+    rf"|\s+{_MONTH_ABBREVIATION}(?:\.|\s|$))"
     rf"|(?:{'|'.join(_MONTH)})\b|{_MONTH_ABBREVIATION}(?:\.(?=\s|$)|(?=\s+[0-9]{{4}}\b))"
-    rf"|[а-яё]{{2,10}}\.\s+[0-9]{{4}}\b|с\b|неразборчив\w*|неизвест\w*)",
+    rf"|[а-яё]{{2,10}}\.\s+[0-9]{{4}}\b|с\b|неразборчив\w*|неизвест\w*"
+    rf"|настоящ(?:ее\s+время|его\s+времени|ий\s+момент|его\s+момента)\b"
+    rf"|текущ(?:ая\s+дата|ую\s+дату|ий\s+момент|его\s+(?:дня|месяца|года|момента))\b"
+    rf"|сегодня(?:шний\s+день)?\b|(?:конец|конца|начало|начала|середина|середины"
+    rf"|окончание|окончания|завершение|завершения)\b)",
     re.I,
 )
 _BARE_DATE_RANGE = re.compile(rf"^\s*(?:с\s+)?{_DAY}(?:\s+г\.?)?\s*(?:по\b|до\b|[–—-])", re.I)
@@ -235,6 +240,7 @@ def _period_continuation(text: str) -> bool:
     rest = text[match.end() :].strip()
     if _ONLY_RUBLE_VALUE.fullmatch(rest) and _text_amount(rest)[0] is not None:
         return False
+    rest = re.sub(r"^(?:по|до|на)(?:\s+|$)", "", rest, flags=re.I).strip()
     # A delimiter followed by unrelated prose (e.g. "по договору") is not
     # another period; a missing or period-shaped bound remains uncertain.
     return not rest or bool(_PERIOD_BOUND_START.match(rest))
@@ -263,8 +269,16 @@ def _period_following(first: Observation, second: Observation) -> bool:
             and isinstance(right, TableCellLocator)
             and left.table == right.table
             and (
-                (right.row == left.row and right.cell == left.cell + first.column_span)
-                or (right.cell == left.cell and right.row == left.row + 1)
+                (
+                    right.cell == left.cell + first.column_span
+                    and right.row < left.row + first.row_span
+                    and left.row < right.row + second.row_span
+                )
+                or (
+                    right.row == left.row + first.row_span
+                    and right.cell < left.cell + first.column_span
+                    and left.cell < right.cell + second.column_span
+                )
             )
         )
     )
@@ -346,7 +360,10 @@ def _period_readings(
     for observation in observations:
         locator = observation.locator
         if isinstance(locator, TableCellLocator):
-            cells.setdefault((locator.table, locator.row, locator.cell), []).append(observation)
+            for row_offset in range(observation.row_span):
+                for col_offset in range(observation.column_span):
+                    key = (locator.table, locator.row + row_offset, locator.cell + col_offset)
+                    cells.setdefault(key, []).append(observation)
     for i, observation in enumerate(observations):
         raw = observation.raw_text.strip()
         # A second labelled field at the same address is not evidence that the
@@ -359,10 +376,28 @@ def _period_readings(
         candidates = list(observations[i + 1 : i + 2])
         locator = observation.locator
         if isinstance(locator, TableCellLocator):
-            candidates.extend(
-                cells.get((locator.table, locator.row, locator.cell + observation.column_span), ())
-            )
-            candidates.extend(cells.get((locator.table, locator.row + 1, locator.cell), ()))
+            for row_offset in range(observation.row_span):
+                candidates.extend(
+                    cells.get(
+                        (
+                            locator.table,
+                            locator.row + row_offset,
+                            locator.cell + observation.column_span,
+                        ),
+                        (),
+                    )
+                )
+            for col_offset in range(observation.column_span):
+                candidates.extend(
+                    cells.get(
+                        (
+                            locator.table,
+                            locator.row + observation.row_span,
+                            locator.cell + col_offset,
+                        ),
+                        (),
+                    )
+                )
         has_continuation = False
         if _PERIOD_FIELD.search(raw) or _MONTH_PERIOD.search(raw):
             for following in candidates:
@@ -685,6 +720,7 @@ def ground_document(
             obs.cached_value,
             obs.component_locators,
             obs.column_span,
+            obs.row_span,
         )
         for obs in native.observations
         for line in obs.raw_text.splitlines()

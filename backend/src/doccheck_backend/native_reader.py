@@ -231,6 +231,7 @@ def _observe(
     *,
     rub_column: bool = False,
     column_span: int = 1,
+    row_span: int = 1,
 ) -> None:
     if not text.strip():
         return
@@ -244,6 +245,7 @@ def _observe(
             amount,
             "candidate" if amount is not None else None,
             column_span=column_span,
+            row_span=row_span,
         )
     )
 
@@ -261,17 +263,22 @@ def _read_docx(path: Path | BinaryIO, collected: _Collected) -> None:
     for number, paragraph in enumerate(document.paragraphs, 1):
         _observe(collected, paragraph.text, ParagraphLocator(kind="paragraph", paragraph=number))
     for table_index, table in enumerate(document.tables, 1):
-        if not table.rows:
+        rows = [(row, row.cells) for row in table.rows]
+        if not rows:
             continue
-        heading = table.rows[0]
+        heading, heading_cells = rows[0]
         rub_columns = {
             index
-            for index, cell in enumerate(heading.cells, heading.grid_cols_before + 1)
+            for index, cell in enumerate(heading_cells, heading.grid_cols_before + 1)
             if _MONEY_HEADER.fullmatch(" ".join(cell.text.split()))
         }
+        occupied_positions = {}
+        for row_index, (row, row_cells) in enumerate(rows, 1):
+            for cell_index, cell in enumerate(row_cells, row.grid_cols_before + 1):
+                occupied_positions.setdefault(cell._tc, set()).add((row_index, cell_index))
         observed_cells = set()
-        for row_index, row in enumerate(table.rows, 1):
-            for cell_index, cell in enumerate(row.cells, row.grid_cols_before + 1):
+        for row_index, (row, row_cells) in enumerate(rows, 1):
+            for cell_index, cell in enumerate(row_cells, row.grid_cols_before + 1):
                 if cell._tc in observed_cells:
                     continue
                 observed_cells.add(cell._tc)
@@ -281,12 +288,22 @@ def _read_docx(path: Path | BinaryIO, collected: _Collected) -> None:
                 span = cell.grid_span
                 if span < 1:
                     raise ValueError("DOCX cell has an invalid column span")
+                positions = occupied_positions[cell._tc]
+                height = max(row for row, _ in positions) - row_index + 1
+                rectangle = {
+                    (row, column)
+                    for row in range(row_index, row_index + height)
+                    for column in range(cell_index, cell_index + span)
+                }
+                if positions != rectangle:
+                    raise ValueError("DOCX cell does not occupy a rectangular grid region")
                 _observe(
                     collected,
                     cell.text,
                     locator,
                     rub_column=cell_index in rub_columns,
                     column_span=span,
+                    row_span=height,
                 )
 
 

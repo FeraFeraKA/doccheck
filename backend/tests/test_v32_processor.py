@@ -352,11 +352,19 @@ def test_multiple_periods_wrapped_within_same_observation_are_not_truncated():
         "Период: 01.02.2031 — 28.02.2031 —",
         "Период: 01.02.2031 — 28.02.2031 по",
         "Период: 01.02.2031 — 28.02.2031 — ?",
+        "Период: 01.02.2031 — 28.02.2031 — по",
         "Период: 01.02.2031 — 28.02.2031 — 31 января",
         "Период: Февраль 2031 — апр. 2031",
         "Период: Апрель 2031 — июн. 2031",
         "Период: Февраль 2031 — апр 2031",
         "Период: Февраль 2031 — ктбр. 2031",
+        "Период: Февраль 2031 — настоящее время",
+        "Период: Февраль 2031 — до настоящего времени",
+        "Период: Февраль 2031 — по настоящий момент",
+        "Период: Февраль 2031 до конца апреля 2031",
+        "Период: Февраль 2031 до 30 апр. 2031",
+        "Период: Февраль 2031 по сегодняшний день",
+        "Период: Апрель 2031 — окончание работ",
     ],
 )
 def test_additional_or_incomplete_periods_are_not_truncated(printed):
@@ -368,6 +376,7 @@ def test_additional_or_incomplete_periods_are_not_truncated(printed):
     "suffix",
     [
         "по договору № A-12",
+        "— по договору № A-12",
         "— услуги связи",
         "— 2 услуги связи",
         "по 2-му договору № A-12",
@@ -406,11 +415,12 @@ def test_explicit_continuation_in_adjacent_docx_paragraph_is_unresolved():
 
 
 def test_docx_table_continuation_requires_adjacent_row_or_column():
-    def cell(row, column, text, table=1, span=1):
+    def cell(row, column, text, table=1, span=1, height=1):
         return Observation(
             text,
             TableCellLocator(kind="table_cell", table=table, row=row, cell=column),
             column_span=span,
+            row_span=height,
         )
 
     period = cell(1, 1, "Период: 01.02.2031 — 28.02.2031")
@@ -418,6 +428,10 @@ def test_docx_table_continuation_requires_adjacent_row_or_column():
     assert _periods((period, cell(1, 2, extra))) == []
     merged_period = cell(1, 1, period.raw_text, span=2)
     assert _periods((merged_period, cell(1, 3, extra))) == []
+    vertical_period = cell(1, 1, period.raw_text, height=2)
+    assert _periods((vertical_period, cell(2, 2, extra))) == []
+    assert _periods((vertical_period, cell(3, 1, extra))) == []
+    assert _periods((cell(1, 2, extra, height=2), cell(2, 1, period.raw_text))) == []
     # Native DOCX traversal visits the second column before the next row.
     assert _periods((period, cell(1, 2, "примечание"), cell(2, 1, extra))) == []
     for other in (
@@ -429,6 +443,9 @@ def test_docx_table_continuation_requires_adjacent_row_or_column():
         assert [(p.start, p.end) for p, _ in _periods((period, other))] == [
             ("2031-02-01", "2031-02-28")
         ]
+    assert [(p.start, p.end) for p, _ in _periods((vertical_period, cell(3, 2, extra)))] == [
+        ("2031-02-01", "2031-02-28")
+    ]
 
 
 @pytest.mark.parametrize("text", ["- 100.00 руб.", "— 1 200,50 руб.", "— услуги связи"])
@@ -537,7 +554,8 @@ def test_weak_ocr_continuation_and_service_date_can_veto_scope(
     assert not any(item.kind == "period" for item in source.assertions)
 
 
-def test_weak_ocr_abbreviated_month_end_vetoes_first_month(monkeypatch, tmp_path):
+@pytest.mark.parametrize("weak", ["— апр. 2031", "— настоящее время", "до конца апреля 2031"])
+def test_weak_ocr_month_end_vetoes_first_month(monkeypatch, tmp_path, weak):
     from doccheck_backend import grounded_amounts
 
     path = tmp_path / "synthetic.png"
@@ -547,7 +565,7 @@ def test_weak_ocr_abbreviated_month_end_vetoes_first_month(monkeypatch, tmp_path
         "recognize_lines",
         lambda _: [
             OcrLine("Период: Февраль 2031", (5, 10, 230, 20), 95),
-            OcrLine("— апр. 2031", (5, 25, 230, 35), 45),
+            OcrLine(weak, (5, 25, 230, 35), 45),
             OcrLine("Итого: 120,00 руб.", (5, 70, 200, 80), 95),
         ],
     )

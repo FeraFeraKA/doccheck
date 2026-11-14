@@ -324,6 +324,30 @@ def test_worker_does_not_use_conflicting_document_date_as_operation_period(
             "period_ambiguous",
         ),
         (
+            "Период: Февраль 2031 — настоящее время",
+            None,
+            "299,12",
+            "100,00",
+            False,
+            "period_ambiguous",
+        ),
+        (
+            "Период: Февраль 2031 до конца апреля 2031",
+            None,
+            "397,62",
+            "1,50",
+            True,
+            "period_ambiguous",
+        ),
+        (
+            "Период: Апрель 2031 — настоящее время",
+            None,
+            "299,12",
+            "100,00",
+            True,
+            "period_ambiguous",
+        ),
+        (
             "Период: 01.02.2031 — 28.02.2031",
             "и с 01.04.2031 по 30.04.2031",
             "299,12",
@@ -578,6 +602,69 @@ def test_worker_period_boundaries_preserve_other_admitted_amounts(
             False,
             False,
         ),
+        (
+            "vertical",
+            "Период: 01.02.2031 — 28.02.2031",
+            "и с 01.04.2031 по 30.04.2031",
+            "299,12",
+            "100,00",
+            False,
+            True,
+        ),
+        (
+            "vertical",
+            "Период: 01.04.2031 — 30.04.2031",
+            "и с 01.02.2031 по 28.02.2031",
+            "397,62",
+            "1,50",
+            True,
+            True,
+        ),
+        (
+            "vertical",
+            "Период: 01.02.2031 — 28.02.2031",
+            "— услуги связи",
+            "299,12",
+            "100,00",
+            False,
+            False,
+        ),
+        (
+            "vertical_below",
+            "Период: 01.02.2031 — 28.02.2031",
+            "и с 01.04.2031 по 30.04.2031",
+            "397,62",
+            "1,50",
+            True,
+            True,
+        ),
+        (
+            "rectangle",
+            "Период: 01.02.2031 — 28.02.2031",
+            "и с 01.04.2031 по 30.04.2031",
+            "299,12",
+            "100,00",
+            False,
+            True,
+        ),
+        (
+            "neighbor_vertical",
+            "Период: 01.02.2031 — 28.02.2031",
+            "и с 01.04.2031 по 30.04.2031",
+            "397,62",
+            "1,50",
+            True,
+            True,
+        ),
+        (
+            "vertical_gap",
+            "Период: 01.02.2031 — 28.02.2031",
+            "и с 01.04.2031 по 30.04.2031",
+            "299,12",
+            "100,00",
+            False,
+            False,
+        ),
     ],
 )
 def test_worker_docx_adjacent_cells_do_not_truncate_period(
@@ -600,6 +687,25 @@ def test_worker_docx_adjacent_cells_do_not_truncate_period(
         if layout == "merged":
             first = first.merge(table.cell(0, 1))
         first.text, table.cell(0, 2).text = period, continuation
+    elif layout in {"vertical", "vertical_below", "vertical_gap"}:
+        table = document.add_table(rows=2 if layout == "vertical" else 3, cols=2)
+        first = table.cell(0, 0).merge(table.cell(1, 0))
+        first.text = period
+        table.cell(0, 1).text = "Примечание"
+        if layout == "vertical":
+            table.cell(1, 1).text = continuation
+        elif layout == "vertical_below":
+            table.cell(2, 0).text = continuation
+        else:
+            table.cell(2, 1).text = continuation
+    elif layout == "rectangle":
+        table = document.add_table(rows=2, cols=3)
+        table.cell(0, 0).merge(table.cell(1, 1)).text = period
+        table.cell(0, 2).text, table.cell(1, 2).text = "Примечание", continuation
+    elif layout == "neighbor_vertical":
+        table = document.add_table(rows=2, cols=2)
+        table.cell(0, 1).merge(table.cell(1, 1)).text = continuation
+        table.cell(0, 0).text, table.cell(1, 0).text = "Примечание", period
     else:
         table = document.add_table(rows=2, cols=2)
         table.cell(0, 0).text, table.cell(1, 0).text = period, continuation
@@ -657,6 +763,13 @@ def test_worker_docx_adjacent_cells_do_not_truncate_period(
         assert source["decision"]["state"] == "include"
         assert row["status"] == "verified"
         assert row["expected_value"] == "399.12" and row["delta"] == "0.00"
+        if layout in {"vertical", "vertical_gap"}:
+            evidence = next(
+                item
+                for item in result["evidence"]
+                if item["document_id"] == source["id"] and item["kind"] == "period"
+            )
+            assert evidence["locator"] == {"kind": "table_cell", "table": 1, "row": 1, "cell": 1}
 
 
 @pytest.mark.parametrize(
