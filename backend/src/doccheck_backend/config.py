@@ -2,6 +2,7 @@
 
 import math
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -17,6 +18,7 @@ class Settings:
     synthetic_delay_seconds: float = 2.0
     upload_root: Path = Path("../data/runs")
     public_demo: bool = False
+    hosted_worker_digest: str | None = None
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -45,7 +47,15 @@ class Settings:
                 )
             ),
             public_demo=public_demo == "1",
+            hosted_worker_digest=_hosted_worker_digest(),
         )
+
+
+def _hosted_worker_digest() -> str | None:
+    value = os.environ.get("DOCCHECK_HOSTED_WORKER_SHA256")
+    if value is not None and not re.fullmatch(r"[a-f0-9]{64}", value):
+        raise ValueError("DOCCHECK_HOSTED_WORKER_SHA256 must be a SHA-256 hex digest")
+    return value
 
 
 def _seconds(name: str, default: float, minimum: float, maximum: float) -> float:

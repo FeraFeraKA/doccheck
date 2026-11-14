@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, String, Uuid, func
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Integer, String, Uuid, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -49,3 +49,19 @@ class Run(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     result: Mapped[dict[str, object] | None] = mapped_column(JSONB(none_as_null=True))
     error: Mapped[dict[str, object] | None] = mapped_column(JSONB(none_as_null=True))
+
+
+class HostedClaim(Base):
+    """Admission and current attempt for the separately configured synthetic queue."""
+
+    __tablename__ = "hosted_claims"
+    __table_args__ = (CheckConstraint("attempt BETWEEN 0 AND 3"),)
+
+    run_id: Mapped[UUID] = mapped_column(
+        ForeignKey("runs.id", ondelete="CASCADE"), primary_key=True
+    )
+    attempt: Mapped[int] = mapped_column(Integer, default=0)
+    lease_id: Mapped[UUID | None] = mapped_column(Uuid, unique=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    deadline_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    receipt: Mapped[str | None] = mapped_column(String(64))

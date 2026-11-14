@@ -16,7 +16,7 @@ from starlette.datastructures import FormData, UploadFile
 
 from doccheck_backend.contracts.locators import Locator
 from doccheck_backend.contracts.result import Scope
-from doccheck_backend.models import Run
+from doccheck_backend.models import HostedClaim, Run
 
 MAX_FILE_SIZE = 50 * 1024**2
 MAX_PACKAGE_SIZE = 250 * 1024**2
@@ -138,7 +138,9 @@ def _sync_directory(path: Path) -> None:
         os.close(fd)
 
 
-def store_run(engine: Engine, root: Path, key: UUID, form: FormData) -> UUID:
+def store_run(
+    engine: Engine, root: Path, key: UUID, form: FormData, *, hosted_synthetic: bool = False
+) -> UUID:
     if set(form) - {*SCOPE_FIELDS, "report", "documents"}:
         raise input_error("Неизвестное поле")
     (report,) = _get_files(form, "report", 1)
@@ -196,7 +198,14 @@ def store_run(engine: Engine, root: Path, key: UUID, form: FormData) -> UUID:
                     raise UploadError(
                         409, "idempotency_conflict", "Ключ уже связан с другим пакетом"
                     )
+                admitted = connection.scalar(
+                    select(HostedClaim.run_id).where(HostedClaim.run_id == existing)
+                )
+                if hosted_synthetic != (admitted is not None):
+                    raise UploadError(409, "idempotency_conflict", "Ключ связан с другой очередью")
                 return existing
+            if hosted_synthetic:
+                connection.execute(insert(HostedClaim).values(run_id=run_id, attempt=0))
             _sync_directory(staging)
             staging.rename(root / str(run_id))
             # An uncertain commit must not delete bytes that a committed run can reference.
