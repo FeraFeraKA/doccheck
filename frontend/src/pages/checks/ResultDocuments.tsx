@@ -46,8 +46,10 @@ export function ResultDocuments({
   const [filter, setFilter] = useState('all');
   const [params, setParams] = useSearchParams();
   const openId = params.get('document');
+  const evidenceId = params.get('evidence');
   function setOpenId(id?: string) {
     const next = new URLSearchParams(params);
+    next.delete('evidence');
     if (id) next.set('document', id);
     else next.delete('document');
     setParams(next, { replace: true });
@@ -160,20 +162,22 @@ export function ResultDocuments({
     </div>
     {openDocument && <SourceDrawer onClose={() => setOpenId(undefined)}>
       <DocumentDetails
-        key={openDocument.id} document={openDocument} storedRunId={storedRunId}
+        key={`${openDocument.id}:${evidenceId ?? ''}`} document={openDocument} storedRunId={storedRunId}
+        initialEvidenceId={evidenceId}
         evidence={evidenceByDocument.get(openDocument.id) ?? []} formatAddress={formatAddress}
       />
     </SourceDrawer>}
   </section>;
 }
 
-function DocumentDetails({ document, storedRunId, evidence, formatAddress }: {
+function DocumentDetails({ document, storedRunId, evidence, initialEvidenceId, formatAddress }: {
   document: Document;
   storedRunId?: string;
   evidence: Evidence[];
+  initialEvidenceId: string | null;
   formatAddress: ResultDocumentsProps['formatAddress'];
 }) {
-  const [selected, setSelected] = useState(evidence[0]?.id ?? '');
+  const [selected, setSelected] = useState(() => evidence.find(({ id }) => id === initialEvidenceId)?.id ?? evidence[0]?.id ?? '');
   const source = evidence.find(({ id }) => id === selected);
   return <div className="result-document-details">
     <h3>{document.name}</h3>

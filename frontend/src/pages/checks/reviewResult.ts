@@ -140,11 +140,6 @@ export function formatLocation(locator: SourceAddress) {
   return parts.join(', ');
 }
 
-export function checkName(id: string, reportNumber?: string) {
-  const number = reportNumber?.trim();
-  return number ? `КФЗ №${number}` : `Проверка КФЗ №${id}`;
-}
-
 export function rowExplanation(row: ReviewRow) {
   return row.reasons[0]?.message
     ?? (row.status === 'unverified' ? row.completeness.reason : 'Суммы совпадают');

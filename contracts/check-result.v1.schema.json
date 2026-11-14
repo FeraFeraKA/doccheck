@@ -1269,14 +1269,14 @@
       "description": "Amounts reported in the KFZ, in RUB, for the additive rows with known values.",
       "properties": {
         "total": {
-          "pattern": "^-?[0-9]+(?:\\.[0-9]+)?(?![\\s\\S])",
+          "pattern": "^(?!-0+\\.00(?![\\s\\S]))-?[0-9]+\\.[0-9]{2}(?![\\s\\S])",
           "title": "Total",
           "type": "string"
         },
         "verified": {
           "anyOf": [
             {
-              "pattern": "^-?[0-9]+(?:\\.[0-9]+)?(?![\\s\\S])",
+              "pattern": "^(?!-0+\\.00(?![\\s\\S]))-?[0-9]+\\.[0-9]{2}(?![\\s\\S])",
               "type": "string"
             },
             {
@@ -1288,7 +1288,7 @@
         "discrepancy": {
           "anyOf": [
             {
-              "pattern": "^-?[0-9]+(?:\\.[0-9]+)?(?![\\s\\S])",
+              "pattern": "^(?!-0+\\.00(?![\\s\\S]))-?[0-9]+\\.[0-9]{2}(?![\\s\\S])",
               "type": "string"
             },
             {
@@ -1300,7 +1300,7 @@
         "unverified": {
           "anyOf": [
             {
-              "pattern": "^-?[0-9]+(?:\\.[0-9]+)?(?![\\s\\S])",
+              "pattern": "^(?!-0+\\.00(?![\\s\\S]))-?[0-9]+\\.[0-9]{2}(?![\\s\\S])",
               "type": "string"
             },
             {
@@ -1313,7 +1313,7 @@
           "anyOf": [
             {
               "additionalProperties": {
-                "pattern": "^-?[0-9]+(?:\\.[0-9]+)?(?![\\s\\S])",
+                "pattern": "^(?:100\\.0|[0-9]{1,2}\\.[0-9])$",
                 "type": "string"
               },
               "propertyNames": {

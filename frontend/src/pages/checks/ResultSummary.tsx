@@ -1,6 +1,6 @@
 import { Link } from 'react-router';
 import type { ReviewResult } from './reviewResult';
-import { formatDecimal, rowExplanation } from './reviewResult';
+import { formatDecimal, formatLocation, rowExplanation } from './reviewResult';
 import { documentDecisionLabels } from './ResultDocuments';
 import { XlsxDownload } from './XlsxDownload';
 
@@ -45,7 +45,7 @@ export function ResultSummary({ result }: { result: ReviewResult }) {
         </div>;
       })}
     </dl>
-    {rubCoverage && <p className="result-summary-muted mt-3 text-xs">В распределении показаны суммы строк КФЗ.</p>}
+    {rubCoverage && <p className="result-summary-muted mt-3 text-xs">Счётчики учитывают все строки. Суммы и доли рассчитаны по известным денежным статьям КФЗ без итогов.</p>}
   </section>;
 }
 
@@ -81,6 +81,19 @@ export function AdditionalChecks({ result, runPath, onOpenRow }: {
   const fileErrorIds = new Set(files.flatMap(({ errors }) => errors.map(({ id }) => id)));
   const issues = result.summary.primary_issues.filter((issue) =>
     !rowIssueIds.has(issue.id) && !issue.file_error_refs?.some((id) => fileErrorIds.has(id)));
+  const evidenceById = new Map(result.evidence.map((item) => [item.id, item]));
+  const documentsById = new Map(result.documents.map((item) => [item.id, item.name]));
+  function sourceLinks(refs: string[]) {
+    return refs.map((id) => {
+      const source = evidenceById.get(id);
+      if (!source) return null;
+      const search = new URLSearchParams({ document: source.document_id, evidence: id });
+      return <Link key={id} className="block underline" to={runPath + '/documents?' + search}>
+        {documentsById.get(source.document_id)} · {formatLocation(source.locator)}
+      </Link>;
+    });
+  }
+
   return <section className="mt-6 space-y-2" aria-label="Дополнительные проверки">
     <h2 className="text-[17px] font-medium">Дополнительные проверки</h2>
     {files.length > 0 && <div className="result-document-scroll" role="region" aria-label="Решения по документам" tabIndex={0}>
@@ -92,11 +105,12 @@ export function AdditionalChecks({ result, runPath, onOpenRow }: {
           <td><Link className="underline" to={runPath + '/documents?' + new URLSearchParams({ document: file.id })}>{file.name}</Link></td>
           <td>{documentDecisionLabels[file.decision.state]}</td><td>{file.decision.message}
             {file.errors.filter(({ message }) => message !== file.decision.message)
-              .map((error) => <p key={error.id}>{error.message}</p>)}</td>
+              .map((error) => <p key={error.id}>{error.message}</p>)}
+            {sourceLinks(file.decision.evidence_refs)}</td>
         </tr>)}</tbody>
       </table>
     </div>}
-    {issues.length > 0 && <ul className="list-disc pl-5 text-sm">{issues.map((issue) => <li key={issue.id}>{issue.message}</li>)}</ul>}
+    {issues.length > 0 && <ul className="list-disc pl-5 text-sm">{issues.map((issue) => <li key={issue.id}>{issue.message}{sourceLinks(issue.evidence_refs)}</li>)}</ul>}
     <UnverifiedIndicators rows={result.rows} onOpenRow={onOpenRow} />
     {files.length > 0 && <Link to={runPath + '/exceptions'} className="inline-block text-[13px] underline">Исключения</Link>}
     {files.length === 0 && issues.length === 0 && result.summary.counts.unverified === 0
@@ -108,6 +122,7 @@ const decisionTypes: Record<string, string> = {
   byte_duplicate: 'Дублирование',
   out_of_period: 'Документ вне периода',
   other_contract: 'Документ другого договора',
+  ambiguous_relation: 'Неоднозначная связь',
   ambiguous_link: 'Неоднозначная связь',
 };
 

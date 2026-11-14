@@ -12,9 +12,10 @@ import type { CheckView } from './ResultHeader';
 import { AdditionalChecks, ResultConclusion, ResultSummary } from './ResultSummary';
 import { documentDecisionLabels, ResultDocuments } from './ResultDocuments';
 import { ResultTable } from './ResultTable';
-import { checkName, formatDecimal, formatLocation, statusLabels } from './reviewResult';
+import { formatDecimal, formatLocation, statusLabels } from './reviewResult';
 import type { ReviewResult } from './reviewResult';
 import { useCheckData } from './useCheckData';
+import { runTitle } from './runTitle';
 import { isRunId } from './runStatusApi';
 import './result-workspace.css';
 import './result-focus.css';
@@ -144,7 +145,7 @@ function ResultContent({ id, view, result, run, synthetic, stored }: ResultConte
 
   return (
     <>
-      <ResultHeader title={result.reportNumber ? checkName(id, result.reportNumber) : run.title} runPath={runPath} view={view} scope={scope}
+      <ResultHeader title={result.reportNumber ? runTitle(id, result.reportNumber) : run.title} runPath={runPath} view={view} scope={scope}
         syntheticLabel={syntheticLabel} />
       {stored && <div className="stored-run-status mt-3 text-[13px]"><RunState run={run} /></div>}
       {view === 'table' && <ResultSummary result={result} />}
