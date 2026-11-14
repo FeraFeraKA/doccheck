@@ -195,7 +195,9 @@ def test_identity_conflict_removes_candidate_sum(uploaded_files, tmp_path, monke
     assert calls.count("/api/chat") == 2
     assert result.rows[0].observed_evidence_sum is None
     assert any(reason.code == "source_identity_conflict" for reason in result.rows[0].reasons)
-    assert all(file.decision.state == "needs_review" for file in result.documents[1:])
+    assert all(
+        file.decision.reason_code == "source_identity_conflict" for file in result.documents[1:]
+    )
 
 
 @pytest.mark.parametrize(
@@ -229,6 +231,10 @@ def test_xlsx_nonmoney_cells_are_rejected(
             "Стоимость оказанных в этом периоде услуг: 2 304,00 руб.",
         ),
         ("Итого стоимость услуг: 1 172,70 руб.", "Итого с НДС: 1 300,00 руб., НДС 127,30 руб."),
+        (
+            "Всего без НДС: 1 172,70 руб.",
+            "Итого с НДС: 1 300,00 руб., НДС 127,30 руб.",
+        ),
     ],
 )
 def test_unbound_or_ambiguous_service_total_remains_unknown(
@@ -288,7 +294,9 @@ def test_same_native_identity_is_quarantined_before_model_dedup(
     result = process(StoredRun(uuid4(), None, uploaded_files), tmp_path).result
     assert calls.count("/api/chat") == 2
     assert result.rows[0].observed_evidence_sum is None
-    assert all(file.decision.state == "needs_review" for file in result.documents[1:])
+    assert all(
+        file.decision.reason_code == "source_identity_conflict" for file in result.documents[1:]
+    )
 
 
 def test_partial_native_read_reports_file_error(uploaded_files, tmp_path, monkeypatch):

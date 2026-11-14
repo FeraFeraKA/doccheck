@@ -432,7 +432,13 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
             reasons = [
                 Reason(code="completeness_unknown", message=completeness.reason, evidence_refs=[])
             ]
-            if conflicted_sources.intersection(item["source_ids"]):
+            relevant_conflicts = any(
+                decision_rules.normalize_category(by_id[file_id]["prediction"].get("category"))
+                in (None, category)
+                for file_id in conflicted_sources
+                if file_id in by_id
+            )
+            if relevant_conflicts:
                 reasons.append(
                     Reason(
                         code="source_identity_conflict",
@@ -473,7 +479,14 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
         if file_id == report.id or file_id in documents:
             continue
         exclusion = excluded.get(file_id)
-        if exclusion == "different_contract":
+        if file_id in conflicted_sources:
+            documents[file_id] = _document(
+                file,
+                state="needs_review",
+                reason_code="source_identity_conflict",
+                message="Среди документов есть совпадающие реквизиты. Требуется проверка.",
+            )
+        elif exclusion == "different_contract":
             documents[file_id] = _document(
                 file,
                 state="needs_review",
