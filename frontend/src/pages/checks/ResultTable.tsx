@@ -72,19 +72,18 @@ export function ResultTable({
             const detailsId = `details-${row.id}`;
             const components = row.calculation?.components ?? [];
             const issue = row.root_issue_id !== null ? issuesById.get(row.root_issue_id) : undefined;
-            const messages = new Set([
-              rowExplanation(row), ...row.reasons.map(({ message }) => message), row.completeness.reason,
-            ]);
+            const explanation = rowExplanation(row);
             const reportSources = [...new Set(row.reported_evidence_refs)];
-            const rowEvidence = new Set([
-              ...reportSources,
-              ...components.flatMap((component) => evidenceFields.flatMap(([field]) => component[field] ?? [])),
-            ]);
-            const issueSources = [...new Set(issue?.evidence_refs)].filter((id) => !rowEvidence.has(id));
-            const completenessSources = [...new Set(row.completeness.evidence_refs)];
-            const showCompleteness = completenessSources.length > 0 ||
+            const issueSources = [...new Set(issue?.evidence_refs)];
+            const matchingReason = issue ? row.reasons.findIndex(({ message }) => message === issue.message) : -1;
+            const issueIsCompleteness = issue !== undefined && matchingReason < 0 && issue.message === row.completeness.reason;
+            const separateIssue = issue !== undefined && matchingReason < 0 && !issueIsCompleteness;
+            const completenessSources = [...new Set([
+              ...row.completeness.evidence_refs, ...(issueIsCompleteness ? issueSources : []),
+            ])];
+            const showCompleteness = issueIsCompleteness || completenessSources.length > 0 ||
               (!row.reasons.some(({ message }) => message === row.completeness.reason) &&
-                (row.reasons.length > 0 || rowExplanation(row) !== row.completeness.reason));
+                (row.reasons.length > 0 || explanation !== row.completeness.reason));
             const reportSource = row.reported_evidence_refs.find((id) => {
               const item = evidenceById.get(id);
               return item && documentsById.has(item.document_id);
@@ -135,17 +134,19 @@ export function ResultTable({
                     <span className="indicator-status-label" aria-hidden="true">{statusLabels[row.status]}</span>
                   </span></td>
                   <td className="indicator-explanation">
-                    <p>{rowExplanation(row)}</p>
+                    <p>{explanation}</p>
                   </td>
                 </tr>
                 {isExpanded && <tr className="source-subrow"><td colSpan={6}>
                   <div id={detailsId} role="region" aria-label={`Подробности: ${row.label}`} className="indicator-details">
                     {row.calculation?.formula && <p>{row.calculation.formula}</p>}
                     <p><strong>{statusLabels[row.status]}.</strong>{' '}
-                      {row.reasons.length === 0 && rowExplanation(row)}
+                      {row.reasons.length === 0 && issue?.message !== explanation && explanation}
                     </p>
                     {row.reasons.map((reason, index) => {
-                      const sources = [...new Set(reason.evidence_refs)];
+                      const sources = [...new Set([
+                        ...reason.evidence_refs, ...(index === matchingReason ? issueSources : []),
+                      ])];
                       return <div className="indicator-issue" key={`${reason.code}:${index}`}>
                         <p>{reason.message}</p>
                         {sources.length > 0 && <SourceReferences
@@ -171,9 +172,9 @@ export function ResultTable({
                       rowId={row.id} selected={sourceActive} selectedEvidenceId={selectedEvidenceId}
                       evidenceById={evidenceById} documentsById={documentsById}
                       formatAddress={formatAddress} onSelectSource={onSelectSource} />}
-                    {issue && (!messages.has(issue.message) || issueSources.length > 0) && (
+                    {separateIssue && issue && (
                       <div className="indicator-issue">
-                        {!messages.has(issue.message) && <p>{issue.message}</p>}
+                        <p>{issue.message}</p>
                         {issueSources.length > 0 && <SourceReferences
                           ids={issueSources} label="Источники замечания"
                           rowId={row.id} selected={sourceActive} selectedEvidenceId={selectedEvidenceId}

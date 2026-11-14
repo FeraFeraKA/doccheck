@@ -264,6 +264,81 @@ test('keeps each reason and completeness source attached to its explanation', as
   await expect(completeness).toContainText('C6');
 });
 
+test('opens a distinct primary issue’s sources even when they also support the row', async ({ page }) => {
+  const id = 'shared-primary-issue-sources';
+  const base = structuredClone(example.result);
+  const message = 'Отдельное замечание с общими источниками.';
+  const result = {
+    ...base, run_id: id,
+    summary: { ...base.summary, primary_issues: base.summary.primary_issues.map((issue) => issue.id === 'issue-a'
+      ? { ...issue, message, evidence_refs: ['report-a', 'amount-1', 'amount-2', 'report-a'] } : issue) },
+  };
+  await stubRun(page, id, result);
+  const requested: string[] = [];
+  await page.route((url) => url.pathname.startsWith(`/api/v0/runs/${id}/documents/`), (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname.endsWith('/fragments')) {
+      const evidenceId = url.searchParams.get('evidence_id');
+      const source = result.evidence.find((item) => item.id === evidenceId);
+      if (source && evidenceId) requested.push(evidenceId);
+      return source ? route.fulfill({ json: source }) : route.fulfill({ status: 404 });
+    }
+    if (url.pathname.endsWith('/page-preview')) {
+      return route.fulfill({ body: pixel, contentType: 'image/png', headers: { 'X-Document-Pages': '1' } });
+    }
+    if (url.pathname.endsWith('/preview')) return route.fulfill({ json: {
+      sheets: ['Синтетика'], sheet: 'Синтетика', row: 1, column: 1,
+      last_row: 7, last_column: 3, rows: Array.from({ length: 7 }, () => ['', '', '']),
+    } });
+    return route.fulfill({ body: 'synthetic original', contentType: 'application/octet-stream' });
+  });
+  await page.goto('/checks/' + id);
+  const table = page.getByRole('table', { name: 'Показатели КФЗ' });
+  await table.getByRole('button', { name: 'Синтетическая статья A', exact: true }).click();
+  const detail = table.getByRole('region', { name: 'Подробности: Синтетическая статья A' });
+  const issue = detail.locator('.indicator-issue').filter({ hasText: message });
+  await expect(issue.getByText(message, { exact: true })).toHaveCount(1);
+  const sources = issue.getByRole('list', { name: 'Источники замечания' }).getByRole('button');
+  await expect(sources).toHaveCount(3);
+  for (const [index, evidenceId] of ['report-a', 'amount-1', 'amount-2'].entries()) {
+    const button = sources.nth(index);
+    const documentId = result.evidence.find((item) => item.id === evidenceId)?.document_id;
+    await button.focus();
+    await button.press(index === 1 ? 'Space' : 'Enter');
+    const panel = page.getByRole('region', { name: 'Источник документа', exact: true });
+    await expect(panel.getByRole('combobox', { name: 'Документы комплекта' })).toHaveValue(documentId ?? '');
+    await expect.poll(() => requested.includes(evidenceId)).toBe(true);
+    await panel.getByRole('button', { name: 'Закрыть просмотр источника' }).click();
+    await expect(button).toBeFocused();
+  }
+});
+
+for (const matching of ['reason', 'completeness'] as const) {
+  test(`merges primary issue sources when its message matches ${matching}`, async ({ page }) => {
+    const id = `matching-${matching}-issue`;
+    const base = structuredClone(example.result);
+    const message = 'Общее основание проверки.';
+    const first = base.rows[0];
+    const row = {
+      ...first,
+      reasons: matching === 'reason' ? [{ ...first.reasons[0], message, evidence_refs: ['amount-1'] }] : first.reasons,
+      completeness: matching === 'completeness'
+        ? { ...first.completeness, reason: message, evidence_refs: ['amount-1'] } : first.completeness,
+    };
+    const summary = { ...base.summary, primary_issues: base.summary.primary_issues.map((issue) => issue.id === 'issue-a'
+      ? { ...issue, message, evidence_refs: ['amount-1', 'report-a', 'amount-2', 'report-a'] } : issue) };
+    await stubRun(page, id, { ...base, run_id: id, rows: [row, ...base.rows.slice(1)], summary });
+    await page.goto('/checks/' + id);
+    const table = page.getByRole('table', { name: 'Показатели КФЗ' });
+    await table.getByRole('button', { name: 'Синтетическая статья A', exact: true }).click();
+    const detail = table.getByRole('region', { name: 'Подробности: Синтетическая статья A' });
+    await expect(detail.getByText(matching === 'reason' ? message : `Полнота: ${message}`, { exact: true })).toHaveCount(1);
+    const label = matching === 'reason' ? `Источники причины: ${message}` : 'Источники основания полноты';
+    await expect(detail.getByRole('list', { name: label }).getByRole('button')).toHaveCount(3);
+    await expect(detail.getByRole('list', { name: 'Источники замечания' })).toHaveCount(0);
+  });
+}
+
 test('shows a missing KFZ source even when supporting components exist', async ({ page }) => {
   const id = 'missing-report-with-components';
   const base = structuredClone(example.result);
