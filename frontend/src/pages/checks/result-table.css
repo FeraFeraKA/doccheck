@@ -209,16 +209,6 @@
   line-height: 1.45;
   overflow-wrap: anywhere;
 }
-.result-reconciliation .indicator-explanation button {
-  border: 0;
-  padding: 0;
-  color: var(--result-primary);
-  text-align: start;
-  margin-top: 6px;
-}
-.result-reconciliation .indicator-explanation button::before { content: '▸'; margin-inline-end: 5px; }
-.result-reconciliation .indicator-explanation button[aria-expanded="true"]::before { content: '▾'; }
-.result-reconciliation .indicator-explanation button:hover { text-decoration: underline; }
 .result-reconciliation .kfz-result-table .measure-unit { font-size: .78em; }
 .result-reconciliation .kfz-result-table .expected-cell .checks-caption {
   display: block;

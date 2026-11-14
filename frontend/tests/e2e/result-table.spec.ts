@@ -6,6 +6,8 @@ test('the result disclosure keeps each component and its source address selectab
   await page.getByText('Основания выбранного показателя', { exact: true }).click();
 
   const table = page.getByRole('table', { name: 'Показатели КФЗ' });
+  await expect(table.getByRole('button', { name: 'Как рассчитано' })).toHaveCount(0);
+  await expect(table.getByRole('button', { name: 'Основание проверки' })).toHaveCount(0);
   const row = table.getByRole('button', { name: 'Синтетическая статья A' });
   await row.focus();
   await row.press('Enter');
