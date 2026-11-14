@@ -209,7 +209,17 @@ def _pdf_issue(path: Path) -> Literal["encrypted_pdf", "pdf_unreadable"] | None:
         with PdfReader(path) as reader:
             pages = len(reader.pages)
             for page in reader.pages:
-                contents = page.get_contents()
+                try:
+                    contents = page.get_contents()
+                except NotImplementedError as error:
+                    # pypdf uses this exception for unsupported stream filters.
+                    # Do not classify unrelated programming failures as bad input.
+                    message = str(error)
+                    if message.startswith("Unsupported filter ") or message == (
+                        "/Crypt filter with /Name or /Type not supported yet"
+                    ):
+                        return "pdf_unreadable"
+                    raise
                 if contents is not None:
                     _ = contents.operations
         if pages == 0:

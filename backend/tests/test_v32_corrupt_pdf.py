@@ -9,15 +9,16 @@ import test_v32_protected_pdf as protected_helpers
 from fastapi.testclient import TestClient
 from jsonschema import Draft202012Validator
 from PIL import Image
-from pypdf import PdfWriter
+from pypdf import PdfReader, PdfWriter
 from pypdf.errors import PdfStreamError
-from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
+from pypdf.generic import DecodedStreamObject, DictionaryObject, EncodedStreamObject, NameObject
 from test_native_pdf import _write_pdf
 from test_v32_protected_pdf import _native_inputs, _no_model, _run
 
 from doccheck_backend import grounded_amounts
 from doccheck_backend.api import create_app
 from doccheck_backend.config import Settings
+from doccheck_backend.contracts import CheckJob
 from doccheck_backend.page_ocr import OcrLine
 from doccheck_backend.run_worker import run_document_worker
 from doccheck_backend.v32_processor import V32Processor, _model_input, _pdf_issue
@@ -70,6 +71,38 @@ def _pdf_with_broken_contents(variant: str) -> bytes:
     return output.getvalue()
 
 
+def _pdf_with_unsupported_filter(crypt: bool = False) -> bytes:
+    writer = PdfWriter()
+    page = writer.add_blank_page(width=200, height=200)
+    font = DictionaryObject(
+        {
+            NameObject("/Type"): NameObject("/Font"),
+            NameObject("/Subtype"): NameObject("/Type1"),
+            NameObject("/BaseFont"): NameObject("/Helvetica"),
+        }
+    )
+    page[NameObject("/Resources")] = DictionaryObject(
+        {NameObject("/Font"): DictionaryObject({NameObject("/F1"): writer._add_object(font)})}
+    )
+    content = DecodedStreamObject()
+    content.set_data(b"BT /F1 8 Tf 10 100 Td (Synthetic readable page) Tj ET")
+    page[NameObject("/Contents")] = writer._add_object(content)
+    page = writer.add_blank_page(width=200, height=200)
+    unsupported = EncodedStreamObject()
+    unsupported._data = b"synthetic-encoded-content"
+    unsupported[NameObject("/Filter")] = NameObject("/Crypt" if crypt else "/BogusDecode")
+    if crypt:
+        unsupported[NameObject("/DecodeParms")] = DictionaryObject(
+            {NameObject("/Name"): NameObject("/SyntheticCrypt")}
+        )
+    page[NameObject("/Contents")] = writer._add_object(unsupported)
+    output = BytesIO()
+    writer.write(output)
+    result = output.getvalue()
+    assert PdfReader(BytesIO(result)).pages[0].extract_text() == "Synthetic readable page"
+    return result
+
+
 def _validate_schema(job):
     schema = json.loads(
         (Path(__file__).resolve().parents[2] / "contracts/check-result.v1.schema.json").read_text(
@@ -102,13 +135,21 @@ def test_unreadable_primary_preserves_other_sources_and_partial_value(tmp_path, 
     _validate_schema(outcome)
 
 
-@pytest.mark.parametrize("variant", ["string", "hex", "dict"])
+@pytest.mark.parametrize("variant", ["string", "hex", "dict", "unsupported_filter"])
 def test_broken_pdf_content_preserves_other_sources(tmp_path, variant):
     report, readable = _native_inputs("TST-62", "128.60")
     outcome = _run(
         tmp_path,
         ("report.xlsx", report),
-        [("act.docx", readable), ("broken-content.pdf", _pdf_with_broken_contents(variant))],
+        [
+            ("act.docx", readable),
+            (
+                "broken-content.pdf",
+                _pdf_with_unsupported_filter()
+                if variant == "unsupported_filter"
+                else _pdf_with_broken_contents(variant),
+            ),
+        ],
     )
     assert outcome.status == "completed_with_issues" and outcome.result is not None
     document = next(item for item in outcome.result.documents if item.name == "broken-content.pdf")
@@ -119,13 +160,57 @@ def test_broken_pdf_content_preserves_other_sources(tmp_path, variant):
     _validate_schema(outcome)
 
 
+def test_unsupported_crypt_filter_is_reported_as_unreadable(tmp_path):
+    report, readable = _native_inputs("TST-62", "128.60")
+    outcome = _run(
+        tmp_path,
+        ("report.xlsx", report),
+        [("act.docx", readable), ("unsupported-crypt.pdf", _pdf_with_unsupported_filter(True))],
+    )
+    assert outcome.status == "completed_with_issues" and outcome.result is not None
+    document = next(
+        item for item in outcome.result.documents if item.name == "unsupported-crypt.pdf"
+    )
+    assert document.parse_status == "error" and document.errors[0].code == "pdf_unreadable"
+    row = next(item for item in outcome.result.rows if item.id == "general_admin")
+    assert row.status == "unverified" and row.observed_evidence_sum == "128.60"
+    _validate_schema(outcome)
+
+
+def test_unexpected_not_implemented_from_page_reader_is_job_failure(monkeypatch, tmp_path):
+    from pypdf._page import PageObject
+
+    report, readable = _native_inputs("TST-62", "128.60")
+
+    def unexpected(_page):
+        raise NotImplementedError("synthetic internal page-reader detail")
+
+    monkeypatch.setattr(PageObject, "get_contents", unexpected)
+    outcome = _run(
+        tmp_path,
+        ("report.xlsx", report),
+        [
+            ("act.docx", readable),
+            ("valid.pdf", _pdf("root").replace(b"/Root 9 0 R", b"/Root 3 0 R", 1)),
+        ],
+    )
+    assert outcome.status == "failed" and outcome.result is None
+    assert outcome.error is not None and outcome.error.code == "processing_failed"
+    assert "synthetic internal page-reader detail" not in outcome.model_dump_json()
+
+
 @pytest.mark.parametrize("duplicate_first", [False, True])
-@pytest.mark.parametrize("variant", ["half", "contents"])
+@pytest.mark.parametrize("variant", ["half", "contents", "unsupported_filter"])
 def test_duplicate_unreadable_pdf_keeps_exclusion_and_both_errors(
     tmp_path, duplicate_first, variant
 ):
     report, readable = _native_inputs("TST-62", "128.60")
-    broken = _pdf("half") if variant == "half" else _pdf_with_broken_contents("string")
+    if variant == "half":
+        broken = _pdf("half")
+    elif variant == "unsupported_filter":
+        broken = _pdf_with_unsupported_filter()
+    else:
+        broken = _pdf_with_broken_contents("string")
     original = ("broken-a.pdf", broken)
     duplicate = ("broken-b.pdf", broken)
     primary = (
@@ -154,7 +239,8 @@ def test_duplicate_unreadable_pdf_keeps_exclusion_and_both_errors(
 
 
 @pytest.mark.parametrize(
-    "variant", ["half", "xref", "root", "content_string", "content_hex", "content_dict"]
+    "variant",
+    ["half", "xref", "root", "content_string", "content_hex", "content_dict", "unsupported_filter"],
 )
 @pytest.mark.parametrize("explicit_scope", [False, True])
 def test_unreadable_report_fails_without_result(tmp_path, variant, explicit_scope):
@@ -163,9 +249,13 @@ def test_unreadable_report_fails_without_result(tmp_path, variant, explicit_scop
         tmp_path,
         (
             "report.pdf",
-            _pdf_with_broken_contents(variant.removeprefix("content_"))
-            if variant.startswith("content_")
-            else _pdf(variant),
+            _pdf_with_unsupported_filter()
+            if variant == "unsupported_filter"
+            else (
+                _pdf_with_broken_contents(variant.removeprefix("content_"))
+                if variant.startswith("content_")
+                else _pdf(variant)
+            ),
         ),
         [("act.docx", readable)],
         explicit_scope=explicit_scope,
@@ -352,9 +442,11 @@ def test_unexpected_pdf_probe_failure_is_not_reported_as_bad_file(monkeypatch, t
         "model_value",
         "model_oserror",
         "model_runtime",
+        "model_not_implemented",
         "late_pdfium_value",
         "late_pdfium_unknown",
         "late_pdfium_no_code",
+        "late_pdfium_not_implemented",
     ],
 )
 def test_late_unexpected_value_error_is_safe_job_failure(
@@ -375,6 +467,8 @@ def test_late_unexpected_value_error_is_safe_job_failure(
             raise OSError(private_detail)
         if failure == "model_runtime":
             raise RuntimeError(private_detail)
+        if failure == "model_not_implemented":
+            raise NotImplementedError(private_detail)
         raise ValueError(private_detail)
 
     if failure.startswith("late_pdfium"):
@@ -388,6 +482,8 @@ def test_late_unexpected_value_error_is_safe_job_failure(
                     raise pdfium.PdfiumError(private_detail, err_code=1)
                 if failure == "late_pdfium_no_code":
                     raise pdfium.PdfiumError(private_detail)
+                if failure == "late_pdfium_not_implemented":
+                    raise NotImplementedError(private_detail)
                 raise ValueError(private_detail)
             return open_pdf(*args, **kwargs)
 
@@ -469,13 +565,25 @@ def test_worker_accepts_valid_scanned_pdf_with_mocked_ocr_and_model(
 
 @pytest.mark.parametrize(
     ("broken_report", "variant"),
-    [(False, "half"), (True, "half"), (False, "contents"), (True, "contents")],
+    [
+        (False, "half"),
+        (True, "half"),
+        (False, "contents"),
+        (True, "contents"),
+        (False, "unsupported_filter"),
+        (True, "unsupported_filter"),
+    ],
 )
 def test_worker_and_api_preserve_corrupt_pdf_outcome(
     database_url, tmp_path, broken_report, variant
 ):
     report, readable = _native_inputs("TST-62", "128.60")
-    broken = _pdf("half") if variant == "half" else _pdf_with_broken_contents("string")
+    if variant == "half":
+        broken = _pdf("half")
+    elif variant == "unsupported_filter":
+        broken = _pdf_with_unsupported_filter()
+    else:
+        broken = _pdf_with_broken_contents("string")
     report_file = ("broken-report.pdf", broken) if broken_report else ("report.xlsx", report)
     documents = [("act.docx", readable)]
     if not broken_report:
@@ -505,6 +613,9 @@ def test_worker_and_api_preserve_corrupt_pdf_outcome(
             assert state.json()["status"] == "completed_with_issues"
             assert findings.status_code == 200
             result = findings.json()
+            _validate_schema(
+                CheckJob(run_id=run_id, status="completed_with_issues", result=result, error=None)
+            )
             documents = [item for item in result["documents"] if item["name"].startswith("broken-")]
             assert len(documents) == 2
             assert all(item["parse_status"] == "error" for item in documents)
