@@ -14,11 +14,14 @@
 }
 
 .source-drawer::backdrop { background: #000c; }
+.source-drawer[data-fullscreen="true"] { width: 100%; }
 .source-drawer-panel { display: flex; flex-direction: column; height: 100%; }
 .source-drawer-header { display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; gap: 8px; padding: 6px 16px; border-bottom: 1px solid #dce7e5; }
 .source-drawer .source-drawer-header h2 { min-width: 0; margin: 0; font-family: inherit; font-size: .875rem; font-weight: 600; }
 .source-drawer-actions { display: flex; align-items: center; flex-shrink: 0; gap: 4px; }
 .source-drawer-header button { min-height: 30px; padding: 0 8px; border-radius: 5px; font-size: .75rem; }
+.source-drawer-size { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.source-drawer-size svg { flex-shrink: 0; }
 .source-drawer-header .source-drawer-close { font-size: 1.25rem; line-height: 1; }
 .source-drawer-content { display: flex; flex-direction: column; min-height: 0; flex: 1; overflow: auto; }
 .source-drawer .result-document-details { display: flex; flex-direction: column; flex: 1; min-height: 0; }
@@ -49,3 +52,7 @@
 .source-viewer-footer > div { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 10px; min-width: 0; }
 .source-viewer-footer button { padding: 4px 8px; border-radius: 5px; color: white; background: #0b665d; }
 .source-viewer-footer button:disabled { opacity: .4; }
+
+@media (max-width: 639px) {
+  .source-drawer-size span { display: none; }
+}
