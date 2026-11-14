@@ -600,6 +600,13 @@ def test_native_xlsx_kfz_model_disagreement_keeps_native_scope(
     _stub_ollama(monkeypatch, "1172.70", requests)
     from bench.e2e_v32_20261114 import run as v32
 
+    report = uploaded_files[0]
+    report_path = tmp_path / report["id"]
+    with report_path.open("rb") as source:
+        workbook = load_workbook(source)
+    workbook.create_sheet("Другой лист")["A1"] = "Не включать в запрос"
+    workbook.save(report_path)
+    report["sha256"] = sha256(report_path.read_bytes()).hexdigest()
     request = v32.runtime.api
 
     def wrong_report(path, body=None, timeout=600):
@@ -616,6 +623,7 @@ def test_native_xlsx_kfz_model_disagreement_keeps_native_scope(
     (request_body,) = requests
     (message,) = request_body["messages"]
     assert "КФЗ" in message["content"] and "E2E-31" in message["content"]
+    assert "Не включать в запрос" not in message["content"]
     assert "images" not in message
     assert job.status == "completed"
     assert job.result.scope.period_end == "2027-03-31"

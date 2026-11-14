@@ -526,7 +526,12 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
                 )
             inferred, report_evidence = parsed
         if report.format == "xlsx":
-            _, model_report = read_report_with_model(report_path, v32.runtime, v32.MODEL, pdf=False)
+            try:
+                _, model_report = read_report_with_model(
+                    report_path, v32.runtime, v32.MODEL, pdf=False
+                )
+            except (OSError, KeyError, ValueError):
+                model_report = None
         report_warning = _report_model_warning(inferred, model_report)
         scope = requested_scope or inferred
         if (scope.contract_number, scope.period_start, scope.period_end) != (
