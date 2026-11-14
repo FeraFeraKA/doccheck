@@ -574,6 +574,14 @@ def test_period_column_requires_every_nonempty_value_to_be_readable(reverse, unl
     assert _periods((cell(1, "Период"), cell(2, values[0]), cell(3, values[1]))) == []
 
 
+def test_period_column_note_does_not_mask_a_readable_value():
+    def cell(row, text):
+        return Observation(text, TableCellLocator(kind="table_cell", table=1, row=row, cell=1))
+
+    readings = _periods((cell(1, "Период"), cell(2, "Примечание"), cell(3, "Период: Февраль 2031")))
+    assert [(p.start, p.end) for p, _ in readings] == [("2031-02-01", "2031-02-28")]
+
+
 @pytest.mark.parametrize(
     "printed",
     [

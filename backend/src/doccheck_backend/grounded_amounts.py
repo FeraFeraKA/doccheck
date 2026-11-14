@@ -65,6 +65,7 @@ _PERIOD_COLUMN_HEADING = re.compile(
     r"(?:\s+(?:сверки|работ|услуг|документа|оказания\s+услуг|выполнения\s+работ))?\s*[:.]?$",
     re.I,
 )
+_PERIOD_COLUMN_NONDATA = re.compile(r"^(?:примечани[ея]|пояснени[ея]|описание)\s*[:.]?$", re.I)
 _DAY = r"(?:[0-9]{2}\.[0-9]{2}\.[0-9]{4}|[0-9]{4}-[0-9]{2}-[0-9]{2})"
 _ADDITIONAL_PERIOD = re.compile(
     rf"^\s*(?:г(?:ода?)?\.?\s*)?(?:[.,;+/&]\s*)?"
@@ -411,6 +412,7 @@ def _period_column_heading(
             for item in readings
             if isinstance(item.locator, TableCellLocator)
             and item.locator.row >= header.row + observation.row_span
+            and not _PERIOD_COLUMN_NONDATA.fullmatch(item.raw_text.strip())
         )
     if not values:
         return True, False
