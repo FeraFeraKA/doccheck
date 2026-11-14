@@ -495,6 +495,7 @@ test('the upload receipt keeps its focus when history confirms the same run', as
   const releaseHistory = new Promise<void>((resolve) => { resolveHistory = resolve; });
   await page.route(/\/api\/v0\/runs(?:\?.*)?$/, async (route) => {
     if (route.request().method() === 'POST') {
+      if (accepted) return route.fulfill({ status: 503, json: { code: 'service_unavailable' } });
       accepted = true;
       return route.fulfill({ status: 202, headers: { Location: '/api/v0/runs/' + id },
         json: { run_id: id, status: 'queued' } });
@@ -520,4 +521,13 @@ test('the upload receipt keeps its focus when history confirms the same run', as
   resolveHistory();
   await expect(receipt).toContainText('В очереди');
   await expect(receipt).toBeFocused();
+  await page.getByLabel('Выберите КФЗ').setInputFiles({
+    name: 'another-report.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4 synthetic'),
+  });
+  await page.getByLabel('Выберите первичные документы').setInputFiles({
+    name: 'another-support.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4 synthetic'),
+  });
+  await page.getByRole('button', { name: 'Отправить на проверку' }).press('Enter');
+  await expect(page.getByRole('alert')).toBeVisible();
+  await expect(page.getByRole('status')).toBeEmpty();
 });

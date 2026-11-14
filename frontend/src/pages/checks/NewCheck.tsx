@@ -49,7 +49,7 @@ export function NewCheck() {
   const submitButton = useRef<HTMLButtonElement>(null);
   const chooseReport = useRef<HTMLButtonElement>(null);
   const restoreUploadFocus = useRef(false);
-  const [acceptedCount, setAcceptedCount] = useState(0);
+  const [announceAccepted, setAnnounceAccepted] = useState(false);
   const [receipts, setReceipts] = useState<string[]>([]);
   const clearListedReceipts = useCallback(({ entries }: CheckHistory) => {
     const listed = new Set(entries.map(({ id }) => id));
@@ -129,6 +129,7 @@ export function NewCheck() {
     if (publicDemo || active.current || !canStart) return;
     const controller = new AbortController();
     active.current = controller;
+    setAnnounceAccepted(false);
     setIsSending(true);
     setSubmitError('');
     const submitHadFocus = document.activeElement === submitButton.current;
@@ -140,7 +141,7 @@ export function NewCheck() {
       const accepted = await attempt.current(controller.signal);
       if (controller.signal.aborted) return;
       setReceipts((previous) => [accepted.run_id, ...previous.filter((id) => id !== accepted.run_id)].slice(0, 20));
-      setAcceptedCount((count) => count + 1);
+      setAnnounceAccepted(true);
       restoreUploadFocus.current = submitHadFocus;
       setReport([]);
       setDocuments([]);
@@ -181,7 +182,7 @@ export function NewCheck() {
       </div>
       {submitError && <p className="upload-validation" role="alert">{submitError}</p>}
       <p role="status" className={isSending ? undefined : 'sr-only'}>
-        {isSending ? 'Загрузка файлов…' : acceptedCount > 0 && <span key={acceptedCount}>Сервер получил пакет.</span>}
+        {isSending ? 'Загрузка файлов…' : announceAccepted && 'Сервер получил пакет.'}
       </p>
       {!publicDemo && <RunQueue entries={history.page?.entries} receipts={receipts}
         loading={history.loading} error={history.error} onRetry={history.refresh} />}
