@@ -9,6 +9,7 @@ import numpy as np
 from PIL import Image
 
 from doccheck_backend.contracts.locators import PageLocator
+from doccheck_backend.normalization import normalize_document_date
 from doccheck_backend.page_ocr import (
     PixelBox,
     page_locator,
@@ -37,6 +38,12 @@ class ReportCell:
     locator: PageLocator
     raw: str | None
     amount: Decimal | None
+
+
+@dataclass(frozen=True)
+class ReportReading:
+    cells: list[ReportCell]
+    complete: bool
 
 
 def _peaks(values: np.ndarray, threshold: float) -> list[int]:
@@ -72,8 +79,6 @@ def _parse_money(text: str) -> Decimal | None:
 
 def read_explicit_scope(image: Image.Image) -> tuple[str, str, str] | None:
     """Return the report's own explicit interval when one pair of bounds is visible."""
-    from doccheck_backend.normalization import normalize_document_date
-
     lines = recognize_lines(image, mode=6)
     contracts = {m[1] for line in lines for m in _CONTRACT.finditer(line.text)}
     bounds = {
@@ -95,22 +100,20 @@ def _simple_table(
     selected: PageLocator | None,
     contract_number: str,
     period: tuple[str, str],
-) -> list[ReportCell]:
-    from doccheck_backend.normalization import normalize_document_date
-
+) -> ReportReading | None:
     if selected is not None:
-        return []
+        return None
     lines = recognize_lines(image, mode=6)
     contracts = {m[1] for line in lines for m in _CONTRACT.finditer(line.text)}
     if contracts != {contract_number}:
-        return []
+        return None
     bounds = {
         tuple(normalize_document_date(value).value for value in match.groups())
         for line in lines
         if (match := _EXPLICIT_PERIOD.fullmatch(line.text))
     }
     if bounds != {period}:
-        return []
+        return None
     amounts = {}
     for line in lines:
         parsed = _SIMPLE_LINE.fullmatch(line.text)
@@ -119,8 +122,8 @@ def _simple_table(
         code = _SIMPLE_LABELS.get(parsed[1].strip(".: ").casefold())
         if code is not None:
             amounts.setdefault(code, []).append(line)
-    if not {"0200", "0300", "0800", "0900"} <= amounts.keys():
-        return []
+    if not amounts:
+        return None
     result = []
     for code, candidates in amounts.items():
         if len(candidates) != 1:
@@ -133,7 +136,11 @@ def _simple_table(
         if confirmed is None or _parse_money(confirmed[2]) != amount:
             raw, amount = None, None
         result.append(ReportCell(code, page_locator(page, image, line.box), raw, amount))
-    return result
+    return ReportReading(
+        result,
+        {code for code in _SIMPLE_LABELS.values() if code != "other"}
+        <= {cell.code for cell in result},
+    )
 
 
 def _column_tracks(ink: np.ndarray, horizontals: list[int]) -> list[int]:
@@ -264,42 +271,40 @@ def read_report_row(
     selected: PageLocator | None,
     contract_number: str,
     period: tuple[str, str] | None = None,
-) -> list[ReportCell]:
+) -> ReportReading | None:
     """Return values only when the report contract, header and row can be located."""
     if selected is not None and selected.page != page:
-        return []
+        return None
     ink = np.asarray(image.convert("L")) < 190
     width, height = image.size
     ys = _peaks(ink[:, width // 8 : width * 7 // 8].sum(axis=1), width * 0.43)
     xs = _column_tracks(ink, ys) if 4 <= len(ys) <= 60 else []
     if len(xs) < 6 or xs[-1] - xs[0] < width * 0.55:
-        return _simple_table(image, page, selected, contract_number, period) if period else []
+        return _simple_table(image, page, selected, contract_number, period) if period else None
     header = image.crop((0, 0, width, ys[0]))
     if period is None:
-        return []
-    from doccheck_backend.normalization import normalize_document_date
-
+        return None
     lines = recognize_lines(header)
     contracts = {match[1] for line in lines for match in _CONTRACT.finditer(line.text)}
     if contracts != {contract_number}:
-        return []
+        return None
     bounds = {
         tuple(normalize_document_date(value).value for value in match.groups())
         for line in lines
         if (match := _EXPLICIT_PERIOD.fullmatch(line.text))
     }
     if (bounds and bounds != {period}) or (not bounds and selected is None):
-        return []
+        return None
     band = _row_band(image, selected, xs, ys)
     if band is None:
-        return []
+        return None
     top, bottom, year = band
     if period[0][:4] != year or period[1][:4] != year:
-        return []
+        return None
     cols = _headers(image, ink, xs, ys)
     cells = []
     for code, col in cols.items():
         box = (xs[col], top, xs[col + 1], bottom)
         raw, amount = _read_amount(image, box)
         cells.append(ReportCell(code, page_locator(page, image, box), raw, amount))
-    return cells
+    return ReportReading(cells, {*_GROUP_HEADER, "total"} <= cols.keys())

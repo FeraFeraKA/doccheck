@@ -1,4 +1,5 @@
 import io
+from decimal import Decimal
 from pathlib import Path
 from uuid import uuid4
 
@@ -7,9 +8,14 @@ from fastapi.testclient import TestClient
 from openpyxl import Workbook
 from PIL import Image
 
+from doccheck_backend import scanned_report
 from doccheck_backend.api import create_app
 from doccheck_backend.config import Settings
+from doccheck_backend.contracts.locators import PageLocator
 from doccheck_backend.database import create_database_engine
+from doccheck_backend.grounded_amounts import _contracts, _money, format_rubles
+from doccheck_backend.native_observations import NativeDocument, NativeIssue, Observation
+from doccheck_backend.page_ocr import OcrLine
 from doccheck_backend.run_worker import run_document_worker
 from doccheck_backend.v32_processor import V32Processor
 
@@ -79,3 +85,112 @@ def test_v32_worker_preserves_number_when_document_prediction_fails(database_url
     )
     assert result["rows"][0]["reported_value"] == "1250.00"
     assert result["rows"][0]["status"] == "unverified"
+
+
+def test_rubles_tolerate_only_xlsx_representation_noise():
+    assert format_rubles(Decimal("66936.92999999999"), xlsx=True) == "66936.93"
+    assert format_rubles(Decimal("66936.92999999999")) is None
+    assert format_rubles(Decimal("66936.929"), xlsx=True) is None
+
+
+def test_ocr_contract_number_marker_is_not_the_contract_number():
+    address = PageLocator(kind="page", page=1, bbox=(0.1, 0.1, 0.7, 0.2))
+    observation = Observation("Договор Ne 74/891234/26-47", address)
+    assert _contracts((observation,), template=False) == [("74/891234/26-47", observation)]
+
+
+@pytest.mark.parametrize(("unit", "amount"), [("USD", None), ("руб.", Decimal("625.02"))])
+def test_pdf_total_requires_a_ruble_column_or_currency_in_the_value(unit, amount):
+    document = NativeDocument(
+        (
+            Observation(
+                f"Сумма, {unit}", PageLocator(kind="page", page=1, bbox=(0.6, 0.2, 0.8, 0.3))
+            ),
+            Observation("Итого", PageLocator(kind="page", page=1, bbox=(0.1, 0.4, 0.3, 0.5))),
+            Observation("625.02", PageLocator(kind="page", page=1, bbox=(0.6, 0.4, 0.8, 0.5))),
+        )
+    )
+    value, _ = _money(document, template=False, format_="pdf")
+    assert (value.amount if value is not None else None) == amount
+
+
+def test_scanned_table_requires_matching_year_and_identifies_missing_columns(monkeypatch):
+    image = Image.new("L", (1000, 600), "white")
+    row = PageLocator(kind="page", page=1, fragment_id="kfz-stage-3-2026")
+    monkeypatch.setattr(scanned_report, "_peaks", lambda *_: [150, 220, 290, 360])
+    monkeypatch.setattr(scanned_report, "_column_tracks", lambda *_: [90, 240, 390, 540, 690, 840])
+    monkeypatch.setattr(
+        scanned_report,
+        "recognize_lines",
+        lambda *_: [OcrLine("Договор № EX-26", (10, 10, 200, 50), 99)],
+    )
+    monkeypatch.setattr(scanned_report, "_row_band", lambda *_: (290, 360, "2026"))
+    monkeypatch.setattr(scanned_report, "_headers", lambda *_: {"0200": 2})
+    monkeypatch.setattr(scanned_report, "_read_amount", lambda *_: ("625.02", Decimal("625.02")))
+
+    assert (
+        scanned_report.read_report_row(image, 1, row, "EX-26", ("2025-01-01", "2025-05-31")) is None
+    )
+    assert (
+        scanned_report.read_report_row(image, 1, None, "EX-26", ("2026-01-01", "2026-05-31"))
+        is None
+    )
+    reading = scanned_report.read_report_row(image, 1, row, "EX-26", ("2026-01-01", "2026-05-31"))
+    assert reading is not None and not reading.complete
+    assert reading.cells[0].amount == Decimal("625.02")
+    assert reading.cells[0].locator.bbox == (0.39, 290 / 600, 0.54, 0.6)
+
+
+def test_skipped_page_blocks_totals_from_visible_fragment(monkeypatch, tmp_path):
+    from doccheck_backend import grounded_amounts
+
+    address = PageLocator(kind="page", page=1, bbox=(0.1, 0.2, 0.8, 0.3))
+    document = NativeDocument(
+        (Observation("Сумма: 625.02 руб.", address),),
+        (NativeIssue("native_read_error", page=2),),
+    )
+    monkeypatch.setattr(grounded_amounts, "_read_observations", lambda *_: (document, "native"))
+    result = grounded_amounts.ground_document(
+        uuid4(), "a" * 32, tmp_path / "act.pdf", "pdf", "b" * 64
+    )
+    assert result.issues == document.issues
+    assert result.amount is None
+    assert not any(item.kind == "amount" for item in result.assertions)
+
+
+def test_final_ruble_total_has_priority_over_intermediate_amount():
+    document = NativeDocument(
+        (
+            Observation(
+                "Сумма: 100,00 руб.", PageLocator(kind="page", page=1, bbox=(0.1, 0.3, 0.7, 0.4))
+            ),
+            Observation(
+                "Итого к оплате 120,00 руб.",
+                PageLocator(kind="page", page=1, bbox=(0.1, 0.5, 0.7, 0.6)),
+            ),
+        )
+    )
+    total, _ = _money(document, template=False, format_="pdf")
+    assert total.amount == Decimal("120.00")
+    assert total.locator == document.observations[1].locator
+
+
+def test_own_document_number_points_to_own_header(monkeypatch, tmp_path):
+    from doccheck_backend import grounded_amounts
+
+    document = NativeDocument(
+        (
+            Observation(
+                "Договор № SYN-008", PageLocator(kind="page", page=1, bbox=(0.1, 0.2, 0.8, 0.3))
+            ),
+            Observation(
+                "Акт № SYN-008", PageLocator(kind="page", page=1, bbox=(0.1, 0.4, 0.8, 0.5))
+            ),
+        )
+    )
+    monkeypatch.setattr(grounded_amounts, "_read_observations", lambda *_: (document, "native"))
+    result = grounded_amounts.ground_document(
+        uuid4(), "a" * 32, tmp_path / "act.pdf", "pdf", "b" * 64
+    )
+    assert result.identity == "SYN-008"
+    assert result.identity_locator == document.observations[1].locator

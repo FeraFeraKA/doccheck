@@ -273,6 +273,15 @@ class QwenReader:
         self._loaded = runtime, model, processor, provenance
         return self._loaded
 
+    def release(self) -> None:
+        """Release the model before a different local worker uses the GPU."""
+        if self._loaded is None:
+            return
+        runtime = self._loaded[0]
+        runtime.mx.synchronize()
+        self._loaded = None
+        runtime.mx.clear_cache()
+
     def read(self, image_path: Path) -> dict[str, object]:
         """Return a proposed reading and hashes; errors raise typed exceptions.
 

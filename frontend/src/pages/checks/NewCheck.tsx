@@ -5,7 +5,9 @@ import { Button } from '../../shared/ui/Button';
 import { UploadFileList } from './UploadFiles';
 import { WorkspaceIcon } from './WorkspaceIcon';
 import { prepareRunUpload, RunUploadHttpError } from './createRun';
+import type { ScanScope } from './createRun';
 import { demoRunPath } from './demoData';
+import { isRunId } from './runStatusApi';
 
 type FileGroup = 'report' | 'documents';
 
@@ -40,7 +42,8 @@ function uploadErrorMessage(error: unknown): string {
   return 'Не удалось подтвердить приём пакета. Повторите отправку с теми же файлами.';
 }
 
-const publicDemo = import.meta.env.VITE_DOCCHECK_PUBLIC_DEMO === '1';
+const publicTrial = import.meta.env.VITE_DOCCHECK_PUBLIC_TRIAL === '1';
+const publicDemo = publicTrial || import.meta.env.VITE_DOCCHECK_PUBLIC_DEMO === '1';
 
 export function NewCheck() {
   const navigate = useNavigate();
@@ -52,7 +55,20 @@ export function NewCheck() {
   const [errors, setErrors] = useState({ report: '', documents: '' });
   const [submitError, setSubmitError] = useState('');
   const [isSending, setIsSending] = useState(false);
-  const canStart = report.length === 1 && documents.length > 0;
+  const [useScanScope, setUseScanScope] = useState(false);
+  const [scanScope, setScanScope] = useState<ScanScope>({
+    contractNumber: '', periodStart: '', periodEnd: '', page: 1, stage: 1,
+  });
+  const isScan = /\.(pdf|png)$/i.test(report[0]?.file.name ?? '');
+  const validScanScope = scanScope.contractNumber.trim().length > 0
+    && /^\d{4}-\d{2}-\d{2}$/.test(scanScope.periodStart)
+    && /^\d{4}-\d{2}-\d{2}$/.test(scanScope.periodEnd)
+    && scanScope.periodStart <= scanScope.periodEnd
+    && scanScope.periodStart.slice(0, 4) === scanScope.periodEnd.slice(0, 4)
+    && Number.isInteger(scanScope.page) && scanScope.page >= 1 && scanScope.page <= 12
+    && Number.isSafeInteger(scanScope.stage) && scanScope.stage >= 1;
+  const canStart = report.length === 1 && documents.length > 0
+    && (!isScan || !useScanScope || validScanScope);
 
   useEffect(() => () => active.current?.abort(), []);
 
@@ -62,6 +78,12 @@ export function NewCheck() {
     setFiles(next);
     setErrors((previous) => ({ ...previous, [group]: '' }));
     setSubmitError('');
+  }
+
+  function updateScope(values: Partial<ScanScope>) {
+    attempt.current = null;
+    setSubmitError('');
+    setScanScope((previous) => ({ ...previous, ...values }));
   }
 
   function removeFile(group: FileGroup, id: number) {
@@ -116,6 +138,9 @@ export function NewCheck() {
       attempt.current ??= prepareRunUpload({
         report: report[0].file,
         documents: documents.map(({ file }) => file),
+        scanScope: isScan && useScanScope
+          ? { ...scanScope, contractNumber: scanScope.contractNumber.trim() }
+          : undefined,
       }, newIdempotencyKey());
       const accepted = await attempt.current(controller.signal);
       if (controller.signal.aborted) return;
@@ -128,13 +153,38 @@ export function NewCheck() {
     }
   }
 
+  async function startTrial() {
+    if (active.current) return;
+    const controller = new AbortController();
+    active.current = controller;
+    setIsSending(true);
+    setSubmitError('');
+    try {
+      const response = await fetch('/api/v0/trial', { method: 'POST', signal: controller.signal });
+      if (response.status !== 202) throw new Error('Trial request failed');
+      const accepted = await response.json() as { run_id?: unknown };
+      if (!isRunId(accepted.run_id)) {
+        throw new Error('Invalid trial run ID');
+      }
+      if (!controller.signal.aborted) void navigate('/checks/' + accepted.run_id);
+    } catch {
+      if (!controller.signal.aborted) setSubmitError('Не удалось запустить пробную проверку.');
+    } finally {
+      active.current = null;
+      if (!controller.signal.aborted) setIsSending(false);
+    }
+  }
+
   return (
     <div className="upload-page">
       <h1>Новая проверка</h1>
-      <p className="upload-intro">Добавьте КФЗ и первичные документы.</p>
+      <p className="upload-intro">{publicTrial
+        ? 'Проверьте учебную КФЗ и 22 первичных документа из готового комплекта.'
+        : 'Добавьте КФЗ и первичные документы.'}</p>
       {publicDemo ? (
         <section className="upload-card upload-public-notice mt-6">
-          <h2>Загрузка доступна в локальной установке</h2>
+          <h2>{publicTrial ? 'Синтетический комплект' : 'Загрузка доступна в локальной установке'}</h2>
+          {publicTrial && <p>Откройте результат, проверьте источники и скачайте XLSX.</p>}
         </section>
       ) : (
         <div className="mt-6 grid grid-cols-1 items-start gap-5 md:grid-cols-2">
@@ -144,7 +194,46 @@ export function NewCheck() {
             onFiles={takeFiles} onRemove={(id) => removeFile('documents', id)} />
         </div>
       )}
+      {!publicDemo && isScan && <fieldset className="upload-card mt-6" disabled={isSending}>
+        <label className="flex items-center gap-2">
+          <input type="checkbox" checked={useScanScope} onChange={(event) => {
+            attempt.current = null;
+            setSubmitError('');
+            setUseScanScope(event.currentTarget.checked);
+          }} />
+          Указать строку КФЗ
+        </label>
+        {useScanScope && <>
+          <p className="checks-caption">Укажите договор, период в пределах одного года и этап со скана.</p>
+          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+            <label className="grid gap-1">Номер договора
+              <input className="rounded border p-2" value={scanScope.contractNumber}
+                onChange={(event) => updateScope({ contractNumber: event.currentTarget.value })} />
+            </label>
+            <label className="grid gap-1">Начало периода
+              <input className="rounded border p-2" type="date" value={scanScope.periodStart}
+                onChange={(event) => updateScope({ periodStart: event.currentTarget.value })} />
+            </label>
+            <label className="grid gap-1">Конец периода
+              <input className="rounded border p-2" type="date" value={scanScope.periodEnd}
+                onChange={(event) => updateScope({ periodEnd: event.currentTarget.value })} />
+            </label>
+            <label className="grid gap-1">Этап
+              <input className="rounded border p-2" type="number" min={1} value={scanScope.stage || ''}
+                onChange={(event) => updateScope({ stage: event.currentTarget.valueAsNumber })} />
+            </label>
+            <label className="grid gap-1">Страница
+              <input className="rounded border p-2" type="number" min={1} max={12}
+                value={scanScope.page || ''}
+                onChange={(event) => updateScope({ page: event.currentTarget.valueAsNumber })} />
+            </label>
+          </div>
+        </>}
+      </fieldset>}
       <div className="upload-navigation mt-5 flex flex-wrap items-center gap-3">
+        {publicTrial && <Button disabled={isSending} onClick={() => { void startTrial(); }}>
+          Проверить учебный комплект <WorkspaceIcon name="arrow" size={17} />
+        </Button>}
         {!publicDemo && <Button disabled={isSending || !canStart} onClick={() => { void submit(); }}>
           Отправить на проверку <WorkspaceIcon name="arrow" size={17} />
         </Button>}
@@ -153,7 +242,7 @@ export function NewCheck() {
         </Link>
       </div>
       {submitError && <p className="upload-validation" role="alert">{submitError}</p>}
-      {isSending && <p role="status">Отправляем пакет…</p>}
+      {isSending && <p role="status">{publicTrial ? 'Запускаем проверку…' : 'Отправляем пакет…'}</p>}
     </div>
   );
 }

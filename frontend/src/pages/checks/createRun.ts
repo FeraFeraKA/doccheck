@@ -3,9 +3,18 @@ import { isRunId } from './runStatusApi';
 
 const runsPath = '/api/v0/runs';
 
+export interface ScanScope {
+  contractNumber: string;
+  periodStart: string;
+  periodEnd: string;
+  page: number;
+  stage: number;
+}
+
 export interface RunUpload {
   report: File;
   documents: readonly File[];
+  scanScope?: ScanScope;
 }
 
 export interface AcceptedRun {
@@ -92,6 +101,17 @@ export function prepareRunUpload(upload: RunUpload, idempotencyKey: string) {
   const form = new FormData();
   form.append('report', upload.report);
   for (const document of upload.documents) form.append('documents', document);
+  if (upload.scanScope) {
+    const { contractNumber, periodStart, periodEnd, page, stage } = upload.scanScope;
+    form.append('contract_number', contractNumber);
+    form.append('period_start', periodStart);
+    form.append('period_end', periodEnd);
+    form.append('report_row_locator', JSON.stringify({
+      kind: 'page',
+      page,
+      fragment_id: 'kfz-stage-' + stage + '-' + periodStart.slice(0, 4),
+    }));
+  }
 
   return async (signal?: AbortSignal): Promise<AcceptedRun> => {
     const requestUrl = new URL(runsPath, globalThis.location.origin);

@@ -39,7 +39,7 @@ from doccheck_backend.page_ocr import OcrError, render_pages
 from doccheck_backend.result_summary import build_summary
 from doccheck_backend.run_reads import RunReadError, open_run_original
 from doccheck_backend.run_worker import StoredRun
-from doccheck_backend.scanned_report import ReportCell, read_explicit_scope, read_report_row
+from doccheck_backend.scanned_report import ReportReading, read_explicit_scope, read_report_row
 
 if TYPE_CHECKING:
     from doccheck_ml.qwen import QwenReader
@@ -56,7 +56,7 @@ _ARTICLES = {
 _HEX = re.compile(r"[0-9a-f]{32}")
 _MAX_PAGES = 12
 _MAX_NATIVE_CHARS = 24_000
-_RULES_VERSION = "doccheck-local-v3.2-addressed.2"
+_RULES_VERSION = "doccheck-local-v3.2-addressed.3"
 _REPORT_FIELDS = ("contract_number", "period_start", "period_end")
 _REPORT_SCHEMA = {
     "type": "object",
@@ -78,6 +78,8 @@ _CODES = {
     "different_contract": "В оригинале указан другой договор.",
     "outside_period": "Документ относится к периоду вне выбранной области.",
     "source_unreadable": "Оригинал недоступен, изменён или не читается.",
+    "source_incomplete": "Часть оригинала не прочитана. Итог требует проверки.",
+    "report_incomplete": "Не удалось прочитать все обязательные показатели строки КФЗ.",
     "qwen_prediction_failed": "Локальная модель не смогла прочитать документ.",
     "extraction_limit": "Документ выходит за пределы локального режима извлечения.",
 }
@@ -111,7 +113,7 @@ def load_reader() -> "QwenReader":
     return QwenReader(QwenConfig(model_path, adapter_path))
 
 
-def create_processor() -> "V32Processor":
+def create_processor() -> Callable[[StoredRun, Path], CheckJob]:
     """Build the queue processor, checking local configuration before claiming jobs."""
     reader = load_reader()
     # These dependencies are optional for the HTTP API and the other worker modes.
@@ -120,7 +122,22 @@ def create_processor() -> "V32Processor":
     import_module("bench.e2e_v32_20261114.runtime")
     import_module("pypdf")
 
-    return V32Processor(reader.read_document, reader.read)
+    processor = V32Processor(reader.read_document, reader.read)
+    lock_path = os.environ.get("DOCCHECK_GPU_LOCK")
+    if not lock_path:
+        return processor
+
+    from fcntl import LOCK_EX, flock
+
+    def process(run: StoredRun, directory: Path) -> CheckJob:
+        with Path(lock_path).open("a") as lock:
+            flock(lock, LOCK_EX)
+            try:
+                return processor(run, directory)
+            finally:
+                reader.release()
+
+    return process
 
 
 def _copy_original(run: StoredRun, directory: Path, item: dict, scratch: Path) -> Path:
@@ -282,6 +299,7 @@ _FIELD_MESSAGES = {
     "amount_missing": "Однозначный итог документа не найден.",
     "duplicate_identity": "В комплекте есть другое чтение с той же идентичностью документа.",
     "period_partial": "Период документа выходит за границы выбранного интервала.",
+    "source_incomplete": _CODES["source_incomplete"],
 }
 
 
@@ -334,6 +352,9 @@ def _amount_components(scope, documents, grounds, bound):
             item for item in by_kind.get("amount", []) if item.locator == source.total_locator
         ]
         ids = [item.id for item in refs]
+        if any(error.code == "source_incomplete" for error in document.errors):
+            unresolved[document.id] = (None, ["source_incomplete"], ids)
+            continue
         if contracts and source.contract != scope.contract_number:
             document.decision = _decision(
                 "exclude", "different_contract", [e.id for e in contracts]
@@ -518,7 +539,7 @@ class V32Processor:
         run_id = str(run.id)
         evidence = []
         grounds = {}
-        scanned: list[ReportCell] = []
+        scanned: ReportReading | None = None
         report_copy = None
         native = model_scope = provenance = None
         explicit_scope = _scope(run, None, None)
@@ -555,9 +576,16 @@ class V32Processor:
                         document.decision = _decision("needs_review", "report_pending")
                         continue
                     try:
-                        grounds[document.id] = ground_document(
+                        grounded = ground_document(
                             run.id, document.id, path, document.format, _digest(path)
                         )
+                        grounds[document.id] = grounded
+                        if grounded.issues:
+                            _file_error(document, "source_incomplete")
+                            if grounded.text:
+                                document.parse_status = "partial"
+                                document.decision = _decision("needs_review", "source_incomplete")
+                                continue
                     except OcrError:
                         _file_error(document, "source_unreadable")
                     # Deterministic readers cover native fields. The approved LoRA
@@ -644,18 +672,18 @@ class V32Processor:
                 try:
                     selector = scope_for_scan.report_row_locator
                     for page, image in enumerate(render_pages(report_copy), 1):
-                        cells = read_report_row(
+                        reading = read_report_row(
                             image,
                             page,
                             selector,
                             scope_for_scan.contract_number,
                             (scope_for_scan.period_start, scope_for_scan.period_end),
                         )
-                        if cells:
+                        if reading:
                             if scanned:
-                                scanned = []
+                                scanned = None
                                 break
-                            scanned = cells
+                            scanned = reading
                 except OcrError:
                     _file_error(report, "source_unreadable")
         for document in documents:
@@ -689,7 +717,14 @@ class V32Processor:
                 message="Прочитана выбранная строка КФЗ.",
                 evidence_refs=[],
             )
-        rows, addressed = _rows(run.id, scope, report, native, scanned, documents, grounds)
+        report_complete = bool(native or (scanned and scanned.complete))
+        if scanned and not scanned.complete:
+            _file_error(report, "report_incomplete")
+            if scanned.cells:
+                report.parse_status = "partial"
+                report.decision = _decision("include", "report_incomplete")
+        cells = scanned.cells if scanned else []
+        rows, addressed = _rows(run.id, scope, report, native, cells, documents, grounds)
         evidence.extend(addressed)
         if report.decision.state == "include":
             report.decision.evidence_refs = [
@@ -697,7 +732,7 @@ class V32Processor:
             ]
         primary_issues = (
             []
-            if (native or scanned) and all(row.reported_value is not None for row in rows)
+            if report_complete and rows and all(row.reported_value is not None for row in rows)
             else [
                 PrimaryIssue(
                     id="report_needs_review",
@@ -716,7 +751,7 @@ class V32Processor:
             evidence=evidence,
             rows=rows,
             versions=Versions(
-                code_revision=os.environ.get("DOCCHECK_CODE_REVISION") or "v3.2-addressed.2",
+                code_revision=os.environ.get("DOCCHECK_CODE_REVISION") or "v3.2-addressed.3",
                 rules_version=_RULES_VERSION,
                 ml_module_version="0.1.0" if provenance else None,
                 ml_policy_version=provenance["policy_sha256"] if provenance else None,
