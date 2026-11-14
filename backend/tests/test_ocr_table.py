@@ -202,3 +202,44 @@ def test_third_read_with_negation_blocks_positive_consensus(table, signed):
 
     assert "production_overhead" not in result
     assert result["payroll"].amount == Decimal("1234.67")
+
+
+def test_reference_only_footer_below_complete_payroll_leaf_is_not_qualifier(table):
+    image, row, headings = table
+
+    def read(box, scale):
+        if 145 < box[1] < 270:
+            return (
+                _source("Затраты на оплату", 10, 10, 76, 36),
+                _source("труда. всего:", 10, 42, 75, 61),
+                _source("(гр.6+тр.9)", 13, 67, 72, 88),
+            )
+        return _default_cell_read(box, scale)
+
+    result = read_table_amounts(image, row, headings, read)
+    assert result["payroll"].amount == Decimal("1234.67")
+
+
+def test_parenthesized_qualifier_below_leaf_cannot_be_skipped(table):
+    image, row, headings = table
+
+    def read(box, scale):
+        if 145 < box[1] < 270:
+            return (
+                _source("Оплату труда, всего", 10, 10, 76, 36),
+                _source("(из средств субсидии)", 13, 42, 72, 61),
+            )
+        return _default_cell_read(box, scale)
+
+    result = read_table_amounts(image, row, headings, read)
+    assert "payroll" not in result
+    assert result["production_overhead"].amount == Decimal("1234.67")
+
+
+def test_separate_local_rule_within_edge_window_stays_ambiguous(table):
+    image, row, headings = table
+    ImageDraw.Draw(image).line((244, _ROW[0] + 3, 375, _ROW[0] + 3), width=1, fill=0)
+
+    result = read_table_amounts(image, row, headings, _default_cell_read)
+    assert "payroll" not in result
+    assert result["production_overhead"].amount == Decimal("1234.67")

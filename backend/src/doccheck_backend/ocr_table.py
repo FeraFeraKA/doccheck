@@ -26,9 +26,29 @@ _REPORT_CODES = {
     "general_admin": ("0900", ("общехозяйственн", "затрат")),
 }
 _AGGREGATES = {
-    "payroll": ("0200", ("на оплату труда",), ("оплату", "труд", "всего")),
-    "insurance": ("0300", ("страховые взносы",), ("взносы", "всего")),
+    "payroll": ("0200", ("на оплату труда",)),
+    "insurance": ("0300", ("страховые взносы",)),
 }
+_WORD = r"[^\W\d_]+"
+# Accept only finite known leaf vocabulary (including narrow OCR spelling
+# variants), never an arbitrary qualifier. Parent section code is separate proof.
+_PAYROLL_LEAD = r"(?:(?:затраты|ззтрзты)\s+(?:(?:на|ва)\s+)?)?"
+_PAYROLL_LEAF = re.compile(rf"{_PAYROLL_LEAD}оплату\s+труд(?:а|;з)?[\s.,:]+всего[.:]?")
+_INSURANCE_LEAF = re.compile(
+    r"(?:(?:страховые|стрффв\.ые|стдод\.ые)\s+)?(?:взносы|взяоеы)\s*"
+    r"(?:(?:на|ва|зга)\s+)?"
+    r"(?:обязательное|обязатељное|обюатељное)\s+"
+    r"(?:социальное|еоциа\.тное|соцвсљное|соцна-льное)\s+"
+    r"(?:страхование|страхованне|страхезанне)[\s.,:]+всего[.:]?"
+)
+# The source layout prints an arithmetic reference on a separate line.
+# Restrict it to reference-like tokens, digits and plus; if OCR is unclear
+# the optional suffix is noise only when enclosed and geometrically isolated.
+_FORMULA_SUFFIX = re.compile(
+    r"\(\s*(?:гр|тр|ф|rp)[.\-\s]*[\dлitх]+\s*\+\s*"
+    r"(?:гр|тр|rp|т;х)[.\-\s]*[\dлitх-]+\s*\)",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -127,29 +147,54 @@ def _tokens(observations: tuple[Observation, ...]) -> str:
 
 
 def _repeat_contains(
-    read: ReadCell,
-    box: PixelBox,
-    required: tuple[str, ...],
-    *,
-    code: str | None = None,
-    exact_leaf: bool = False,
+    read: ReadCell, box: PixelBox, required: tuple[str, ...], *, code: str
 ) -> bool:
     texts = [_tokens(read(box, scale)) for scale in (2, 3, 4)]
     hits = 0
     for text in texts:
-        words = re.findall(r"[а-яё]+", text)
         codes = set(_CODE.findall(text))
-        if code is not None and codes - {code}:
+        if codes - {code}:
             return False
-        if (
-            exact_leaf
-            and text
-            and any(term in text for term in required)
-            and not all(any(word.startswith(term) for term in required) for word in words)
-        ):
-            return False
-        if all(term in text for term in required) and (code is None or code in codes):
+        if all(term in text for term in required) and code in codes:
             hits += 1
+    return hits >= 2
+
+
+def _leaf_header(items: tuple[Observation, ...], category: str) -> str | None:
+    content = []
+    prefix = _PAYROLL_LEAF if category == "payroll" else _INSURANCE_LEAF
+    for index, item in enumerate(items):
+        text = _tokens((item,))
+        if text.startswith("("):
+            if index != len(items) - 1 or not _FORMULA_SUFFIX.fullmatch(text):
+                return None
+            previous = items[index - 1].locator if index else None
+            current = item.locator
+            if (
+                not isinstance(previous, PageLocator)
+                or not isinstance(current, PageLocator)
+                or previous.bbox is None
+                or current.bbox is None
+                or current.bbox[1] <= previous.bbox[3]
+            ):
+                return None
+        else:
+            content.append(text)
+    candidate = " ".join(content)
+    return candidate if prefix.fullmatch(candidate) else None
+
+
+def _repeat_leaf(read: ReadCell, box: PixelBox, category: str) -> bool:
+    hits = 0
+    for scale in (2, 3, 4):
+        items = read(box, scale)
+        if _leaf_header(items, category) is not None:
+            hits += 1
+        elif "всего" in _tokens(items):
+            # A rejected read that names an aggregate may describe part of it.
+            # It may only be ignored if its words form an OCR variant handled
+            # above, never because another scale omitted a printed qualifier.
+            return False
     return hits >= 2
 
 
@@ -159,20 +204,30 @@ def _safe_row_cell(image: Image, grid: TableGrid, index: int) -> bool:
         span = right - left - 10
         if span <= 0:
             return False
-        region = image.crop((left + 5, top + 2, right - 5, bottom - 2))
+        tolerance = max(2, min(4, (bottom - top) // 7))
+        # The global projected line can differ by a few pixels from the local
+        # cell edge on a slanted scan. Exempt only the contiguous edge cluster;
+        # a separate rule just inside it is still an ambiguous row boundary.
+        local_edges = []
+        for y in (top, bottom):
+            edge_y = max(0, y - tolerance)
+            edge = image.crop((left + 5, edge_y, right - 5, y + tolerance + 1))
+            pixels = edge.tobytes()
+            lines = [
+                edge_y + i // span
+                for i in range(0, len(pixels), span)
+                if sum(pixel <= 200 for pixel in pixels[i : i + span]) >= span * 0.72
+            ]
+            if not lines or lines[-1] - lines[0] + 1 != len(lines):
+                return False
+            local_edges.append(lines)
+        region = image.crop((left + 5, local_edges[0][-1] + 1, right - 5, local_edges[1][0]))
         stripe = region.tobytes()
         if any(
             sum(pixel <= 160 for pixel in stripe[i : i + span]) >= span * 0.68
             for i in range(0, len(stripe), span)
         ):
             return False
-        for y in (top, bottom):
-            edge = image.crop((left + 5, max(0, y - 2), right - 5, y + 3))
-            if not any(
-                sum(pixel <= 200 for pixel in edge.tobytes()[i : i + span]) >= span * 0.72
-                for i in range(0, edge.width * edge.height, span)
-            ):
-                return False
     return (
         min(
             _line_score(image, grid.x[column], top + 3, bottom - 2)
@@ -241,7 +296,7 @@ def _scoped_column_roles(
             ):
                 continue
         else:
-            code, words, leaf = _AGGREGATES[category]
+            code, words = _AGGREGATES[category]
             heading = (
                 grid.x[covered[0]] + 3,
                 header_top + 2,
@@ -255,8 +310,8 @@ def _scoped_column_roles(
             ):
                 continue
             leaf_top, leaf_bottom = header_bottom, grid.upper[2]
-            if leaf_bottom - leaf_top < 36 or not _repeat_contains(
-                read, _cell_box(grid, index, leaf_top, leaf_bottom), leaf, exact_leaf=True
+            if leaf_bottom - leaf_top < 36 or not _repeat_leaf(
+                read, _cell_box(grid, index, leaf_top, leaf_bottom), category
             ):
                 continue
         if (
