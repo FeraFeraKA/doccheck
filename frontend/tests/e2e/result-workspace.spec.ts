@@ -230,7 +230,7 @@ test('source pane opens the stored original at a mobile width', async ({ page })
       const row = Number(url.searchParams.get('row') ?? '1');
       return route.fulfill({ json: {
         sheet: 'Синтетика', sheets: ['Синтетика'], row, column: 1, last_row: 7, last_column: 3,
-        rows: Array.from({ length: 8 - row }, (_, index) => ['', '', row + index === 7 ? 'Итого 60,25' : '']),
+        rows: Array.from({ length: 8 - row }, (_, index) => ['', '', row + index === 7 ? '60.25' : '']),
       } });
     }
     return url.pathname.endsWith('/fragments')
@@ -239,7 +239,7 @@ test('source pane opens the stored original at a mobile width', async ({ page })
   });
 
   await page.route(`**/api/v0/runs/${id}/documents/ledger/fragment-preview?evidence_id=amount-2`, (route) =>
-    route.fulfill({ json: { text: 'Итого 60,25', highlight: { start_byte: 11, end_byte: 16 } } }));
+    route.fulfill({ json: { text: '60.250', highlight: { start_byte: 0, end_byte: 6 } } }));
 
   await page.goto(`/checks/${id}`);
   await page.getByText('Основания выбранного показателя', { exact: true }).click();
@@ -261,8 +261,8 @@ test('source pane opens the stored original at a mobile width', async ({ page })
   expect(ledgerRequests).toEqual([]);
   await page.getByRole('button', { name: 'Просмотреть источник' }).click();
   await expect(preview.getByText(/Лист «Синтетика», C7/)).toBeVisible();
-  const selectedCell = preview.getByRole('cell', { name: 'Итого 60,25', exact: true });
-  await expect(selectedCell.locator('mark')).toHaveText('60,25');
+  const selectedCell = preview.getByRole('cell', { name: '60.250', exact: true });
+  await expect(selectedCell.locator('mark')).toHaveText('60.250');
   await expect(selectedCell).toHaveAttribute('data-source-tone', 'discrepancy');
   await expect(preview.getByRole('link', { name: 'Скачать оригинал' })).toBeVisible();
   expect(ledgerRequests).toEqual(expect.arrayContaining([
@@ -272,6 +272,62 @@ test('source pane opens the stored original at a mobile width', async ({ page })
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   await drawer.getByRole('button', { name: 'Закрыть просмотр источника' }).click();
   await expect(drawer).toHaveCount(0);
+});
+
+test('keyboard focus remains in the reader when a page or sheet window changes', async ({ page }) => {
+  await page.setViewportSize({ width: 768, height: 844 });
+  const id = 'paged-preview';
+  const base = `**/api/v0/runs/${id}`;
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACklEQVR42mMAAQAABQABeqhXUAAAAABJRU5ErkJggg==',
+    'base64',
+  );
+  await page.route(base, (route) => route.fulfill({ json: {
+    run_id: id, status: 'completed_with_issues', created_at: '2026-11-14T00:00:00Z', error: null,
+    progress: { processed_documents: 4, total_documents: 4 },
+  } }));
+  await page.route(`${base}/findings`, (route) => route.fulfill({ json: {
+    ...example.result, run_id: id,
+  } }));
+  await page.route(`${base}/documents/**`, (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname.endsWith('/fragments')) {
+      return route.fulfill({ json: example.result.evidence.find(({ id }) => id === url.searchParams.get('evidence_id')) });
+    }
+    if (url.pathname.endsWith('/page-preview')) return route.fulfill({
+      body: png, contentType: 'image/png', headers: { 'X-Document-Pages': '2' },
+    });
+    if (url.pathname.endsWith('/preview')) {
+      const row = Number(url.searchParams.get('row') ?? '1');
+      return route.fulfill({ json: {
+        sheet: 'Синтетика', sheets: ['Синтетика'], row, column: 1, last_row: 62, last_column: 1,
+        rows: Array.from({ length: Math.min(60, 63 - row) }, (_, offset) => [String(row + offset)]),
+      } });
+    }
+    return route.fulfill({ body: 'Synthetic transport fixture', contentType: 'application/octet-stream' });
+  });
+
+  await page.goto(`/checks/${id}/documents`);
+  await page.getByRole('button', { name: 'synthetic-report.pdf', exact: true }).click();
+  const viewer = page.getByRole('region', { name: 'Просмотр источника' });
+  const nextPage = viewer.getByRole('button', { name: 'Следующая страница', exact: true });
+  await expect(nextPage).toBeEnabled();
+  await nextPage.press('Enter');
+  await expect(viewer.getByText('Страница 2 / 2')).toBeVisible();
+  await expect(nextPage).toBeFocused();
+  await expect(nextPage).toBeDisabled();
+  await viewer.getByRole('button', { name: 'Предыдущая страница', exact: true }).press('Enter');
+  await expect(viewer.getByText('Страница 1 / 2')).toBeVisible();
+
+  await page.getByRole('combobox', { name: 'Документы комплекта' }).selectOption('ledger');
+  const nextRows = viewer.getByRole('button', { name: 'Следующие строки', exact: true });
+  await expect(nextRows).toBeEnabled();
+  await nextRows.press('Enter');
+  await expect(viewer.getByRole('rowheader', { name: '62', exact: true })).toBeVisible();
+  await expect(nextRows).toBeFocused();
+  await expect(nextRows).toBeDisabled();
+  await viewer.getByRole('button', { name: 'Предыдущие строки', exact: true }).press('Enter');
+  await expect(viewer.getByRole('rowheader', { name: '60', exact: true })).toBeVisible();
 });
 
 test('sources on the same PDF page have distinct selectable boxes at 320px', async ({ page }) => {
