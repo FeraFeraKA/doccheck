@@ -90,7 +90,10 @@ _PDF_SCOPE = re.compile(
     r"\s*[–—]\s*(\d{4}-\d{2}-\d{2}|\d{2}\.\d{2}\.\d{4})\.?$",
     re.IGNORECASE,
 )
-_PDF_MONEY = re.compile(r"\s*:\s*(\d[\d \u00a0\u2009\u202f]*(?:[.,]\d{1,2})?)\s*(?:руб\.?|₽)\.?$")
+_PDF_MONEY = re.compile(
+    r"\s*:\s*(\d[\d \u00a0\u2009\u202f]*(?:[.,]\d{1,2})?)\s*(?:руб\.?|₽)(?:\.?\s+без\s+НДС)?\.?$",
+    re.IGNORECASE,
+)
 _MAX_EXPANDED_OFFICE_BYTES = 128 * 1024**2
 _IDENTITY_CONFLICTS = {
     "conflicting_duplicate",
@@ -302,7 +305,9 @@ def _source_groups(
         ]
         # Prevent a scope match from an unrelated sheet.
         if sheet is None or any(
-            item.locator.sheet != sheet for item in observations if _period_candidate(item.raw_text)
+            item.locator.sheet != sheet
+            for item in observations
+            if _period_candidate(item.raw_text) or _contract(item.raw_text) is not None
         ):
             return [], []
         return amounts, articles
