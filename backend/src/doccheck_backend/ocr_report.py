@@ -127,13 +127,13 @@ def _dated_stages(
 
 
 def parse_scan_report(observations: tuple[Observation, ...]) -> ScanScope | None:
-    visible = tuple(
+    positioned = tuple(
         item
         for item in observations
-        if isinstance(item.locator, PageLocator)
-        and item.locator.bbox is not None
-        and item.confidence is not None
-        and item.confidence >= _MIN_SCORE
+        if isinstance(item.locator, PageLocator) and item.locator.bbox is not None
+    )
+    visible = tuple(
+        item for item in positioned if item.confidence is not None and item.confidence >= _MIN_SCORE
     )
     contracts = {
         value
@@ -156,14 +156,14 @@ def parse_scan_report(observations: tuple[Observation, ...]) -> ScanScope | None
     if start > last:
         return None
     matches = []
-    for item in visible:
+    for item in positioned:
         label = _ROW.fullmatch(item.raw_text.casefold())
         if label and (int(label[1]), int(label[2])) == (stage, last.year):
             matches.append(item)
-    if len(matches) != 1:
+    if len(matches) != 1 or matches[0] not in visible:
         return None
     row = matches[0]
-    row_items = _row_neighbors(row, visible)
+    row_items = _row_neighbors(row, positioned)
     candidates = [
         item
         for item in row_items
@@ -180,7 +180,7 @@ def parse_scan_report(observations: tuple[Observation, ...]) -> ScanScope | None
             for item in candidates
             if _box(item)[0] - _MAX_X_DRIFT <= x <= _box(item)[2] + _MAX_X_DRIFT
         ]
-        if len(eligible) != 1:
+        if len(eligible) != 1 or eligible[0] not in visible:
             continue
         if eligible[0].locator.bbox in claimed:
             return None
