@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { CheckDetail } from '../../src/pages/checks';
@@ -74,8 +74,9 @@ function defer<T>() {
 it('берёт файлы после чтения, ждёт подтверждения передачи и запускает только по нажатию', async () => {
   const pendingUpload = defer<{ upload_id: string }>();
   const pendingStart = defer<Awaited<ReturnType<typeof startPreparedRun>>>();
+  let updateProgress: ((percent: number) => void) | undefined;
   const send = vi.fn<ReturnType<typeof prepareRunTransfer>>().mockImplementation((_signal, progress) => {
-    progress?.(100);
+    updateProgress = progress;
     return pendingUpload.promise;
   });
   const reading = vi.spyOn(FileReader.prototype, 'readAsArrayBuffer');
@@ -91,10 +92,19 @@ it('берёт файлы после чтения, ждёт подтвержде
   expect(submit).toBeDisabled();
   expect(prepareTransfer).not.toHaveBeenCalled();
 
-  await screen.findByText('Ожидаем подтверждения загрузки…');
+  const bar = await screen.findByRole('progressbar', { name: 'Загрузка пакета' });
+  expect(bar).toHaveAttribute('aria-valuenow', '0');
+  expect(screen.getByText('0%', { exact: true })).toBeVisible();
+  act(() => updateProgress?.(37));
+  expect(bar).toHaveAttribute('aria-valuenow', '37');
+  expect(screen.getByText('37%', { exact: true })).toBeVisible();
+  expect(submit).toBeDisabled();
+  act(() => updateProgress?.(100));
+  expect(screen.getByText('Ожидаем подтверждения загрузки…')).toBeVisible();
+  expect(screen.getByText('100%', { exact: true })).toBeVisible();
   expect(reading).toHaveBeenCalledTimes(3);
   expect(send).toHaveBeenCalledTimes(1);
-  expect(screen.getByRole('progressbar', { name: 'Загрузка пакета' })).toHaveAttribute('aria-valuenow', '100');
+  expect(bar).toHaveAttribute('aria-valuenow', '100');
   expect(submit).toBeDisabled();
   expect(startRun).not.toHaveBeenCalled();
 
@@ -105,6 +115,7 @@ it('берёт файлы после чтения, ждёт подтвержде
   expect(packet.scanScope).toBeUndefined();
   pendingUpload.resolve({ upload_id: 'first-upload' });
   await waitFor(() => expect(submit).toBeEnabled());
+  expect(bar).not.toBeInTheDocument();
 
   fireEvent.click(submit);
   fireEvent.click(submit);
@@ -181,9 +192,13 @@ it('загружает пакет с явным выбором строки то
 });
 
 it('повторяет передачу того же пакета, а смена файлов освобождает сохранённый комплект', async () => {
+  const retry = defer<{ upload_id: string }>();
   const send = vi.fn<ReturnType<typeof prepareRunTransfer>>()
-    .mockRejectedValueOnce(new TypeError('network'))
-    .mockResolvedValueOnce({ upload_id: 'first-upload' });
+    .mockImplementationOnce((_signal, progress) => {
+      progress?.(55);
+      return Promise.reject(new TypeError('network'));
+    })
+    .mockReturnValueOnce(retry.promise);
   prepareTransfer.mockReturnValueOnce(send)
     .mockReturnValueOnce(vi.fn().mockResolvedValue({ upload_id: 'new-upload' }));
   renderWizard();
@@ -192,6 +207,9 @@ it('повторяет передачу того же пакета, а смен�
   expect(await screen.findByRole('alert')).toHaveTextContent('Не удалось подтвердить приём пакета');
   fireEvent.click(screen.getByRole('button', { name: 'Повторить загрузку' }));
   const submit = screen.getByRole('button', { name: 'Запустить проверку' });
+  expect(screen.getByRole('progressbar', { name: 'Загрузка пакета' })).toHaveAttribute('aria-valuenow', '0');
+  expect(submit).toBeDisabled();
+  retry.resolve({ upload_id: 'first-upload' });
   await waitFor(() => expect(submit).toBeEnabled());
   expect(prepareTransfer).toHaveBeenCalledTimes(1);
   expect(send).toHaveBeenCalledTimes(2);
