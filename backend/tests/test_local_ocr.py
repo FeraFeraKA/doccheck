@@ -476,3 +476,18 @@ def test_scanned_scope_uses_same_value_metadata_on_selected_row_page(scanned_sta
 
     conflicting_cover = replace(cover[0], raw_text="Договор № OTHER-19")
     assert parse_scan_report((conflicting_cover, *cover[1:], *report)) is None
+
+
+@pytest.mark.parametrize(
+    ("text", "confidence", "repeated"),
+    [("7 этап, 2029 г.:", 0.60, False), ("8 этап, 2028 г.:", 0.99, True)],
+)
+def test_conflicting_stage_or_year_at_selected_row_location_rejects_scope(
+    scanned_stage, text, confidence, repeated
+):
+    from dataclasses import replace
+
+    row = next(item for item in scanned_stage if item.raw_text == "7 этап, 2028 г.:")
+    alternative = replace(row, raw_text=text, confidence=confidence, repeated_read=repeated)
+
+    assert parse_scan_report((*scanned_stage, alternative)) is None
