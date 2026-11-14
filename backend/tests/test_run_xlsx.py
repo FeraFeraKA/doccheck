@@ -214,6 +214,46 @@ def test_document_decisions_preserve_only_their_saved_sources():
     assert_document_decision_links(workbook)
 
 
+def test_compact_report_preserves_values_and_document_decisions():
+    result = CheckResult.model_validate(decision_result())
+    workbook = load_workbook(BytesIO(export_check_result(result)))
+    assert workbook.active.title == "Отчёт"
+    assert all(sheet.sheet_state == "hidden" for sheet in workbook.worksheets[1:])
+    rows = list(workbook.active.values)
+    header = next(row for row in rows if row[0] == "Показатель КФЗ")
+    assert header == (
+        "Показатель КФЗ",
+        "Значение в КФЗ",
+        "Ожидаемо по документам",
+        "Расхождение",
+        "Статус",
+        "Пояснение",
+    )
+    first = next(row for row in rows if row[0].startswith("Синтетическая статья A"))
+    assert first[0].endswith(" · RUB")
+    assert first[1:5] == ("150.50", "120.50", "30.00", "Расхождение")
+    second = next(row for row in rows if row[0].startswith("Синтетическая статья B"))
+    assert second[1:5] == ("0.00", None, None, "Не проверен")
+    excluded = next(row for row in rows if row[1] == "synthetic-other-period.pdf")
+    assert "Документ вне периода" in excluded[5]
+    assert "Страница 1; строка 3" in excluded[5]
+    assert all(cell.data_type != "f" for row in workbook.active for cell in row)
+
+
+def test_compact_report_handles_long_label_and_partial_document():
+    result = CheckResult.model_validate(decision_result())
+    result.rows[0].label = "x" * 32_761
+    result.rows[0].indicator_code = "1234567890123456"
+    document = result.documents[1]
+    document.parse_status = "partial"
+    document.errors = [result.documents[3].errors[0]]
+    workbook = load_workbook(BytesIO(export_check_result(result)))
+    rows = list(workbook.active.values)
+    assert any(isinstance(row[0], str) and row[0].endswith(" · RUB") for row in rows)
+    assert len(rows[3][0].encode("utf-16-le")) // 2 <= 32_767
+    assert any(row[0] == "Прочитан частично" and row[1] == document.name for row in rows)
+
+
 def test_document_decision_code_is_literal_and_not_truncated():
     payload = decision_result()
     code = '=HYPERLINK("https://example.test/")'
@@ -254,6 +294,7 @@ def test_workbook_preserves_amounts_and_keeps_all_untrusted_cells_literal():
 
     workbook = load_workbook(BytesIO(export_check_result(job.result)))
     assert workbook.sheetnames == [
+        "Отчёт",
         "Сверка",
         "Слагаемые",
         "Источники",
