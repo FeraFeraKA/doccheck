@@ -489,11 +489,12 @@ function Reconciliation({ result, storedRunId, rowJump }: {
               {openSourceId === source.id && (
                 <SourceDrawer onClose={() => setOpenSourceId(undefined)}>
                   <SourceContext row={row} picker={sourcePicker}>
-                    <DocumentSourcePreview
+                    {(active) => <DocumentSourcePreview
                       runId={storedRunId}
                       document={{ id: document.id, name: document.name, format: document.format ?? null }}
                       evidenceId={source.id}
-                    />
+                      active={active}
+                    />}
                   </SourceContext>
                 </SourceDrawer>
               )}

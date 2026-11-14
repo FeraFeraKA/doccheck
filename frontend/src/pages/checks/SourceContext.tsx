@@ -11,7 +11,7 @@ type Panel = (typeof tabs)[number][0];
 export function SourceContext({ row, picker, children }: {
   row: ReviewResult['rows'][number];
   picker: ReactNode;
-  children: ReactNode;
+  children: (active: boolean) => ReactNode;
 }) {
   const [panel, setPanel] = useState<Panel>('source');
   const id = useId();
@@ -44,7 +44,7 @@ export function SourceContext({ row, picker, children }: {
     <div className="source-context-preview" role="tabpanel" id={id + '-source'}
       aria-labelledby={id + '-source-tab'} hidden={panel !== 'source'}>
       {picker}
-      {children}
+      {children(panel === 'source')}
     </div>
     <div className="source-context-rule" role="tabpanel" id={id + '-rule'} tabIndex={0}
       aria-labelledby={id + '-rule-tab'} hidden={panel !== 'rule'}>

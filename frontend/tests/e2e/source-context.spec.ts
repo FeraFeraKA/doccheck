@@ -2,6 +2,66 @@ import { expect, test } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import example from '../../../contracts/check-result.v1.synthetic.json' with { type: 'json' };
 
+test('a PNG fragment received on the rule tab is centered once when shown', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 600 });
+  const id = 'delayed-source-context';
+  const path = `**/api/v0/runs/${id}`;
+  const evidence = { ...example.result.evidence[0], locator: { kind: 'page', page: 1, bbox: [.2, .87, .5, .91] } };
+  await page.route(path, (route) => route.fulfill({ json: {
+    run_id: id, status: 'completed_with_issues', created_at: '2026-11-14T00:00:00Z', error: null,
+    progress: { processed_documents: 4, total_documents: 4 },
+  } }));
+  await page.route(`${path}/findings`, (route) => route.fulfill({ json: {
+    ...example.result, run_id: id,
+    documents: example.result.documents.map((item) => item.id === 'report'
+      ? { ...item, format: 'png', name: 'synthetic-report.png' } : item),
+    evidence: example.result.evidence.map((item) => item.id === evidence.id ? evidence : item),
+  } }));
+  const png = readFileSync(new URL('../../../docs/synthetic/nrt-89/inputs/12_communication.png', import.meta.url));
+  let originals = 0;
+  let fragments = 0;
+  let release: () => void = () => {};
+  const delayed = new Promise<void>((resolve) => { release = resolve; });
+  await page.route(`${path}/documents/report`, (route) => {
+    originals += 1;
+    return route.fulfill({ body: png, contentType: 'application/octet-stream' });
+  });
+  await page.route(`${path}/documents/report/fragments?evidence_id=${evidence.id}`, async (route) => {
+    fragments += 1;
+    await delayed;
+    await route.fulfill({ json: evidence });
+  });
+
+  await page.goto('/checks/' + id);
+  await page.getByRole('button', { name: 'Просмотреть источник' }).click();
+  const drawer = page.getByRole('dialog', { name: 'Источник документа' });
+  const image = drawer.getByRole('img', { name: 'synthetic-report.png' });
+  await drawer.getByRole('button', { name: 'Увеличить масштаб' }).click();
+  const original = await image.getAttribute('src');
+  const originalRequestCount = originals;
+  const fragmentRequestCount = fragments;
+  const source = drawer.getByRole('tab', { name: 'Источник' });
+  const rule = drawer.getByRole('tab', { name: 'Правило проверки' });
+  await rule.click();
+  await expect(rule).toHaveAttribute('aria-selected', 'true');
+  release();
+  const mark = drawer.locator('.source-viewer-highlight');
+  await expect(mark).toHaveCount(1);
+  await expect(mark).toBeHidden();
+  await source.click();
+  await expect(mark).toBeInViewport({ ratio: 1 });
+  await expect(drawer.getByText('125%', { exact: true })).toBeVisible();
+  await expect(image).toHaveAttribute('src', original ?? '');
+  const viewport = drawer.getByRole('region', { name: 'Просмотр документа: synthetic-report.png' });
+  await viewport.evaluate((element) => { element.scrollTop = 0; });
+  await expect(mark).not.toBeInViewport();
+  await rule.click();
+  await source.click();
+  expect(await viewport.evaluate((element) => element.scrollTop)).toBe(0);
+  await expect(mark).not.toBeInViewport();
+  expect([originals, fragments]).toEqual([originalRequestCount, fragmentRequestCount]);
+});
+
 for (const width of [390, 768]) {
   test(`source context keeps the drawer and document mounted at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 844 });
