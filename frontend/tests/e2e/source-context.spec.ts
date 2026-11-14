@@ -62,7 +62,7 @@ for (const width of [390, 768]) {
     const picker = drawer.getByRole('combobox', { name: 'Доказательство' });
     await drawer.getByRole('button', { name: 'Следующий источник' }).press('Enter');
     await expect(picker).toHaveValue('report-alt');
-    await expect(drawer.locator('.source-viewer-highlight')).toHaveCSS('top', /.+px$/);
+    await expect(drawer.locator('.source-viewer-highlight')).toHaveAttribute('style', /top: 72%/);
     await expect(drawer.getByText('125%', { exact: true })).toBeVisible();
     await expect(image).toHaveAttribute('src', blob ?? '');
     await expect(drawer).toHaveAttribute('data-fullscreen', 'true');
@@ -70,6 +70,7 @@ for (const width of [390, 768]) {
     expect(fragments).toContain('report-alt');
     await drawer.getByRole('button', { name: 'Предыдущий источник' }).press('Enter');
     await expect(picker).toHaveValue(first.id);
+    await expect(drawer.locator('.source-viewer-highlight')).toHaveAttribute('style', /top: 40%/);
 
     await picker.selectOption('amount-1');
     await expect(drawer.getByText('Лист «Синтетика», C6', { exact: true })).toBeVisible();
