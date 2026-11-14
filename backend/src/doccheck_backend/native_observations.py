@@ -18,6 +18,7 @@ class Observation:
     confidence: float | None = None
     repeated_read: bool = False
     text_boxes: tuple[tuple[int, int, Locator], ...] = ()
+    frame_size: tuple[int, int] | None = None
 
 
 @dataclass(frozen=True)

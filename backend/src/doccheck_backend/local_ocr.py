@@ -264,6 +264,7 @@ def _windows_frame(
                         fragment_id=f"winocr-{index}-{group_index}",
                     ),
                     text_boxes=tuple(parts),
+                    frame_size=(width, height),
                 )
             )
     return tuple(observations)

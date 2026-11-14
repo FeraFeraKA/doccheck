@@ -342,17 +342,22 @@ def _scoped_column_roles(
     return roles
 
 
-def _money_read(items: tuple[Observation, ...]) -> Decimal | None:
+def _money_read(
+    items: tuple[Observation, ...], *, frame_size: tuple[int, int] | None = None
+) -> Decimal | None:
     if len(items) > 1:
         regions = [item.locator.bbox for item in items if isinstance(item.locator, PageLocator)]
         if len(regions) != len(items) or any(region is None for region in regions):
             return None
         if max(region[1] for region in regions) >= min(region[3] for region in regions):
             return None
+        width, height = frame_size or items[0].frame_size or (1, 1)
         for previous, following in pairwise(regions):
             previous_height = previous[3] - previous[1]
             following_height = following[3] - following[1]
-            if following[0] - previous[2] > min(previous_height, following_height) * 1.2:
+            if (following[0] - previous[2]) * width > min(
+                previous_height, following_height
+            ) * height * 1.2:
                 return None
     text = " ".join(item.raw_text.strip() for item in items)
     text = re.sub(r"^([+−–-])\s+", r"\1", text)
@@ -392,26 +397,38 @@ def read_table_amounts(
         # without repeat confidence. Check the full cell, including margins.
         x0, x1 = grid.x[index], grid.x[index + 1]
         y0, y1 = grid.row
-        competing = False
+        inside = []
         for item in page_observations:
             location = item.locator
-            if (
-                not isinstance(location, PageLocator)
-                or location.bbox is None
-                or location.page != row.page
-            ):
+            if not isinstance(location, PageLocator) or location.bbox is None:
+                continue
+            if location.page != row.page:
                 continue
             left, top, right, bottom = location.bbox
-            if not (
+            if (
                 x0 <= left * image.width < right * image.width <= x1
                 and y0 <= top * image.height < bottom * image.height <= y1
             ):
-                continue
-            other = _money_read((item,))
-            if other is not None and other != amount:
-                competing = True
-                break
-        if competing:
+                inside.append(item)
+
+        candidates = {_money_read((item,)) for item in inside}
+        for item in inside:
+            start = item.locator.bbox
+            adjacent = sorted(
+                (
+                    other
+                    for other in inside
+                    if other is not item
+                    and other.locator.bbox[0] >= start[2]
+                    and max(start[1], other.locator.bbox[1]) < min(start[3], other.locator.bbox[3])
+                ),
+                key=lambda other: other.locator.bbox[0],
+            )
+            if adjacent:
+                combined = _money_read((item, adjacent[0]), frame_size=image.size)
+                if combined is not None:
+                    candidates.add(combined)
+        if candidates - {None, amount}:
             continue
         reading = " ".join(item.raw_text for item in readings[values.index(amount)])
         # The inner crop stays within the original atomic cell.
