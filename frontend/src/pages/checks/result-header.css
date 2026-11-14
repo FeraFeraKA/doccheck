@@ -11,6 +11,8 @@
 
 .check-result-header .result-synthetic-label { color: #714c31; }
 
+.check-result-header .check-header-controls > div:first-child { min-width: 0; max-width: 100%; }
+.check-result-header .check-result-tabs { max-width: 100%; flex-wrap: wrap; column-gap: clamp(.75rem, 3vw, 1.5rem); }
 .check-result-header .check-header-controls {
   border-color: var(--ui-line);
   padding-bottom: .375rem;
