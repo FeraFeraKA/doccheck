@@ -44,26 +44,32 @@ _MONTHS = (
     ("декабрь", "декабря", "декабре"),
 )
 _MONTH = {name: i for i, variants in enumerate(_MONTHS, 1) for name in variants}
-_PERIOD_LABEL = r"(?:отч[её]тный\s+)?период(?:\s+[\w-]+){0,4}\s*:"
-_MONTH_YEAR = rf"({'|'.join(_MONTH)})\s+([0-9]{{4}})\b(?:\s+(?:года?\b|г\b\.?))?"
-_MONTH_PERIOD = re.compile(
-    rf"(?:^\s*{_PERIOD_LABEL}\s*(?:с\s+)?|\bза\s+|\bв\s+){_MONTH_YEAR}", re.I
+_PERIOD_TITLE = r"(?:^\s*|\|\s*)(?:отч[её]тный\s+)?период\b"
+_PERIOD_LABEL = (
+    rf"{_PERIOD_TITLE}(?:\s+[\w-]+){{0,4}}\s*[:—–-]\s*"
+    rf"|{_PERIOD_TITLE}(?:\s+(?:оказания\s+услуг|выполнения\s+работ))?\s+"
 )
+_MONTH_YEAR = rf"({'|'.join(_MONTH)})\s+([0-9]{{4}})\b(?:\s+(?:года?\b|г\b\.?))?"
+_MONTH_PERIOD = re.compile(rf"(?:(?:{_PERIOD_LABEL})(?:с\s+)?|\bза\s+|\bв\s+){_MONTH_YEAR}", re.I)
 _MONTH_RANGE_END = re.compile(rf"\s*(?:[—–\-/]|\bпо\b|\bдо\b)\s*{_MONTH_YEAR}", re.I)
 _PERIOD_CONTINUATION = re.compile(r"^\s*(?:[—–\-/]|\bпо\b|\bдо\b)", re.I)
-_PERIOD_FIELD = re.compile(rf"^{_PERIOD_LABEL}", re.I)
+_PERIOD_FIELD = re.compile(_PERIOD_TITLE, re.I)
 _DAY = r"(?:[0-9]{2}\.[0-9]{2}\.[0-9]{4}|[0-9]{4}-[0-9]{2}-[0-9]{2})"
 _DATE_RANGE = re.compile(
-    rf"(?:^|\|\s*){_PERIOD_LABEL}\s*(?:с\s+)?({_DAY})\s*(?:по|[–—-])\s*({_DAY})\b", re.I
+    rf"(?:{_PERIOD_LABEL})(?:с\s+)?({_DAY})(?:\s+г\.?)?\s*(?:по|до|[–—-])\s*({_DAY})\b",
+    re.I,
 )
 _DATE = re.compile(rf"^дата(?:\s+документа)?\s*[:№]?\s*({_DAY})(?:\s*г\.?)?$", re.I)
 _HEADER_DATE = re.compile(
     rf"^(?:акт|счет-акт|счёт-акт|упд)\b[^\n]{{0,72}}?\bот\s+({_DAY})(?:\s*г\.?)?$", re.I
 )
 _CONTRACT_ID = r"[\w]+(?:[/-][\w]+)*"
-_STAGE_LABEL = re.compile(r"^(?:номер\s+)?этап(?:\s+работ)?\s*(?:№|:)?\s*([1-9][0-9]*)\b", re.I)
-_STAGE_VALUE = re.compile(r"^(?:№\s*)?([1-9][0-9]*)[.]?$")
-_BARE_STAGE_LABEL = re.compile(r"^(?:номер\s+)?этап(?:\s+работ)?[: ]*$", re.I)
+_STAGE_FIELD = re.compile(
+    r"^(?:номер\s+)?этап(?:\s+работ)?(?:\s*[:|—–-]\s*|\s+(?=№|[0-9])|(?=№|$))(.*)$",
+    re.I,
+)
+_STAGE_VALUE = re.compile(r"(?:№\s*)?0*([1-9][0-9]*)[.]?")
+_STAGE_CONTINUATION = re.compile(r"^(?:[,;/—–-]|и\s+|по\s+|до\s+)\s*(?:№\s*)?[0-9]", re.I)
 _CONTRACT = re.compile(
     rf"^(?:(?:по\s+|основание\s*:?\s*)?договор(?:у)?|контракт)(?=\s|[:№])"
     rf"\s*:?\s*(?:№\s*|N[eoо°º]\s+(?=[\w/-]*[0-9]))?({_CONTRACT_ID})(?=$|[\s,.;|])",
@@ -168,7 +174,7 @@ def _read_observations(
                 observations.append(observation)
         if len(observations) == before:
             issues.append(NativeIssue("no_addressed_source_text", page=page))
-    # Retain weak readings only for a second pass that can veto a confident category.
+    # Weak readings can veto an assertion without becoming evidence themselves.
     return NativeDocument(tuple(observations), tuple(issues)), "ocr", tuple(potential)
 
 
@@ -184,17 +190,37 @@ def _following(label: Observation, value: Observation) -> bool:
     )
 
 
-def _stages(observations: tuple[Observation, ...]) -> list[tuple[str, Observation]]:
+def _stages(
+    observations: tuple[Observation, ...],
+) -> tuple[list[tuple[str, Observation]], bool]:
     stages = []
+    unresolved = False
     for index, observation in enumerate(observations):
-        raw = observation.raw_text.strip()
-        if match := _STAGE_LABEL.match(raw):
-            stages.append((match[1], observation))
-        elif _BARE_STAGE_LABEL.fullmatch(raw) and index + 1 < len(observations):
-            value = observations[index + 1]
-            if _following(observation, value) and (match := _STAGE_VALUE.fullmatch(value.raw_text)):
-                stages.append((match[1], value))
-    return stages
+        if not (field := _STAGE_FIELD.fullmatch(observation.raw_text.strip())):
+            continue
+        value = field[1].strip()
+        source = observation
+        if index + 1 < len(observations):
+            following = observations[index + 1]
+            label_cell, value_cell = observation.locator, following.locator
+            adjacent_cells = (
+                isinstance(label_cell, TableCellLocator)
+                and isinstance(value_cell, TableCellLocator)
+                and (label_cell.table, label_cell.row) == (value_cell.table, value_cell.row)
+                and label_cell.cell + 1 == value_cell.cell
+            )
+            if adjacent_cells or label_cell == value_cell or _following(observation, following):
+                next_text = following.raw_text.strip()
+                if value in {"", "№"}:
+                    value, source = next_text, following
+                elif _STAGE_CONTINUATION.match(next_text):
+                    unresolved = True
+                    continue
+        if match := _STAGE_VALUE.fullmatch(value):
+            stages.append((match[1], source))
+        else:
+            unresolved = True
+    return stages, unresolved
 
 
 def _contracts(
@@ -229,7 +255,7 @@ def _periods(observations: tuple[Observation, ...]) -> list[tuple[Period, Observ
             following
             and _following(observation, following)
             and _PERIOD_CONTINUATION.match(following.raw_text.strip())
-            and (_PERIOD_FIELD.match(raw) or _MONTH_PERIOD.search(raw))
+            and (_PERIOD_FIELD.search(raw) or _MONTH_PERIOD.search(raw))
         ):
             unresolved_period = True
             continue
@@ -259,7 +285,7 @@ def _periods(observations: tuple[Observation, ...]) -> list[tuple[Period, Observ
                     end=f"{last_year:04}-{last_month:02}-{monthrange(last_year, last_month)[1]:02}",
                 )
                 periods.append((period, observation))
-        elif _PERIOD_FIELD.match(raw):
+        elif _PERIOD_FIELD.search(raw.translate(_OCR_LABEL_MAP)):
             unresolved_period = True
         if match := _DATE.fullmatch(raw) or _HEADER_DATE.fullmatch(raw):
             if value := normalize_document_date(match[1]).value:
@@ -543,14 +569,24 @@ def ground_document(
         if (value := normalize_contract_number(raw).value)
     ]
     period_hits = _periods(observations)
-    stage_hits = _stages(observations)
-    stage_uncertain = has_weak_ocr and {stage for stage, _ in _stages(potential)} != {
-        stage for stage, _ in stage_hits
-    }
+    stage_hits, stage_uncertain = _stages(observations)
+    if has_weak_ocr:
+        possible_stages, unresolved_stage = _stages(potential)
+        stage_uncertain |= unresolved_stage or {stage for stage, _ in possible_stages} != {
+            stage for stage, _ in stage_hits
+        }
     periods = {(p.start, p.end) for p, _ in period_hits}
     if has_weak_ocr and {(p.start, p.end) for p, _ in _periods(potential)} != periods:
         periods.clear()
     contracts = {value for value, _ in contract_hits}
+    if has_weak_ocr:
+        possible_contracts = {
+            value
+            for raw, _ in _contracts(potential, template=False)
+            if (value := normalize_contract_number(raw).value)
+        }
+        if possible_contracts != contracts:
+            contracts.clear()
     contract = next(iter(contracts)) if len(contracts) == 1 else None
     period = period_hits[0][0] if len(periods) == 1 else None
     if contract:

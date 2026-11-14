@@ -270,7 +270,7 @@ def test_unresolved_scan_can_retry_existing_files_with_the_correct_stage(databas
         document.add_paragraph("Акт № SYN-043")
         document.add_paragraph(f"Договор № {CONTRACT}")
         document.add_paragraph(f"Период: {START} — {END}")
-        document.add_paragraph(f"Этап: {stage}")
+        document.add_paragraph(f"Этап: № {stage:02}")
         document.add_paragraph("Общехозяйственные расходы.")
         document.add_paragraph(f"Итого: {amount} руб.")
         path = tmp_path / f"admin-stage-{stage}.docx"
