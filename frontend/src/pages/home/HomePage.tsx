@@ -14,7 +14,7 @@ const statusLabels: Record<JobStatus, string> = {
 
 const buttonClass = 'rounded border px-4 py-2 disabled:cursor-not-allowed disabled:opacity-50';
 const checkingHealth = import.meta.env.VITE_DOCCHECK_PUBLIC_DEMO === '1'
-  ? 'Проверяем связь с API. После простоя запуск демосервера может занять около минуты.'
+  ? 'Проверяем связь с API. После простоя запуск сервера может занять около минуты.'
   : 'Проверяем связь с API…';
 
 export function HomePage() {
@@ -112,7 +112,7 @@ export function HomePage() {
 
   return (
     <main className="mx-auto max-w-3xl p-8">
-      <h1 className="text-2xl font-semibold">DocCheck</h1>
+      <h1 className="text-2xl font-semibold">Проверка системы</h1>
       <p className="mt-4">Синтетический режим: проверка работы приложения без документов.</p>
       <p className="mt-2">OCR и настоящая финансовая сверка здесь не выполняются.</p>
 

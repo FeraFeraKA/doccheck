@@ -4,7 +4,6 @@ import { Link, useNavigate, useSearchParams } from 'react-router';
 import { classes } from '../../shared/lib/classes';
 import { loadRunHistory, runStatusLabels } from './checkData';
 import type { CheckHistory, FindingCounts, FindingFilter, HistoryEntry, RunStatus } from './checkData';
-import { demoJob, demoRunPath, demoTitle } from './demoData';
 import { OverviewIcon } from './OverviewIcon';
 import { useRunHistory } from './useRunHistory';
 import './checks-overview.css';
@@ -82,13 +81,14 @@ interface LayoutProps {
 function OverviewLayout({ demo, archive, cursor, page, loading, error, retry, finding, changeFilter }: LayoutProps) {
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState<Sort>('recent');
+  const order = archive ? 'recent' : sort;
   const entries = page?.entries ?? [];
   const search = query.trim().toLocaleLowerCase('ru');
   const shown = entries.filter((entry) =>
     `${entry.title} ${entry.contractNumber ?? ''}`.toLocaleLowerCase('ru').includes(search),
   );
   // The default order follows the server cursor. Name sorting applies to this page.
-  if (sort === 'name') shown.sort((a, b) => a.title.localeCompare(b.title, 'ru', { numeric: true }));
+  if (order === 'name') shown.sort((a, b) => a.title.localeCompare(b.title, 'ru', { numeric: true }));
 
   function pageLink(key?: string) {
     const params = new URLSearchParams();
@@ -120,14 +120,14 @@ function OverviewLayout({ demo, archive, cursor, page, loading, error, retry, fi
                 onClick={() => changeFilter?.(value)}>{label}</button>
             ))}
           </div>}
-          <label className="overview-sort">
+          {!archive && <label className="overview-sort">
             <span>Сортировка</span>
             <select className="overview-secondary" value={sort}
               onChange={(event) => setSort(event.target.value === 'name' ? 'name' : 'recent')}>
               <option value="recent">Сначала новые</option>
               <option value="name">По названию</option>
             </select>
-          </label>
+          </label>}
         </div>}
         {demo && <p className="overview-notice">История рабочих проверок доступна в локальной установке.</p>}
         {loading && <p className="overview-notice" role="status">Загрузка проверок…</p>}
@@ -138,7 +138,7 @@ function OverviewLayout({ demo, archive, cursor, page, loading, error, retry, fi
         {page && <HistoryTable
           entries={shown}
           archive={archive}
-          sort={sort}
+          sort={order}
           filtered={!!finding || !!search}
           reset={() => { setQuery(''); changeFilter?.('all'); }}
         />}
@@ -147,32 +147,17 @@ function OverviewLayout({ demo, archive, cursor, page, loading, error, retry, fi
           {page?.nextCursor && <Link className="overview-secondary" to={pageLink(page.nextCursor)}>Более ранние проверки</Link>}
         </nav>}
       </section>
-      {!archive && <section className="overview-section overview-example" aria-labelledby="overview-example-heading">
-        <h2 id="overview-example-heading">Готовый пример</h2>
-        <div className="overview-table-wrap">
-          <table className="overview-table">
-            <thead><tr><th scope="col">Проверка</th><th scope="col">Результат</th><th scope="col">Документы</th></tr></thead>
-            <tbody><tr>
-              <td><CheckTitle to={demoRunPath} title={demoTitle} tone="neutral" /></td>
-              <td className="overview-result"><span className="overview-chip neutral">Синтетический пример</span></td>
-              <td className="overview-documents"><span className="overview-document-count">
-                <OverviewIcon name="files" size={15} />{demoJob.result.documents.length}
-              </span></td>
-            </tr></tbody>
-          </table>
-        </div>
-      </section>}
     </div>
   );
 }
 
-function CheckTitle({ to, title, tone, synthetic, contractNumber }: {
-  to: string; title: string; tone: string; synthetic?: boolean; contractNumber?: string;
+function CheckTitle({ to, title, tone, synthetic, contractNumber, active }: {
+  to: string; title: string; tone: string; synthetic?: boolean; contractNumber?: string; active: boolean;
 }) {
   return <div className="overview-check-title">
     <span className={classes('overview-file-symbol', tone)}><OverviewIcon name="file" size={21} /></span>
     <div>
-      <Link to={to}>{title}</Link>
+      <Link to={to} title={active ? 'К очереди проверок' : undefined}>{title}</Link>
       {contractNumber && <small>Договор {contractNumber}</small>}
       {synthetic && <small>Синтетика</small>}
     </div>
@@ -220,11 +205,13 @@ function HistoryTable({ entries, archive, sort, filtered, reset }: {
         </tr></thead>
         <tbody>{entries.map((entry) => {
           const { id, title, counts, status, synthetic, createdAt } = entry;
-          const to = '/checks/' + encodeURIComponent(id);
+          const active = status === 'queued' || status === 'processing';
+          const to = active ? '/checks/new#queue' : '/checks/' + encodeURIComponent(id);
           const tone = counts ? findingLabel(counts).tone : tones[status];
           const total = counts ? counts.verified + counts.discrepancy + counts.unverified : 0;
           return <tr key={id} className="overview-check-row" onClick={(event) => openRow(event, to)}>
-            <td><CheckTitle to={to} title={title} tone={tone} synthetic={synthetic} contractNumber={entry.contractNumber} /></td>
+            <td><CheckTitle to={to} title={title} tone={tone} synthetic={synthetic}
+              contractNumber={entry.contractNumber} active={active} /></td>
             <td className="overview-result">
               {archive && <span className="overview-chip neutral">В архиве</span>}
               <CheckResult entry={entry} />
