@@ -7,7 +7,8 @@ import { WorkspaceIcon } from './WorkspaceIcon';
 import { prepareRunUpload, RunUploadHttpError } from './createRun';
 import { demoRunPath } from './demoData';
 
-const steps = ['Отчёт (КФЗ)', 'Первичные документы'];
+type FileGroup = 'report' | 'documents';
+
 const formats = ['.pdf', '.docx', '.xlsx', '.png'];
 const mib = 1024 ** 2;
 const maxFileSize = 50 * mib;
@@ -44,36 +45,36 @@ const publicDemo = import.meta.env.VITE_DOCCHECK_PUBLIC_DEMO === '1';
 export function NewCheck() {
   const navigate = useNavigate();
   const nextFileId = useRef(0);
-  const input = useRef<HTMLInputElement>(null);
   const active = useRef<AbortController | null>(null);
   const attempt = useRef<ReturnType<typeof prepareRunUpload> | null>(null);
-  const [step, setStep] = useState(0);
   const [report, setReport] = useState<SelectedFile[]>([]);
   const [documents, setDocuments] = useState<SelectedFile[]>([]);
-  const [over, setOver] = useState(false);
-  const [error, setError] = useState('');
+  const [errors, setErrors] = useState({ report: '', documents: '' });
+  const [submitError, setSubmitError] = useState('');
   const [isSending, setIsSending] = useState(false);
-  const isReport = step === 0;
-  const files = isReport ? report : documents;
-  const setFiles = isReport ? setReport : setDocuments;
+  const canStart = report.length === 1 && documents.length > 0;
 
   useEffect(() => () => active.current?.abort(), []);
 
-  function changeStep(next: number) {
-    if (active.current) return;
-    setStep(next);
-    setError('');
-  }
-
-  function changeFiles(next: SelectedFile[]) {
+  function changeFiles(group: FileGroup, next: SelectedFile[]) {
     attempt.current = null;
+    const setFiles = group === 'report' ? setReport : setDocuments;
     setFiles(next);
-    setError('');
+    setErrors((previous) => ({ ...previous, [group]: '' }));
+    setSubmitError('');
   }
 
-  function takeFiles(incoming: FileList) {
+  function removeFile(group: FileGroup, id: number) {
+    if (active.current) return;
+    const files = group === 'report' ? report : documents;
+    changeFiles(group, files.filter((item) => item.id !== id));
+  }
+
+  function takeFiles(incoming: FileList, group: FileGroup) {
     if (publicDemo || active.current || incoming.length === 0) return;
     const selected = Array.from(incoming);
+    const isReport = group === 'report';
+    const setError = (message: string) => setErrors((previous) => ({ ...previous, [group]: message }));
     if (isReport && selected.length > 1) {
       setError('Выберите один файл КФЗ.');
       return;
@@ -102,15 +103,15 @@ export function NewCheck() {
     }
 
     const items = selected.map((file) => ({ id: nextFileId.current++, file }));
-    changeFiles(isReport ? items : [...documents, ...items]);
+    changeFiles(group, isReport ? items : [...documents, ...items]);
   }
 
   async function submit() {
-    if (publicDemo || active.current || report.length !== 1 || documents.length === 0) return;
+    if (publicDemo || active.current || !canStart) return;
     const controller = new AbortController();
     active.current = controller;
     setIsSending(true);
-    setError('');
+    setSubmitError('');
     try {
       attempt.current ??= prepareRunUpload({
         report: report[0].file,
@@ -120,7 +121,7 @@ export function NewCheck() {
       if (controller.signal.aborted) return;
       void navigate('/checks/' + encodeURIComponent(accepted.run_id));
     } catch (error) {
-      if (!controller.signal.aborted) setError(uploadErrorMessage(error));
+      if (!controller.signal.aborted) setSubmitError(uploadErrorMessage(error));
     } finally {
       active.current = null;
       if (!controller.signal.aborted) setIsSending(false);
@@ -131,90 +132,92 @@ export function NewCheck() {
     <div className="upload-page">
       <h1>Новая проверка</h1>
       <p className="upload-intro">Добавьте отчёт и подтверждающие документы для сверки.</p>
-      <ol className="upload-steps" aria-label="Шаги">
-        {steps.map((label, index) => (
-          <li key={label}>
-            <button type="button" onClick={() => changeStep(index)} aria-current={index === step ? 'step' : undefined}
-              disabled={isSending || (index === 1 && !publicDemo && report.length === 0)}>
-              <span>{(index === 0 ? report.length : documents.length) > 0 && index !== step
-                ? <WorkspaceIcon name="check" size={16} /> : index + 1}</span>
-              {label}
-            </button>
-            {index === 0 && <WorkspaceIcon name="arrow" size={16} />}
-          </li>
-        ))}
-      </ol>
-      <section className={classes('upload-card', over && 'is-dragging')}
-        onDragOver={(event) => {
-          event.preventDefault();
-          if (!publicDemo && !active.current) setOver(true);
-        }}
-        onDragLeave={(event) => {
-          if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) {
-            setOver(false);
-          }
-        }}
-        onDrop={(event) => {
-          event.preventDefault();
-          setOver(false);
-          takeFiles(event.dataTransfer.files);
-        }}>
-        <header className="upload-card-header">
-          <div>
-            <h2>Загрузка документов</h2>
-            <p>{isReport ? 'Отчёт КФЗ · один файл PDF, DOCX, XLSX или PNG' : 'Первичные документы · PDF, DOCX, XLSX, PNG'}</p>
-          </div>
-          <Link className="upload-example" to={demoRunPath}>Открыть готовый синтетический результат</Link>
-        </header>
-        {publicDemo ? <div className="upload-empty">
-          <div className="upload-empty-icon"><WorkspaceIcon name="file" size={32} /></div>
-          <h3>Загрузка доступна в локальной установке</h3>
-          <p>В публичном демо можно открыть готовый синтетический результат.</p>
-        </div> : <>
-          <input key={step} ref={input} type="file" hidden
-            aria-label={isReport ? 'Выберите КФЗ' : 'Выберите первичные документы'}
-            accept={formats.join(',')} multiple={!isReport} disabled={isSending}
-            onChange={(event) => {
-              if (event.currentTarget.files) takeFiles(event.currentTarget.files);
-              event.currentTarget.value = '';
-            }} />
-          {files.length === 0 ? <div className="upload-empty">
-            <div className="upload-empty-icon"><WorkspaceIcon name="file" size={32} /></div>
-            <h3>{isReport ? 'Перетащите отчёт сюда' : 'Перетащите документы сюда'}</h3>
-            <p>или выберите {isReport ? 'файл' : 'файлы'} на компьютере</p>
-            <Button variant="outline" disabled={isSending} onClick={() => input.current?.click()}>
-              {isReport ? 'Выбрать файл' : 'Выбрать файлы'}
-            </Button>
-          </div> : <>
-            <UploadFileList files={files} disabled={isSending} onRemove={(id) => {
-              if (!active.current) changeFiles(files.filter((item) => item.id !== id));
-            }} />
-            <div className="upload-list-actions">
-              <button type="button" disabled={isSending} onClick={() => input.current?.click()}>
-                <WorkspaceIcon name="plus" size={18} />
-                {isReport ? 'Заменить отчёт' : 'Добавить документы'}
-              </button>
-              <span>Файлов: {files.length}</span>
-            </div>
-          </>}
-          {error && <p className="upload-validation" role="alert">{error}</p>}
-        </>}
-      </section>
-      <div className="upload-navigation">
-        <Button variant="outline" disabled={isReport || isSending} onClick={() => changeStep(0)}>Назад</Button>
-        {isReport ? (
-          <Button disabled={isSending || (!publicDemo && report.length === 0)}
-            onClick={() => changeStep(1)}>
-            Первичные документы <WorkspaceIcon name="arrow" size={17} />
-          </Button>
-        ) : !publicDemo && <div>
-          <Button disabled={isSending || report.length === 0 || documents.length === 0}
-            onClick={() => { void submit(); }}>
-            Отправить на проверку <WorkspaceIcon name="arrow" size={17} />
-          </Button>
-        </div>}
+      {publicDemo ? (
+        <section className="upload-card upload-public-notice mt-6">
+          <h2>Загрузка доступна в локальной установке</h2>
+        </section>
+      ) : (
+        <div className="mt-6 grid grid-cols-1 items-start gap-5 md:grid-cols-2">
+          <UploadBlock group="report" files={report} error={errors.report} disabled={isSending}
+            onFiles={takeFiles} onRemove={(id) => removeFile('report', id)} />
+          <UploadBlock group="documents" files={documents} error={errors.documents} disabled={isSending}
+            onFiles={takeFiles} onRemove={(id) => removeFile('documents', id)} />
+        </div>
+      )}
+      <div className="upload-navigation mt-5 flex flex-wrap items-center gap-3">
+        {!publicDemo && <Button disabled={isSending || !canStart} onClick={() => { void submit(); }}>
+          Отправить на проверку <WorkspaceIcon name="arrow" size={17} />
+        </Button>}
+        <Link className="workspace-button workspace-button-outline upload-example" to={demoRunPath}>
+          Открыть готовый синтетический результат
+        </Link>
+        {!publicDemo && !canStart && <span>Добавьте КФЗ и первичные документы</span>}
       </div>
+      {submitError && <p className="upload-validation" role="alert">{submitError}</p>}
       {isSending && <p role="status">Отправляем пакет…</p>}
     </div>
+  );
+}
+
+function UploadBlock({ group, files, error, disabled, onFiles, onRemove }: {
+  group: FileGroup;
+  files: SelectedFile[];
+  error: string;
+  disabled: boolean;
+  onFiles: (files: FileList, group: FileGroup) => void;
+  onRemove: (id: number) => void;
+}) {
+  const input = useRef<HTMLInputElement>(null);
+  const [over, setOver] = useState(false);
+  const report = group === 'report';
+  const label = report ? 'КФЗ' : 'Первичные документы';
+
+  return (
+    <section aria-label={label} className={classes('upload-card min-w-0', over && !disabled && 'is-dragging')}
+      onDragOver={(event) => {
+        event.preventDefault();
+        if (!disabled) setOver(true);
+      }}
+      onDragLeave={(event) => {
+        if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) {
+          setOver(false);
+        }
+      }}
+      onDrop={(event) => {
+        event.preventDefault();
+        setOver(false);
+        onFiles(event.dataTransfer.files, group);
+      }}>
+      <header className="upload-card-header">
+        <div>
+          <h2>{label}</h2>
+          <p>{report ? 'Один файл PDF, DOCX, XLSX или PNG' : 'PDF, DOCX, XLSX, PNG'}</p>
+        </div>
+      </header>
+      <input ref={input} type="file" hidden
+        aria-label={report ? 'Выберите КФЗ' : 'Выберите первичные документы'}
+        accept={formats.join(',')} multiple={!report} disabled={disabled}
+        onChange={(event) => {
+          if (event.currentTarget.files) onFiles(event.currentTarget.files, group);
+          event.currentTarget.value = '';
+        }} />
+      {files.length === 0 ? <div className="upload-empty">
+        <WorkspaceIcon name="file" size={28} />
+        <p>{report ? 'Перетащите КФЗ сюда' : 'Перетащите документы сюда'}</p>
+        <Button variant="outline" disabled={disabled} onClick={() => input.current?.click()}>
+          {report ? 'Выбрать файл' : 'Выбрать файлы'}
+        </Button>
+      </div> : <>
+        <UploadFileList files={files} disabled={disabled} onRemove={onRemove} />
+        <div className="upload-list-actions mt-3">
+          <button type="button" disabled={disabled} onClick={() => input.current?.click()}>
+            <WorkspaceIcon name="plus" size={16} />
+            {report ? 'Заменить КФЗ' : 'Добавить документы'}
+          </button>
+          <span>Файлов: {files.length}</span>
+        </div>
+      </>}
+      {error && <p className="upload-validation" role="alert">{error}</p>}
+    </section>
   );
 }
