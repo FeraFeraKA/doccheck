@@ -28,11 +28,11 @@ export function SourceDrawer({ children, onClose }: { children: ReactNode; onClo
     }}>
     <div className="source-drawer-panel">
       <header className="source-drawer-header">
-        <div>
-          <h2 id="source-drawer-title">Источник документа</h2>
-          <button type="button" onClick={onClose}>Вернуться к таблице</button>
+        <h2 id="source-drawer-title">Источник документа</h2>
+        <div className="source-drawer-actions">
+          <button type="button" aria-label="Вернуться к таблице" onClick={onClose}>К таблице</button>
+          <button className="source-drawer-close" type="button" aria-label="Закрыть просмотр источника" onClick={onClose}>×</button>
         </div>
-        <button type="button" aria-label="Закрыть просмотр источника" onClick={onClose}>×</button>
       </header>
       <div className="source-drawer-content">{children}</div>
     </div>

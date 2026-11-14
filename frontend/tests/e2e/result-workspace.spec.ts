@@ -2,34 +2,56 @@ import { expect, test } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import example from '../../../contracts/check-result.v1.synthetic.json' with { type: 'json' };
 
-test('a lower PNG evidence box is centered in its preview on load', async ({ page }) => {
-  await page.setViewportSize({ width: 1440, height: 900 });
-  const id = 'png-preview';
-  const evidence = { ...example.result.evidence[0], locator: { kind: 'page', page: 1, bbox: [.2, .72, .5, .8] } };
-  const documents = example.result.documents.map((file) => file.id === 'report'
-    ? { ...file, format: 'png', name: 'synthetic-report.png' }
-    : file);
-  await page.route(`**/api/v0/runs/${id}`, (route) => route.fulfill({ json: {
-    run_id: id, status: 'completed_with_issues', created_at: '2026-11-14T00:00:00Z', error: null,
-    progress: { processed_documents: 4, total_documents: 4 },
-  } }));
-  await page.route(`**/api/v0/runs/${id}/findings`, (route) => route.fulfill({ json: {
-    ...example.result, run_id: id, documents,
-    evidence: example.result.evidence.map((item) => item.id === evidence.id ? evidence : item),
-  } }));
-  await page.route(`**/api/v0/runs/${id}/documents/report/fragments?evidence_id=${evidence.id}`,
-    (route) => route.fulfill({ json: evidence }));
-  const image = readFileSync(new URL('../../../docs/synthetic/nrt-89/inputs/12_communication.png', import.meta.url));
-  await page.route(`**/api/v0/runs/${id}/documents/report`, (route) =>
-    route.fulfill({ body: image, contentType: 'application/octet-stream' }));
+for (const [width, height] of [[1440, 1100], [768, 844], [390, 600]]) {
+  test(`the compact PNG drawer uses its available space and locates evidence at ${width}×${height}`, async ({ page }) => {
+    await page.setViewportSize({ width, height });
+    const id = 'png-preview';
+    const evidence = { ...example.result.evidence[0], locator: { kind: 'page', page: 1, bbox: [.2, .72, .5, .8] } };
+    const documents = example.result.documents.map((file) => file.id === 'report'
+      ? { ...file, format: 'png', name: 'synthetic-report.png' }
+      : file);
+    await page.route(`**/api/v0/runs/${id}`, (route) => route.fulfill({ json: {
+      run_id: id, status: 'completed_with_issues', created_at: '2026-11-14T00:00:00Z', error: null,
+      progress: { processed_documents: 4, total_documents: 4 },
+    } }));
+    await page.route(`**/api/v0/runs/${id}/findings`, (route) => route.fulfill({ json: {
+      ...example.result, run_id: id, documents,
+      evidence: example.result.evidence.map((item) => item.id === evidence.id ? evidence : item),
+    } }));
+    await page.route(`**/api/v0/runs/${id}/documents/report/fragments?evidence_id=${evidence.id}`,
+      (route) => route.fulfill({ json: evidence }));
+    const image = readFileSync(new URL('../../../docs/synthetic/nrt-89/inputs/12_communication.png', import.meta.url));
+    await page.route(`**/api/v0/runs/${id}/documents/report`, (route) =>
+      route.fulfill({ body: image, contentType: 'application/octet-stream' }));
 
-  await page.goto(`/checks/${id}`);
-  await page.getByRole('button', { name: 'Просмотреть источник' }).click();
-  const viewport = page.getByRole('region', { name: 'Просмотр документа: synthetic-report.png' });
-  const box = viewport.locator('.source-viewer-highlight');
-  await expect(box).toBeInViewport({ ratio: 1 });
-  await expect.poll(() => viewport.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
-});
+    await page.goto(`/checks/${id}`);
+    const opener = page.getByRole('button', { name: 'Просмотреть источник' });
+    await opener.click();
+    const drawer = page.getByRole('dialog', { name: 'Источник документа' });
+    const viewport = drawer.getByRole('region', { name: 'Просмотр документа: synthetic-report.png' });
+    const box = viewport.locator('.source-viewer-highlight');
+    await expect(box).toBeInViewport({ ratio: 1 });
+    await expect.poll(() => viewport.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+    const header = drawer.getByRole('heading', { name: 'Источник документа' });
+    const back = drawer.getByRole('button', { name: 'Вернуться к таблице' });
+    await expect(back).toHaveText('К таблице');
+    const titleBounds = await header.boundingBox();
+    const backBounds = await back.boundingBox();
+    const viewBounds = await viewport.boundingBox();
+    if (!titleBounds || !backBounds || !viewBounds) throw new Error('Source layout not visible');
+    expect(titleBounds.y).toBeGreaterThanOrEqual(backBounds.y);
+    expect(titleBounds.y + titleBounds.height).toBeLessThanOrEqual(backBounds.y + backBounds.height);
+    expect(viewBounds.height).toBeGreaterThan(Math.min(height * .6, 680));
+    await expect(drawer.getByRole('link', { name: 'Скачать оригинал' })).toBeInViewport();
+    await expect(drawer.getByRole('button', { name: 'К фрагменту' })).toBeInViewport();
+    expect(await drawer.evaluate((element) => element.scrollWidth)).toBeLessThanOrEqual(Math.min(width, 800));
+    await drawer.getByRole('button', { name: 'Увеличить масштаб' }).click();
+    await drawer.getByRole('button', { name: 'К фрагменту' }).click();
+    await expect(box).toBeInViewport({ ratio: 1 });
+    await page.keyboard.press('Escape');
+    await expect(opener).toBeFocused();
+  });
+}
 
 test('results keep the selected row and its evidence together when filtering', async ({ page }) => {
   await page.goto('/checks/synthetic-example');
