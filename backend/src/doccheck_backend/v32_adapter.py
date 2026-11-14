@@ -73,6 +73,12 @@ _XLSX_ARTICLES = {
     "payroll": ("C8", "расчетная ведомость по оплате труда"),
     "insurance": ("B6", "расчет страховых взносов"),
 }
+_NATIVE_PDF_CONTRACT_PREFIX = re.compile(r"^(?:договор|контракт)\s*(?:№|:)", re.I)
+_NATIVE_PDF_CONTRACT = re.compile(
+    r"^(?:договор|контракт)\s*(?:№|:)\s*([\w./-]*\d[\w./-]*?)"
+    r"(?:\s+от\s+(\d{4}-\d{2}-\d{2}|\d{2}\.\d{2}\.\d{4})(?:\s*г\.?)?)?\.?$",
+    re.I,
+)
 _DATE = re.compile(r"(?<!\d)(?:\d{4}-\d{2}-\d{2}|\d{2}\.\d{2}\.\d{4})(?!\d)")
 _PERIOD = re.compile(r"^Период\b", re.IGNORECASE)
 _TOTAL_CANDIDATE = re.compile(
@@ -282,8 +288,12 @@ def _matches_native_pdf_scope(
         text = item.raw_text.strip()
         if text.partition(":")[0].strip().casefold() in articles:
             return False
-        if (contract := _contract(text)) is not None and contract != inferred.contract_number:
-            return False
+        if _NATIVE_PDF_CONTRACT_PREFIX.match(text):
+            declaration = _NATIVE_PDF_CONTRACT.fullmatch(text)
+            if not declaration or declaration[1] != inferred.contract_number:
+                return False
+            if declaration[2] is not None and parse_date(declaration[2]) is None:
+                return False
         if _period_candidate(text) and _period(text, parse_date) != expected_period:
             return False
     return True
