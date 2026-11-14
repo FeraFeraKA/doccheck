@@ -13,7 +13,7 @@ export DOCCHECK_CODE_REVISION="${DOCCHECK_CODE_REVISION:-$(git rev-parse HEAD 2>
 
 case "${1:-start}" in
   start)
-    if pgrep -u "$(id -u)" -f "uvicorn doccheck_backend.api:app --host 127.0.0.1 --port $api_port" >/dev/null; then
+    if curl -sS --max-time 1 -o /dev/null "http://127.0.0.1:$api_port/health" 2>/dev/null; then
       printf '%s\n' "Pilot API is already running."
       exit 1
     fi
