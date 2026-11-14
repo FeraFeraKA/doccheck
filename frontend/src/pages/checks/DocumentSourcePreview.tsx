@@ -17,6 +17,14 @@ interface DocumentSourcePreviewProps {
   document: SourceDocument | null;
   evidenceId: string | null;
   active?: boolean;
+  compact?: boolean;
+  imageView?: DocumentImageView;
+  onImageViewChange?: (view: DocumentImageView) => void;
+}
+
+export interface DocumentImageView {
+  zoom: number;
+  highlight: boolean;
 }
 
 type RequestState<T> =
@@ -61,7 +69,7 @@ function locatorMatchesDocument(evidence: SourceEvidence, format: string | null)
   }
 }
 
-export function DocumentSourcePreview({ runId, document, evidenceId, active = true }: DocumentSourcePreviewProps) {
+export function DocumentSourcePreview({ runId, document, evidenceId, active = true, compact = false, imageView, onImageViewChange }: DocumentSourcePreviewProps) {
   const [attempt, setAttempt] = useState(0);
 
   if (document === null) return <p>Документ источника недоступен.</p>;
@@ -73,15 +81,21 @@ export function DocumentSourcePreview({ runId, document, evidenceId, active = tr
     document={document}
     evidenceId={evidenceId}
     active={active}
+    compact={compact}
+    imageView={imageView}
+    onImageViewChange={onImageViewChange}
     onRetry={() => setAttempt((current) => current + 1)}
   />;
 }
 
-function SelectedDocumentSource({ runId, document, evidenceId, active, onRetry }: {
+function SelectedDocumentSource({ runId, document, evidenceId, active, compact, imageView, onImageViewChange, onRetry }: {
   runId: string;
   document: SourceDocument;
   evidenceId: string | null;
   active: boolean;
+  compact: boolean;
+  imageView?: DocumentImageView;
+  onImageViewChange?: (view: DocumentImageView) => void;
   onRetry: () => void;
 }) {
   const [original, setOriginal] = useState<RequestState<string>>({ status: 'loading' });
@@ -132,6 +146,9 @@ function SelectedDocumentSource({ runId, document, evidenceId, active, onRetry }
   const pdfUrl = original.status === 'ready'
     ? page ? `${original.value}#page=${page.page}` : original.value
     : null;
+  const embeddedPdf = compact && format === 'pdf' && navigator.pdfViewerEnabled
+    && original.status === 'ready' && (evidenceId === null || evidence.status !== 'loading')
+    ? `${original.value}#page=${page?.page ?? 1}&view=FitH&toolbar=0` : null;
   const download = original.status === 'ready'
     ? <a href={original.value} download={document.name}>Скачать оригинал</a> : null;
   const fragment = evidence.status === 'ready'
@@ -165,10 +182,12 @@ function SelectedDocumentSource({ runId, document, evidenceId, active, onRetry }
     {original.status === 'loading' && <div className="source-viewer-placeholder"><p role="status">Загрузка оригинала…</p></div>}
     {original.status === 'error' && <div className="source-viewer-placeholder"><p role="alert">{original.message}</p></div>}
     {original.status === 'ready' && format === 'png' && (
-      <SourceImage key={original.value} url={original.value} name={document.name} page={page?.page}
+      <SourceImage key={original.value} url={original.value} name={document.name} page={page?.page ?? (compact ? 1 : undefined)}
+        imageView={imageView} onImageViewChange={onImageViewChange}
         box={page?.bbox} active={active} download={download} fragment={fragment} retry={retry} />
     )}
-    {original.status === 'ready' && format !== 'png' && <div className="source-viewer-placeholder">
+    {embeddedPdf && <iframe className="source-viewer-pdf" title={`Просмотр документа: ${document.name}`} src={embeddedPdf} />}
+    {original.status === 'ready' && format !== 'png' && !embeddedPdf && <div className="source-viewer-placeholder">
       {format === 'pdf' && <p>Страница открывается в PDF-просмотрщике браузера.</p>}
       {(format === 'xlsx' || format === 'docx') && (
         <p>Для просмотра по адресу откройте скачанный файл в офисном приложении.</p>
@@ -183,7 +202,7 @@ function SelectedDocumentSource({ runId, document, evidenceId, active, onRetry }
   </section>;
 }
 
-function SourceImage({ url, name, page, box, active, download, fragment, retry }: {
+function SourceImage({ url, name, page, box, active, download, fragment, retry, imageView, onImageViewChange }: {
   url: string;
   name: string;
   page?: number;
@@ -192,10 +211,19 @@ function SourceImage({ url, name, page, box, active, download, fragment, retry }
   download: React.ReactNode;
   fragment: React.ReactNode;
   retry: React.ReactNode;
+  imageView?: DocumentImageView;
+  onImageViewChange?: (view: DocumentImageView) => void;
 }) {
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
-  const [zoom, setZoom] = useState(100);
-  const [highlight, setHighlight] = useState(true);
+  const [localView, setLocalView] = useState({ zoom: 100, highlight: true });
+  const view = imageView ?? localView;
+  const { zoom, highlight } = view;
+
+  function updateView(next: Partial<DocumentImageView>) {
+    const updated = { ...view, ...next };
+    if (onImageViewChange) onImageViewChange(updated);
+    else setLocalView(updated);
+  }
   const mark = useRef<HTMLSpanElement>(null);
   const viewport = useRef<HTMLDivElement>(null);
   const centered = useRef<string>(undefined);
@@ -226,13 +254,13 @@ function SourceImage({ url, name, page, box, active, download, fragment, retry }
       <div className="source-viewer-controls">
         {page && <span>Стр. {page}</span>}
         {state === 'ready' && <div className="source-viewer-zoom">
-          <button type="button" aria-label="Уменьшить масштаб" disabled={zoom <= 75} onClick={() => setZoom(zoom - 25)}>−</button>
+          <button type="button" aria-label="Уменьшить масштаб" disabled={zoom <= 75} onClick={() => updateView({ zoom: zoom - 25 })}>−</button>
           <span aria-label="Масштаб документа">{zoom}%</span>
-          <button type="button" aria-label="Увеличить масштаб" disabled={zoom >= 175} onClick={() => setZoom(zoom + 25)}>+</button>
-          <button type="button" aria-label="Сбросить масштаб" disabled={zoom === 100} onClick={() => setZoom(100)}>↺</button>
+          <button type="button" aria-label="Увеличить масштаб" disabled={zoom >= 175} onClick={() => updateView({ zoom: zoom + 25 })}>+</button>
+          <button type="button" aria-label="Сбросить масштаб" disabled={zoom === 100} onClick={() => updateView({ zoom: 100 })}>↺</button>
         </div>}
         {box && state === 'ready' && <button type="button" aria-pressed={highlight}
-          onClick={() => setHighlight(!highlight)}>Подсветка</button>}
+          onClick={() => updateView({ highlight: !highlight })}>Подсветка</button>}
       </div>
       {download}
     </div>

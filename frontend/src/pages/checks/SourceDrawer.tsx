@@ -13,10 +13,33 @@ function visibleFragment(viewport: HTMLElement) {
     ? fragment : null;
 }
 
+export function preserveSourceViewport(container: HTMLElement) {
+  const viewport = container.querySelector<HTMLElement>('.source-viewer-viewport');
+  if (!viewport) return;
+  const x = viewport.scrollLeft / Math.max(1, viewport.scrollWidth - viewport.clientWidth);
+  const y = viewport.scrollTop / Math.max(1, viewport.scrollHeight - viewport.clientHeight);
+  const fragment = visibleFragment(viewport);
+  return () => {
+    if (!viewport.isConnected) return;
+    viewport.scrollLeft = x * (viewport.scrollWidth - viewport.clientWidth);
+    viewport.scrollTop = y * (viewport.scrollHeight - viewport.clientHeight);
+    // Preserve a visible selection without overriding a deliberate scroll away.
+    if (!fragment?.isConnected || visibleFragment(viewport)) return;
+    const bounds = viewport.getBoundingClientRect();
+    const mark = fragment.getBoundingClientRect();
+    if (mark.left < bounds.left - 1 || mark.right > bounds.left + viewport.clientWidth + 1) {
+      viewport.scrollLeft += mark.left + (mark.width - viewport.clientWidth) / 2 - bounds.left;
+    }
+    if (mark.top < bounds.top - 1 || mark.bottom > bounds.top + viewport.clientHeight + 1) {
+      viewport.scrollTop += mark.top + (mark.height - viewport.clientHeight) / 2 - bounds.top;
+    }
+  };
+}
+
 export function SourceDrawer({ children, onClose }: { children: ReactNode; onClose: () => void }) {
   const drawer = useRef<HTMLDialogElement>(null);
   const [fullscreen, setFullscreen] = useState(false);
-  const pendingScroll = useRef<{ viewport: HTMLElement; x: number; y: number; fragment: Element | null } | null>(null);
+  const pendingScroll = useRef<() => void>(undefined);
   const fullscreenLabel = fullscreen
     ? 'Свернуть источник в боковую панель'
     : 'Развернуть источник на весь экран';
@@ -36,37 +59,13 @@ export function SourceDrawer({ children, onClose }: { children: ReactNode; onClo
   }, []);
 
   function toggleFullscreen() {
-    const viewport = drawer.current?.querySelector<HTMLElement>('.source-viewer-viewport');
-    if (viewport) {
-      const maxX = viewport.scrollWidth - viewport.clientWidth;
-      const maxY = viewport.scrollHeight - viewport.clientHeight;
-      pendingScroll.current = {
-        viewport,
-        x: viewport.scrollLeft / Math.max(1, maxX),
-        y: viewport.scrollTop / Math.max(1, maxY),
-        fragment: visibleFragment(viewport),
-      };
-    }
+    pendingScroll.current = drawer.current ? preserveSourceViewport(drawer.current) : undefined;
     setFullscreen((value) => !value);
   }
 
   useLayoutEffect(() => {
-    const position = pendingScroll.current;
-    pendingScroll.current = null;
-    if (!position?.viewport.isConnected) return;
-    const { viewport, x, y, fragment } = position;
-    viewport.scrollLeft = x * (viewport.scrollWidth - viewport.clientWidth);
-    viewport.scrollTop = y * (viewport.scrollHeight - viewport.clientHeight);
-    // Preserve a visible selection without overriding a deliberate scroll away.
-    if (!fragment?.isConnected || visibleFragment(viewport)) return;
-    const bounds = viewport.getBoundingClientRect();
-    const mark = fragment.getBoundingClientRect();
-    if (mark.left < bounds.left - 1 || mark.right > bounds.left + viewport.clientWidth + 1) {
-      viewport.scrollLeft += mark.left + (mark.width - viewport.clientWidth) / 2 - bounds.left;
-    }
-    if (mark.top < bounds.top - 1 || mark.bottom > bounds.top + viewport.clientHeight + 1) {
-      viewport.scrollTop += mark.top + (mark.height - viewport.clientHeight) / 2 - bounds.top;
-    }
+    pendingScroll.current?.();
+    pendingScroll.current = undefined;
   }, [fullscreen]);
 
   return <dialog ref={drawer} className="source-drawer" aria-labelledby="source-drawer-title" data-fullscreen={fullscreen}
