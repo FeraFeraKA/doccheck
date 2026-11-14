@@ -27,3 +27,5 @@ services:
         sync: false
       - key: DOCCHECK_HOSTED_PUBLIC_DATABASE_NAME
         sync: false
+      - key: DOCCHECK_HOSTED_PUBLIC_DATABASE_USER
+        sync: false
