@@ -237,6 +237,23 @@ def _windows_frame(
             y0 = min(word["box"][1] for word in group)
             x1 = max(word["box"][2] for word in group)
             y1 = max(word["box"][3] for word in group)
+            parts = []
+            offset = 0
+            for word in group:
+                u0, v0, u1, v1 = word["box"]
+                end = offset + len(word["text"])
+                parts.append(
+                    (
+                        offset,
+                        end,
+                        PageLocator(
+                            kind="page",
+                            page=page,
+                            bbox=(u0 / width, v0 / height, u1 / width, v1 / height),
+                        ),
+                    )
+                )
+                offset = end + 1
             observations.append(
                 Observation(
                     " ".join(word["text"] for word in group),
@@ -246,6 +263,7 @@ def _windows_frame(
                         bbox=(x0 / width, y0 / height, x1 / width, y1 / height),
                         fragment_id=f"winocr-{index}-{group_index}",
                     ),
+                    text_boxes=tuple(parts),
                 )
             )
     return tuple(observations)
