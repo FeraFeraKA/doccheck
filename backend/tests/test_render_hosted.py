@@ -6,10 +6,11 @@ import pytest
 from psycopg import sql
 from sqlalchemy.engine import make_url
 
-from doccheck_backend.render_hosted import _check_shared_database, _preview_environment, main
+from doccheck_backend.render_hosted import _check_preview_database, _preview_environment, main
 
 _SHARED = "DOCCHECK_HOSTED_SHARED_DATABASE_URL"
 _PUBLIC = "DOCCHECK_HOSTED_PUBLIC_DATABASE_NAME"
+_PUBLIC_USER = "DOCCHECK_HOSTED_PUBLIC_DATABASE_USER"
 _IDENTITY = "doccheck_hosted_preview"
 
 
@@ -30,6 +31,7 @@ def test_shared_config_rejects_wrong_database_or_role_before_startup(monkeypatch
     monkeypatch.setenv(_SHARED, url)
     monkeypatch.delenv("DOCCHECK_RENDER_DATABASE_URL", raising=False)
     monkeypatch.delenv(_PUBLIC, raising=False)
+    monkeypatch.setenv(_PUBLIC_USER, "public_app")
     if public is not None:
         monkeypatch.setenv(_PUBLIC, public)
     with pytest.raises(ValueError, match="shared Preview requires"):
@@ -43,20 +45,29 @@ def test_shared_preflight_failure_stops_before_migration(monkeypatch, capsys):
         _SHARED, "postgres://doccheck_hosted_preview:secret@localhost/doccheck_hosted_preview"
     )
     monkeypatch.setenv(_PUBLIC, "public_demo")
+    monkeypatch.setenv(_PUBLIC_USER, "public_app")
     monkeypatch.setenv("DOCCHECK_HOSTED_WORKER_SHA256", "1" * 64)
     monkeypatch.setenv("DOCCHECK_HOSTED_VIEWERS", f'{{"{uuid4()}":"{"2" * 64}"}}')
     monkeypatch.setenv("DOCCHECK_HOSTED_SESSION_KEY", "3" * 64)
 
     def failed_preflight(*args):
-        raise ValueError("Render shared Preview database identity could not be verified")
+        raise ValueError("Render Preview database isolation could not be verified")
 
-    monkeypatch.setattr("doccheck_backend.render_hosted._check_shared_database", failed_preflight)
+    monkeypatch.setattr("doccheck_backend.render_hosted._check_preview_database", failed_preflight)
     monkeypatch.setattr(
         "doccheck_backend.render_hosted.subprocess.run",
         lambda *args, **kwargs: pytest.fail("Unexpected migration"),
     )
     assert main() == 1
     assert "secret" not in capsys.readouterr().err
+
+
+def test_dedicated_configuration_rejects_public_database_url(monkeypatch):
+    monkeypatch.setenv("DOCCHECK_PUBLIC_DEMO", "1")
+    monkeypatch.setenv("DOCCHECK_RENDER_DATABASE_URL", "postgres://public:secret@localhost/public")
+    monkeypatch.delenv(_SHARED, raising=False)
+    with pytest.raises(ValueError, match="dedicated Preview requires"):
+        _preview_environment()
 
 
 def test_shared_database_preflight_preserves_public_database():
@@ -69,6 +80,7 @@ def test_shared_database_preflight_preserves_public_database():
     owner = sql.Identifier(_IDENTITY)
     public_name = f"public_demo_test_{uuid4().hex}"
     public = sql.Identifier(public_name)
+    public_app = public_name + "_app"
     password = uuid4().hex
     with psycopg.connect(
         url.set(drivername="postgresql").render_as_string(hide_password=False), autocommit=True
@@ -94,7 +106,11 @@ def test_shared_database_preflight_preserves_public_database():
                         password=password,
                         database=_IDENTITY,
                     ).render_as_string(hide_password=False)
-                    _check_shared_database(dedicated, public_name)
+                    admin.execute(
+                        sql.SQL("CREATE ROLE {} LOGIN").format(sql.Identifier(public_app))
+                    )
+                    with pytest.raises(ValueError, match="could not be verified"):
+                        _check_preview_database(dedicated, public_name, public_app)
                     with psycopg.connect(
                         url.set(
                             drivername="postgresql",
@@ -105,16 +121,27 @@ def test_shared_database_preflight_preserves_public_database():
                     ) as restricted:
                         with pytest.raises(psycopg.errors.InsufficientPrivilege):
                             restricted.execute("SELECT * FROM existing_demo").fetchall()
+                    admin.execute(
+                        sql.SQL("REVOKE CONNECT ON DATABASE {} FROM PUBLIC").format(public)
+                    )
+                    admin.execute(
+                        sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(
+                            public, sql.Identifier(public_app)
+                        )
+                    )
                     with pytest.raises(ValueError, match="could not be verified"):
-                        _check_shared_database(dedicated, _IDENTITY)
+                        _check_preview_database(dedicated, public_name, public_app)
+                    admin.execute(
+                        sql.SQL("REVOKE CONNECT ON DATABASE {} FROM PUBLIC").format(owner)
+                    )
+                    _check_preview_database(dedicated, public_name, public_app)
+                    _check_preview_database(dedicated)
                     wrong_db = make_url(dedicated).set(database=public_name)
                     with pytest.raises(ValueError, match="could not be verified"):
-                        _check_shared_database(
-                            wrong_db.render_as_string(hide_password=False), public_name
-                        )
+                        _check_preview_database(wrong_db.render_as_string(hide_password=False))
                     admin.execute(sql.SQL("ALTER ROLE {} CREATEDB").format(owner))
                     with pytest.raises(ValueError, match="could not be verified"):
-                        _check_shared_database(dedicated, public_name)
+                        _check_preview_database(dedicated, public_name, public_app)
                     with psycopg.connect(
                         url.set(drivername="postgresql", database=public_name).render_as_string(
                             hide_password=False
@@ -127,5 +154,6 @@ def test_shared_database_preflight_preserves_public_database():
                     admin.execute(sql.SQL("DROP DATABASE {}").format(owner))
             finally:
                 admin.execute(sql.SQL("DROP DATABASE {}").format(public))
+                admin.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(public_app)))
         finally:
             admin.execute(sql.SQL("DROP ROLE {}").format(owner))

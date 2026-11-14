@@ -30,6 +30,8 @@ services:
 
 databases:
   - name: doccheck-hosted-preview-db
+    databaseName: doccheck_hosted_preview
+    user: doccheck_hosted_preview
     region: frankfurt
     plan: free
     postgresMajorVersion: '18'
