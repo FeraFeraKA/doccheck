@@ -862,18 +862,17 @@ class V32Processor:
                                 continue
                     except OcrError:
                         _file_error(document, "source_unreadable")
-                    # Deterministic readers cover native fields. The approved LoRA
-                    # proposes an identity on scans while these source facts remain authoritative.
-                    if document.id in grounds and document.format in {"xlsx", "docx"}:
-                        document.parse_status = "parsed"
+                    # Office files only use the deterministic reader. Preserve any
+                    # diagnostic already recorded for a failed read.
+                    if document.format in {"xlsx", "docx"}:
+                        if not document.errors:
+                            document.parse_status = "parsed"
                         continue
                     text, images = _model_input(path)
-                    if not images and document.id in grounds:
-                        document.parse_status = "parsed"
-                        continue
                     source = grounds.get(document.id)
-                    if images and source and source.identity and provenance is not None:
-                        document.parse_status = "parsed"
+                    if source and (not images or (source.identity and provenance is not None)):
+                        if not document.errors:
+                            document.parse_status = "parsed"
                         continue
                     number = None
                     if len(images) == 1:
