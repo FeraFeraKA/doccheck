@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { Link, useSearchParams } from 'react-router';
+import type { MouseEvent } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router';
 import { classes } from '../../shared/lib/classes';
 import { loadRunHistory, runStatusLabels } from './checkData';
-import type { CheckHistory, FindingFilter, HistoryEntry, RunStatus } from './checkData';
+import type { CheckHistory, FindingCounts, FindingFilter, HistoryEntry, RunStatus } from './checkData';
 import { demoJob, demoRunPath, demoTitle } from './demoData';
 import { OverviewIcon } from './OverviewIcon';
 import { useRunHistory } from './useRunHistory';
@@ -19,6 +20,7 @@ const filters = [
   ['unverified', 'Неполные данные'],
   ['verified', 'Без расхождений'],
 ] as const;
+type Filter = typeof filters[number][0];
 type Sort = 'recent' | 'name';
 
 function readFinding(value: string | null): FindingFilter | undefined {
@@ -33,6 +35,13 @@ const tones: Record<RunStatus, string> = {
   failed: 'peach',
 };
 
+function findingLabel(counts: FindingCounts) {
+  if (counts.discrepancy > 0) return { label: 'Есть расхождения', tone: 'peach' };
+  if (counts.unverified > 0) return { label: 'Неполные данные', tone: 'neutral' };
+  if (counts.verified > 0) return { label: 'Без расхождений', tone: 'mint' };
+  return { label: 'Нет показателей', tone: 'neutral' };
+}
+
 export function ChecksOverview({ loadHistory = loadRunHistory }: OverviewProps = {}) {
   return import.meta.env.VITE_DOCCHECK_PUBLIC_DEMO === '1'
     ? <OverviewLayout demo />
@@ -45,7 +54,7 @@ function RunHistory({ loadHistory }: Required<OverviewProps>) {
   const finding = readFinding(params.get('finding'));
   const history = useRunHistory({ cursor, finding, loader: loadHistory });
 
-  function changeFilter(value: string) {
+  function changeFilter(value: Filter) {
     const next = new URLSearchParams();
     if (value !== 'all') next.set('finding', value);
     setParams(next);
@@ -63,7 +72,7 @@ interface LayoutProps {
   error?: boolean;
   retry?: () => void;
   finding?: FindingFilter;
-  changeFilter?: (value: string) => void;
+  changeFilter?: (value: Filter) => void;
 }
 
 function OverviewLayout({ demo, cursor, page, loading, error, retry, finding, changeFilter }: LayoutProps) {
@@ -74,12 +83,13 @@ function OverviewLayout({ demo, cursor, page, loading, error, retry, finding, ch
   const shown = entries.filter((entry) => entry.title.toLocaleLowerCase('ru').includes(search));
   // The default order follows the server cursor. Name sorting applies to this page.
   if (sort === 'name') shown.sort((a, b) => a.title.localeCompare(b.title, 'ru', { numeric: true }));
+
   function pageLink(key?: string) {
     const params = new URLSearchParams();
     if (finding) params.set('finding', finding);
     if (key) params.set('cursor', key);
-    const search = params.toString();
-    return search ? '/checks?' + search : '/checks';
+    const searchParams = params.toString();
+    return searchParams ? '/checks?' + searchParams : '/checks';
   }
 
   return (
@@ -91,31 +101,26 @@ function OverviewLayout({ demo, cursor, page, loading, error, retry, finding, ch
         </div>
       </div>
       <section className="overview-section" aria-label="История запусков" aria-busy={loading}>
-        <div className="overview-section-heading">
-          <h2>Ваши проверки {page && <span>{entries.length}</span>}</h2>
-        </div>
         {!demo && <div className="overview-toolbar">
-          <div className="overview-filters flex flex-wrap gap-1.5" role="group" aria-label="Фильтры проверок">
+          <label className="overview-search">
+            <OverviewIcon name="search" size={16} />
+            <input type="search" aria-label="Поиск на странице" placeholder="Название проверки"
+              value={query} onChange={(event) => setQuery(event.target.value)} />
+          </label>
+          <div className="overview-filters" role="group" aria-label="Фильтры проверок">
             {filters.map(([value, label]) => (
               <button type="button" key={value} aria-pressed={(finding ?? 'all') === value}
                 onClick={() => changeFilter?.(value)}>{label}</button>
             ))}
           </div>
-          <div className="overview-inputs flex items-center gap-2.5">
-            <label className="overview-search">
-              <OverviewIcon name="search" size={16} />
-              <input type="search" aria-label="Поиск на странице" placeholder="Название проверки"
-                value={query} onChange={(event) => setQuery(event.target.value)} />
-            </label>
-            <label className="flex items-center gap-2 text-[13px]">
-              Сортировка
-              <select className="overview-secondary" value={sort}
-                onChange={(event) => setSort(event.target.value === 'name' ? 'name' : 'recent')}>
-                <option value="recent">Сначала новые</option>
-                <option value="name">По названию</option>
-              </select>
-            </label>
-          </div>
+          <label className="overview-sort">
+            Сортировка
+            <select className="overview-secondary" value={sort}
+              onChange={(event) => setSort(event.target.value === 'name' ? 'name' : 'recent')}>
+              <option value="recent">Сначала новые</option>
+              <option value="name">По названию</option>
+            </select>
+          </label>
         </div>}
         {demo && <p className="overview-notice">История рабочих проверок доступна в локальной установке.</p>}
         {loading && <p className="overview-notice" role="status">Загрузка проверок…</p>}
@@ -125,28 +130,26 @@ function OverviewLayout({ demo, cursor, page, loading, error, retry, finding, ch
         </div>}
         {page && <HistoryTable
           entries={shown}
-          hasEntries={entries.length > 0}
           sort={sort}
           filtered={!!finding || !!search}
           reset={() => { setQuery(''); changeFilter?.('all'); }}
         />}
         {(cursor || page?.nextCursor) && <nav className="overview-footer flex flex-wrap gap-2" aria-label="Страницы проверок">
-            {cursor && <Link className="overview-secondary" to={pageLink()}>К новым проверкам</Link>}
-            {page?.nextCursor && <Link className="overview-secondary" to={pageLink(page.nextCursor)}>Более ранние проверки</Link>}
+          {cursor && <Link className="overview-secondary" to={pageLink()}>К новым проверкам</Link>}
+          {page?.nextCursor && <Link className="overview-secondary" to={pageLink(page.nextCursor)}>Более ранние проверки</Link>}
         </nav>}
       </section>
-      <section className="overview-section overview-example" aria-label="Готовый пример">
-        <div className="overview-section-heading"><h2>Готовый пример</h2></div>
+      <section className="overview-section overview-example" aria-labelledby="overview-example-heading">
+        <h2 id="overview-example-heading">Готовый пример</h2>
         <div className="overview-table-wrap">
           <table className="overview-table">
-            <thead><tr><th scope="col">Проверка</th><th scope="col">Документы</th>
-              <th scope="col">Результат</th><th scope="col" aria-label="Открыть" /></tr></thead>
+            <thead><tr><th scope="col">Проверка</th><th scope="col">Результат</th><th scope="col">Документы</th></tr></thead>
             <tbody><tr>
               <td><CheckTitle to={demoRunPath} title={demoTitle} tone="neutral" /></td>
-              <td><span className="overview-document-count"><OverviewIcon name="files" size={15} />
-                {demoJob.result.documents.length} файла</span></td>
               <td className="overview-result"><span className="overview-chip neutral">Синтетический пример</span></td>
-              <td className="overview-open-cell"><OpenCheck to={demoRunPath} title={demoTitle} /></td>
+              <td className="overview-documents"><span className="overview-document-count">
+                <OverviewIcon name="files" size={15} />{demoJob.result.documents.length}
+              </span></td>
             </tr></tbody>
           </table>
         </div>
@@ -155,61 +158,73 @@ function OverviewLayout({ demo, cursor, page, loading, error, retry, finding, ch
   );
 }
 
-function CheckTitle({ to, title, tone }: { to: string; title: string; tone: string }) {
+function CheckTitle({ to, title, tone, synthetic }: { to: string; title: string; tone: string; synthetic?: boolean }) {
   return <div className="overview-check-title">
-    <span className={classes('overview-file-symbol grid place-items-center', tone)}><OverviewIcon name="file" size={21} /></span>
-    <Link to={to}>{title}<OverviewIcon name="arrowUpRight" size={13} /></Link>
+    <span className={classes('overview-file-symbol', tone)}><OverviewIcon name="file" size={21} /></span>
+    <div>
+      <Link to={to}>{title}</Link>
+      {synthetic && <small>Синтетика</small>}
+    </div>
   </div>;
 }
 
-function OpenCheck({ to, title }: { to: string; title: string }) {
-  return <Link to={to} className="overview-open grid place-items-center" aria-label={`Открыть ${title}`}>
-    <OverviewIcon name="chevron" />
-  </Link>;
+function CheckResult({ entry }: { entry: HistoryEntry }) {
+  const { counts, status, error } = entry;
+  const finding = counts && (status === 'completed' || status === 'completed_with_issues') ? findingLabel(counts) : undefined;
+  return <>
+    <span className={classes('overview-chip', finding?.tone ?? tones[status])}>
+      {finding?.label ?? runStatusLabels[status]}
+    </span>
+    {finding && <small className="overview-result-detail">{runStatusLabels[status]}</small>}
+    {error && <p className="overview-result-detail">{error}</p>}
+  </>;
 }
 
-function HistoryTable({ entries, hasEntries, sort, filtered, reset }: {
+function HistoryTable({ entries, sort, filtered, reset }: {
   entries: HistoryEntry[];
-  hasEntries: boolean;
   sort: Sort;
   filtered: boolean;
   reset: () => void;
 }) {
+  const navigate = useNavigate();
+  function openRow(event: MouseEvent<HTMLTableRowElement>, to: string) {
+    if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey
+      || event.shiftKey || event.altKey || (event.target instanceof Element && event.target.closest('a, button'))
+      || window.getSelection()?.toString()) return;
+    void navigate(to);
+  }
+
   return (
     <div className="overview-table-wrap">
       <table className="overview-table">
         <thead><tr>
-          <th scope="col">Проверка</th><th scope="col">Состояние задания</th>
-          <th scope="col">Результат сверки</th>
+          <th scope="col">Проверка</th>
+          <th scope="col">Результат</th>
+          <th scope="col">Покрытие по сумме</th>
+          <th scope="col">Документы</th>
           <th scope="col" aria-sort={sort === 'recent' ? 'descending' : 'none'}>Дата</th>
-          <th scope="col" aria-label="Открыть" />
         </tr></thead>
         <tbody>{entries.map((entry) => {
-          const to = '/checks/' + encodeURIComponent(entry.id);
-          const tone = tones[entry.status];
-          return <tr key={entry.id}>
-            <td><CheckTitle to={to} title={entry.title} tone={tone} />
-              {entry.synthetic && <small>Синтетика</small>}
+          const { id, title, counts, status, synthetic, createdAt } = entry;
+          const to = '/checks/' + encodeURIComponent(id);
+          const tone = counts ? findingLabel(counts).tone : tones[status];
+          const total = counts ? counts.verified + counts.discrepancy + counts.unverified : 0;
+          return <tr key={id} className="overview-check-row" onClick={(event) => openRow(event, to)}>
+            <td><CheckTitle to={to} title={title} tone={tone} synthetic={synthetic} /></td>
+            <td className="overview-result"><CheckResult entry={entry} /></td>
+            <td className="overview-coverage">
+              <span aria-label="Покрытие по сумме недоступно">—</span>
+              {counts && total > 0 && <small>{counts.verified} из {total} показателей</small>}
             </td>
-            <td className="overview-result">
-              <span className={classes('overview-chip', tone)}>{runStatusLabels[entry.status]}</span>
-              {entry.error && <p className="text-xs">{entry.error}</p>}
-            </td>
-            <td className="overview-finding">{entry.counts ? <ul className="space-y-1 text-[13px]">
-              {entry.counts.verified > 0 && <li>Подтверждено: {entry.counts.verified}</li>}
-              {entry.counts.discrepancy > 0 && <li>Расхождения: {entry.counts.discrepancy}</li>}
-              {entry.counts.unverified > 0 && <li>Не проверено: {entry.counts.unverified}</li>}
-              {Object.values(entry.counts).every((count) => count === 0) && <li>Нет показателей</li>}
-            </ul> : '—'}</td>
-            <td className="overview-date"><time dateTime={entry.createdAt}>{dateFormat.format(new Date(entry.createdAt))}</time></td>
-            <td className="overview-open-cell"><OpenCheck to={to} title={entry.title} /></td>
+            <td className="overview-documents" aria-label="Количество документов недоступно">—</td>
+            <td className="overview-date"><time dateTime={createdAt}>{dateFormat.format(new Date(createdAt))}</time></td>
           </tr>;
         })}</tbody>
       </table>
       {entries.length === 0 && <div className="overview-empty">
         <OverviewIcon name="file" size={32} />
-        <h3>{(hasEntries || filtered) ? 'Проверки не найдены.' : 'Проверок пока нет.'}</h3>
-        {(hasEntries || filtered) && <button type="button" className="overview-secondary" onClick={reset}>Сбросить фильтры</button>}
+        <h3>{filtered ? 'Проверки не найдены.' : 'Проверок пока нет.'}</h3>
+        {filtered && <button type="button" className="overview-secondary" onClick={reset}>Сбросить фильтры</button>}
       </div>}
     </div>
   );

@@ -22,8 +22,14 @@ it('applies server filters before pagination while sorting the current page loca
   const history = screen.getByRole('region', { name: 'История запусков' });
   const table = await within(history).findByRole('table');
   expect(within(table).getAllByRole('row')[1]).toHaveTextContent('Бета');
-  expect(within(table).getByRole('columnheader', {name: 'Состояние задания'})).toBeVisible();
-  expect(within(table).getByRole('columnheader', {name: 'Результат сверки'})).toBeVisible();
+  expect(within(table).getAllByRole('columnheader').map((column) => column.textContent))
+    .toEqual(['Проверка', 'Результат', 'Покрытие по сумме', 'Документы', 'Дата']);
+  const firstResult = within(table).getAllByRole('row')[1];
+  expect(within(firstResult).getByText('Есть расхождения')).toBeVisible();
+  expect(within(firstResult).getByText('Готово')).toBeVisible();
+  expect(within(firstResult).getByText('1 из 6 показателей')).toBeVisible();
+  expect(within(firstResult).getByLabelText('Покрытие по сумме недоступно')).toHaveTextContent('—');
+  expect(within(firstResult).getByLabelText('Количество документов недоступно')).toHaveTextContent('—');
   expect(within(history).getByRole('link', { name: 'Более ранние проверки' }))
     .toHaveAttribute('href', '/checks?cursor=older+%2B+opaque');
 

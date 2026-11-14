@@ -5,9 +5,8 @@ import { Button } from '../../shared/ui/Button';
 import { UploadFileList } from './UploadFiles';
 import { WorkspaceIcon } from './WorkspaceIcon';
 import { prepareRunUpload, RunUploadHttpError } from './createRun';
-import { runStatusLabels } from './checkData';
 import type { CheckHistory } from './checkData';
-import { runTitle } from './runTitle';
+import { RunQueue } from './RunQueue';
 import { useRunHistory } from './useRunHistory';
 import { demoRunPath } from './demoData';
 
@@ -169,32 +168,8 @@ export function NewCheck() {
       </div>
       {submitError && <p className="upload-validation" role="alert">{submitError}</p>}
       {isSending && <p role="status">Загрузка файлов…</p>}
-      {!publicDemo && <section className="upload-card mt-6" aria-label="Последние проверки">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-base font-medium">Последние проверки</h2>
-          <Link to="/checks" className="underline">Все проверки</Link>
-        </div>
-        {history.error && <p className="checks-caption" role="alert">Не удалось обновить историю.
-          {' '}<button type="button" onClick={history.refresh} className="underline">Повторить</button>
-        </p>}
-        {history.loading && <p className="checks-caption">Загрузка истории…</p>}
-        <ul className="space-y-2 mt-3">
-          {receipts.filter((id) => !history.page?.entries.some((entry) => entry.id === id)).map((id) => (
-            <li key={id}><Link className="underline break-all" to={'/checks/' + encodeURIComponent(id)}>
-              {runTitle(id)}</Link> · Сервер получил пакет</li>
-          ))}
-          {history.page?.entries.map((entry) => (
-            <li key={entry.id} className="flex flex-wrap gap-x-3">
-              <Link className="underline break-all" to={'/checks/' + encodeURIComponent(entry.id)}>{entry.title}</Link>
-              <span>{runStatusLabels[entry.status]}</span>
-              {entry.synthetic && <span>Синтетика</span>}
-              {entry.error && <span className="checks-caption">{entry.error}</span>}
-            </li>
-          ))}
-        </ul>
-        {!history.loading && !history.error && !receipts.length && !history.page?.entries.length
-          && <p className="checks-caption">Проверок пока нет.</p>}
-      </section>}
+      {!publicDemo && <RunQueue entries={history.page?.entries} receipts={receipts}
+        loading={history.loading} error={history.error} onRetry={history.refresh} />}
     </div>
   );
 }
