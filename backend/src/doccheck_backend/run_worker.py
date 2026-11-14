@@ -175,7 +175,10 @@ def _process(run: StoredRun, upload_root: Path, process: RunProcessor) -> CheckJ
     run_id = str(run.id)
     try:
         identity = RunIdentity.from_run(run)
-        return identity.validate(process(run, upload_root / run_id))
+        synthetic = any(
+            doc.get("synthetic") is True and doc["role"] == "report" for doc in run.documents
+        )
+        return identity.validate(process(run, upload_root / run_id), synthetic=synthetic)
     except Exception as exc:
         # Do not log exception text, document data or adapter payloads.
         logger.error("Document run %s: processing failed (%s)", run_id, type(exc).__name__)

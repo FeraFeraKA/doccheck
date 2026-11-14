@@ -49,15 +49,16 @@ for (const width of [390, 768]) {
       route.fulfill({ body: pixelPng, contentType: 'application/octet-stream' }));
 
     await page.goto('/checks/' + id);
+    await page.getByText('Основания выбранного показателя', { exact: true }).click();
     await page.getByRole('button', { name: 'На весь экран' }).click();
     await expect(page.getByRole('dialog', { name: 'Полноэкранная сверка' })).toBeVisible();
     const source = page.getByRole('button', { name: 'Просмотреть источник' });
     await source.click();
-    const drawer = page.getByRole('dialog', { name: 'Источник документа' });
+    const drawer = page.getByLabel('Источник документа', { exact: true }).and(page.locator('.source-workspace-panel[open]'));
     await expect(drawer.getByRole('img', { name: 'synthetic-report.png' })).toBeVisible();
     await expect(drawer.locator('.source-viewer-highlight')).toBeVisible();
-    await expect(page.getByRole('dialog')).toHaveCount(1);
-    await drawer.getByRole('button', { name: 'Вернуться к таблице' }).press('Alt+ArrowDown');
+    await expect(page.getByRole('dialog', { name: 'Полноэкранная сверка' })).toHaveCount(0);
+    await drawer.getByRole('button', { name: 'Закрыть просмотр источника' }).press('Alt+ArrowDown');
     await expect(drawer.locator('.source-viewer-highlight')).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(drawer).toHaveCount(0);

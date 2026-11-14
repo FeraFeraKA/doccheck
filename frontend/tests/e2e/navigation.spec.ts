@@ -10,7 +10,7 @@ test('Tab scrolls the fixed sidebar to system status in a short window', async (
   const scroll = () => sidebar.evaluate((element) => element.scrollTop);
   expect(await scroll()).toBe(0);
   await expect(status).not.toBeInViewport();
-  for (const name of ['DocCheck', 'Новая проверка', 'Проверки', 'Проверка системы']) {
+  for (const name of ['DocCheck', 'Новая проверка', 'Проверки', 'Архив проверок', 'Проверка системы']) {
     await page.keyboard.press('Tab');
     await expect(sidebar.getByRole('link', { name, exact: true })).toBeFocused();
   }
@@ -145,7 +145,7 @@ test('the expanded desktop rail does not cover history pagination', async ({ pag
   });
   expect(reachable).toBe(true);
   await older.click();
-  await expect(page.getByRole('link', { name: 'Проверка older-run', exact: true })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Проверка КФЗ №older-run', exact: true })).toBeVisible();
 });
 
 test('Escape immediately restores breadcrumb clicks with animations enabled', async ({ page }) => {

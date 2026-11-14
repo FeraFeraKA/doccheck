@@ -33,8 +33,9 @@ test('a PNG fragment received on the rule tab is centered once when shown', asyn
   });
 
   await page.goto('/checks/' + id);
+  await page.getByText('Основания выбранного показателя', { exact: true }).click();
   await page.getByRole('button', { name: 'Просмотреть источник' }).click();
-  const drawer = page.getByRole('dialog', { name: 'Источник документа' });
+  const drawer = page.getByLabel('Источник документа', { exact: true }).and(page.locator('.source-workspace-panel[open]'));
   const image = drawer.getByRole('img', { name: 'synthetic-report.png' });
   await drawer.getByRole('button', { name: 'Увеличить масштаб' }).click();
   const original = await image.getAttribute('src');
@@ -100,9 +101,10 @@ for (const width of [390, 768]) {
     });
 
     await page.goto('/checks/' + id);
+    await page.getByText('Основания выбранного показателя', { exact: true }).click();
     const opener = page.getByRole('button', { name: 'Просмотреть источник' });
     await opener.click();
-    const drawer = page.getByRole('dialog', { name: 'Источник документа' });
+    const drawer = page.getByLabel('Источник документа', { exact: true }).and(page.locator('.source-workspace-panel[open]'));
     await drawer.getByRole('button', { name: 'Развернуть источник на весь экран' }).click();
     await drawer.getByRole('button', { name: 'Увеличить масштаб' }).click();
     const source = drawer.getByRole('tab', { name: 'Источник' });

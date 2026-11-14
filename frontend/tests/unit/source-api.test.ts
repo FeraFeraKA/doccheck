@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  getSourceEvidence, getSourceOriginal, InvalidSourceResponseError, SourceHttpError,
+  getSourceEvidence, getSourceFragmentPreview, getSourceOriginal, InvalidSourceResponseError, SourceHttpError,
 } from '../../src/pages/checks/sourceApi';
 
 const documentUrl = '/api/v0/runs/run-1/documents/report-1';
@@ -179,4 +179,21 @@ describe('source API', () => {
     await expect(getSourceOriginal('run-1', 'report-1', controller.signal))
       .rejects.toBe(reason);
   });
+});
+
+
+it('decodes highlight boundaries in UTF-8 and rejects a split Cyrillic character', async () => {
+  const signal = new AbortController().signal;
+  const text = 'Сумма 🧾 8 112,50 руб.';
+  const prefix = 'Сумма 🧾 ';
+  const start = new TextEncoder().encode(prefix).length;
+  const end = start + '8 112,50'.length;
+  const source = respond(Response.json({ text, highlight: { start_byte: start, end_byte: end } }));
+  await expect(getSourceFragmentPreview('run-1', 'report-1', 'evidence-1', signal))
+    .resolves.toEqual({ text, match: [prefix, '8 112,50', ' руб.'] });
+  expect(source).toHaveBeenCalledWith(documentUrl + '/fragment-preview?evidence_id=evidence-1', { signal });
+
+  respond(Response.json({ text, highlight: { start_byte: 1, end_byte: end } }));
+  await expect(getSourceFragmentPreview('run-1', 'report-1', 'evidence-1', signal))
+    .rejects.toBeInstanceOf(InvalidSourceResponseError);
 });

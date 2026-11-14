@@ -19,9 +19,11 @@ from doccheck_backend.config import Settings
 from doccheck_backend.contracts import CheckResult
 from doccheck_backend.contracts.result import Evidence
 from doccheck_backend.database import create_database_engine
+from doccheck_backend.document_preview import SheetPreview, WordPreview
 from doccheck_backend.fragment_preview import FragmentPreview
 from doccheck_backend.jobs import create_job, get_job
 from doccheck_backend.models import SyntheticJob
+from doccheck_backend.result_summary import build_rub_coverage
 from doccheck_backend.run_xlsx import XLSX_MEDIA_TYPE, XlsxReportLimitError, export_check_result
 from doccheck_backend.schemas import HealthResponse, JobResponse
 from doccheck_backend.uploads import (
@@ -105,7 +107,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if (
             request.method == "GET"
             and path.startswith("/api/v0/runs")
-            and (path == "/api/v0/runs" or path.endswith(("/fragments", "/fragment-preview")))
+            and (
+                path == "/api/v0/runs"
+                or path.endswith(("/fragments", "/fragment-preview", "/preview", "/page-preview"))
+            )
         ):
             field = str(exc.errors()[0]["loc"][-1])
             return await run_read_error(
@@ -190,19 +195,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             headers={"Location": f"/api/v0/runs/{run_id}"},
         )
 
-    @document_runs.get("")
+    @document_runs.get("", response_model_exclude_unset=True)
     def list_runs(
-        request: Request, limit: Annotated[int, Query(ge=1, le=100)] = 20, cursor: str | None = None
+        request: Request,
+        limit: Annotated[int, Query(ge=1, le=100)] = 20,
+        cursor: str | None = None,
+        finding: run_reads.FindingFilter | None = None,
+        view: run_reads.RunView = "active",
     ) -> run_reads.RunPage:
-        return run_reads.list_runs(request.app.state.engine, limit, cursor)
+        return run_reads.list_runs(request.app.state.engine, limit, cursor, finding, view)
 
     @document_runs.get("/{run_id}")
     def get_run(request: Request, run_id: str) -> run_reads.RunState:
         return run_reads.get_run_state(request.app.state.engine, run_id)
 
+    @document_runs.put("/{run_id}/archive")
+    def archive_run(request: Request, run_id: str) -> run_reads.ArchiveState:
+        return run_reads.set_run_archive(request.app.state.engine, run_id, archived=True)
+
+    @document_runs.delete("/{run_id}/archive")
+    def restore_run(request: Request, run_id: str) -> run_reads.ArchiveState:
+        return run_reads.set_run_archive(request.app.state.engine, run_id, archived=False)
+
     @document_runs.get("/{run_id}/findings")
     def get_findings(request: Request, run_id: str) -> CheckResult:
-        return run_reads.get_run_findings(request.app.state.engine, run_id)
+        result = run_reads.get_run_findings(request.app.state.engine, run_id)
+        result.summary.rub_coverage = build_rub_coverage(result)
+        return result
 
     @document_runs.get(
         "/{run_id}/exports/xlsx",
@@ -279,6 +298,54 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             run_id,
             document_id,
             evidence_id,
+        )
+
+    @document_runs.get("/{run_id}/documents/{document_id}/preview")
+    def get_document_preview(
+        request: Request,
+        response: Response,
+        run_id: str,
+        document_id: str,
+        sheet: Annotated[str | None, Query(min_length=1, max_length=255)] = None,
+        row: Annotated[int, Query(ge=1, le=1_048_576)] = 1,
+        column: Annotated[int, Query(ge=1, le=16_384)] = 1,
+    ) -> SheetPreview | WordPreview:
+        response.headers["Cache-Control"] = "no-store"
+        return run_reads.get_document_preview(
+            request.app.state.engine,
+            request.app.state.upload_root,
+            run_id,
+            document_id,
+            sheet=sheet,
+            row=row,
+            column=column,
+        )
+
+    @document_runs.get(
+        "/{run_id}/documents/{document_id}/page-preview",
+        response_class=Response,
+        responses={200: {"content": {"image/png": {}}}},
+    )
+    def get_page_preview(
+        request: Request,
+        run_id: str,
+        document_id: str,
+        page: Annotated[int, Query(ge=1)] = 1,
+    ) -> Response:
+        content, pages = run_reads.get_document_pdf_page(
+            request.app.state.engine,
+            request.app.state.upload_root,
+            run_id,
+            document_id,
+            page,
+        )
+        return Response(
+            content,
+            media_type="image/png",
+            headers={
+                "Cache-Control": "no-store",
+                "X-Document-Pages": str(pages),
+            },
         )
 
     application.include_router(document_runs)

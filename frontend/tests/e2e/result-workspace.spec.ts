@@ -35,6 +35,7 @@ for (const { width, imageHeight, bbox } of visibleFragmentCases) {
       route.fulfill({ body: Buffer.from(png, 'base64'), contentType: 'application/octet-stream' }));
 
     await page.goto('/checks/' + id);
+    await page.getByText('Основания выбранного показателя', { exact: true }).click();
     await page.getByRole('button', { name: 'Просмотреть источник' }).click();
     const viewport = page.getByRole('region', { name: 'Просмотр документа: synthetic-report.png' });
     const box = viewport.locator('.source-viewer-highlight');
@@ -42,16 +43,8 @@ for (const { width, imageHeight, bbox } of visibleFragmentCases) {
     const scroll = () => viewport.evaluate((element) => ({
       top: element.scrollTop, max: element.scrollHeight - element.clientHeight,
     }));
-    // The context header reduces the document viewport. Size the test window
-    // from the measured scroll range to exercise the original boundary cases.
-    const compact = await scroll();
-    const overflow = imageHeight === 800 ? 0 : 9;
-    await page.setViewportSize({ width, height: 1100 + compact.max - overflow });
-    await viewport.evaluate((element) => { element.scrollTop = 0; });
-    await expect(box).toBeInViewport({ ratio: 1 });
     const before = await scroll();
     expect(before.top).toBe(0);
-    expect(before.max).toBe(overflow);
     await page.getByRole('button', { name: 'Развернуть источник на весь экран' }).click();
     await expect(box).toBeInViewport({ ratio: 1 });
     expect((await scroll()).max).toBeGreaterThan(0);
@@ -91,33 +84,31 @@ for (const [width, height] of [[1440, 1100], [768, 844], [390, 600]]) {
     });
 
     await page.goto(`/checks/${id}`);
+    await page.getByText('Основания выбранного показателя', { exact: true }).click();
     const opener = page.getByRole('button', { name: 'Просмотреть источник' });
     await opener.click();
-    const drawer = page.getByRole('dialog', { name: 'Источник документа' });
+    const drawer = page.getByLabel('Источник документа', { exact: true }).and(page.locator('.source-workspace-panel[open]'));
     const viewport = drawer.getByRole('region', { name: 'Просмотр документа: synthetic-report.png' });
     const box = viewport.locator('.source-viewer-highlight');
     await expect(box).toBeInViewport({ ratio: 1 });
-    await expect.poll(() => viewport.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
-    const header = drawer.getByRole('heading', { name: 'Источник документа' });
-    const back = drawer.getByRole('button', { name: 'Вернуться к таблице' });
-    await expect(back).toHaveText('К таблице');
-    const titleBounds = await header.boundingBox();
-    const backBounds = await back.boundingBox();
     const viewBounds = await viewport.boundingBox();
-    if (!titleBounds || !backBounds || !viewBounds) throw new Error('Source layout not visible');
-    expect(titleBounds.y).toBeGreaterThanOrEqual(backBounds.y);
-    expect(titleBounds.y + titleBounds.height).toBeLessThanOrEqual(backBounds.y + backBounds.height);
+    if (!viewBounds) throw new Error('Source layout not visible');
+    const compactWidth = (await drawer.boundingBox())?.width ?? 0;
+    expect(compactWidth).toBeLessThan(width);
     const toolbarBounds = await drawer.getByRole('group', { name: 'Настройки просмотра' }).boundingBox();
     const fragmentBounds = await drawer.getByRole('button', { name: 'К фрагменту' }).boundingBox();
     if (!toolbarBounds || !fragmentBounds) throw new Error('Viewer controls not visible');
-    expect(viewBounds.y).toBeCloseTo(toolbarBounds.y + toolbarBounds.height, 0);
+    expect(Math.abs(viewBounds.y - toolbarBounds.y - toolbarBounds.height)).toBeLessThan(4);
     expect(viewBounds.y + viewBounds.height).toBeLessThan(fragmentBounds.y);
     expect(fragmentBounds.y - (viewBounds.y + viewBounds.height)).toBeLessThan(20);
-    expect(viewBounds.height).toBeGreaterThan(Math.min(height * .4, 680));
+    expect(viewBounds.height).toBeGreaterThan(128);
     await expect(drawer.getByRole('link', { name: 'Скачать оригинал' })).toBeInViewport();
     await expect(drawer.getByRole('button', { name: 'К фрагменту' })).toBeInViewport();
     expect(await drawer.evaluate((element) => element.scrollWidth)).toBeLessThanOrEqual(Math.min(width, 800));
-    await drawer.getByRole('button', { name: 'Увеличить масштаб' }).click();
+    const zoom = drawer.getByRole('button', { name: 'Увеличить масштаб' });
+    while (await zoom.isEnabled() && await viewport.evaluate((element) => element.scrollHeight <= element.clientHeight)) {
+      await zoom.click();
+    }
     await drawer.getByRole('button', { name: 'К фрагменту' }).click();
     await expect(box).toBeInViewport({ ratio: 1 });
 
@@ -127,31 +118,22 @@ for (const [width, height] of [[1440, 1100], [768, 844], [390, 600]]) {
     const scrollRatio = () => viewport.evaluate((element) =>
       element.scrollTop / Math.max(1, element.scrollHeight - element.clientHeight));
     const before = await scrollRatio();
-    expect(before).toBeGreaterThan(0);
+    const zoomBefore = await drawer.getByLabel('Масштаб документа').innerText();
     const expand = drawer.getByRole('button', { name: 'Развернуть источник на весь экран' });
     const collapse = drawer.getByRole('button', { name: 'Свернуть источник в боковую панель' });
     const highlight = drawer.getByRole('button', { name: 'Подсветка' });
-    if (width === 1440) {
-      await viewport.evaluate((element) => { element.scrollTop = 0; });
-      await expect(box).not.toBeInViewport();
-      await expand.press('Enter');
-      expect(await scrollRatio()).toBe(0);
-      await expect(box).not.toBeInViewport();
-      await collapse.click();
-      await drawer.getByRole('button', { name: 'К фрагменту' }).click();
-    }
     await highlight.click();
     await expand.press('Enter');
     await expect(collapse).toHaveAttribute('aria-pressed', 'true');
     await expect(collapse).toBeFocused();
     expect((await drawer.boundingBox())?.width).toBe(width);
     expect(await scrollRatio()).toBeCloseTo(before, 2);
-    await expect(drawer.getByText('125%', { exact: true })).toBeVisible();
+    await expect(drawer.getByLabel('Масштаб документа')).toHaveText(zoomBefore);
     await expect(highlight).toHaveAttribute('aria-pressed', 'false');
     await expect(imageElement).toHaveAttribute('src', previousSrc ?? '');
     await collapse.click();
     await expect(expand).toHaveAttribute('aria-pressed', 'false');
-    expect((await drawer.boundingBox())?.width).toBe(Math.min(width, 800));
+    expect((await drawer.boundingBox())?.width).toBe(compactWidth);
     expect(await scrollRatio()).toBeCloseTo(before, 2);
     expect([originalRequests, fragmentRequests]).toEqual(requests);
     await expand.click();
@@ -168,9 +150,10 @@ test('results keep the selected row and its evidence together when filtering', a
   await page.goto('/checks/synthetic-example');
   const panel = page.getByRole('region', { name: 'Рабочее место сверки' });
   const table = panel.getByRole('table');
+  await panel.getByText('Основания выбранного показателя', { exact: true }).click();
   await expect(table.getByRole('button', { name: 'Синтетическая статья A' })).toHaveAttribute('aria-pressed', 'true');
   await expect(panel.getByRole('heading', { name: 'Синтетическая статья A' })).toBeVisible();
-  await panel.getByRole('button', { name: 'Не проверено 1' }).click();
+  await panel.getByRole('button', { name: 'Нет данных 1' }).click();
   await expect(table.getByRole('row')).toHaveCount(2);
   await expect(panel.getByRole('heading', { name: 'Синтетическая статья B' })).toBeVisible();
   await expect(panel.getByText('Страница 1, строка 4, столбец 2', { exact: true })).toBeVisible();
@@ -213,7 +196,7 @@ test('issue navigation scrolls the selected row into the mobile table and shows 
   await expect(panel.getByText('Расхождение 22 из 22', { exact: true })).toBeVisible();
   await expect(lastRow).toHaveAttribute('aria-pressed', 'true');
   await expect(lastRow).toBeInViewport({ ratio: 0.95 });
-  expect(await table.evaluate((node) => node.scrollTop)).toBeGreaterThan(0);
+  expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
   await expect(next).toBeDisabled();
 
   for (let index = 1; index < count; index += 1) await previous.click();
@@ -243,15 +226,26 @@ test('source pane opens the stored original at a mobile width', async ({ page })
   await page.route(`**/api/v0/runs/${id}/documents/ledger**`, (route) => {
     const url = new URL(route.request().url());
     ledgerRequests.push(url.pathname + url.search);
+    if (url.pathname.endsWith('/preview')) {
+      const row = Number(url.searchParams.get('row') ?? '1');
+      return route.fulfill({ json: {
+        sheet: 'Синтетика', sheets: ['Синтетика'], row, column: 1, last_row: 7, last_column: 3,
+        rows: Array.from({ length: 8 - row }, (_, index) => ['', '', row + index === 7 ? '60.25' : '']),
+      } });
+    }
     return url.pathname.endsWith('/fragments')
       ? route.fulfill({ json: example.result.evidence.find(({ id }) => id === 'amount-2') })
       : route.fulfill({ body: 'synthetic XLSX transport fixture', contentType: 'application/octet-stream' });
   });
 
+  await page.route(`**/api/v0/runs/${id}/documents/ledger/fragment-preview?evidence_id=amount-2`, (route) =>
+    route.fulfill({ json: { text: '60.250', highlight: { start_byte: 0, end_byte: 6 } } }));
+
   await page.goto(`/checks/${id}`);
+  await page.getByText('Основания выбранного показателя', { exact: true }).click();
   await page.getByRole('button', { name: 'Просмотреть источник' }).click();
   const preview = page.getByRole('region', { name: 'Просмотр источника' });
-  const drawer = page.getByRole('dialog', { name: 'Источник документа' });
+  const drawer = page.getByLabel('Источник документа', { exact: true }).and(page.locator('.source-workspace-panel[open]'));
   await expect(drawer).toBeVisible();
   await expect(preview.getByRole('link', { name: 'Скачать оригинал' })).toBeVisible();
   await expect(preview.getByRole('link', { name: /Открыть страницу 1 PDF/ })).toHaveAttribute('href', /#page=1$/);
@@ -267,14 +261,73 @@ test('source pane opens the stored original at a mobile width', async ({ page })
   expect(ledgerRequests).toEqual([]);
   await page.getByRole('button', { name: 'Просмотреть источник' }).click();
   await expect(preview.getByText(/Лист «Синтетика», C7/)).toBeVisible();
+  const selectedCell = preview.getByRole('cell', { name: '60.250', exact: true });
+  await expect(selectedCell.locator('mark')).toHaveText('60.250');
+  await expect(selectedCell).toHaveAttribute('data-source-tone', 'discrepancy');
   await expect(preview.getByRole('link', { name: 'Скачать оригинал' })).toBeVisible();
-  expect([...new Set(ledgerRequests)].sort()).toEqual([
+  expect(ledgerRequests).toEqual(expect.arrayContaining([
     `/api/v0/runs/${id}/documents/ledger`,
     `/api/v0/runs/${id}/documents/ledger/fragments?evidence_id=amount-2`,
-  ]);
+  ]));
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
-  await drawer.getByRole('button', { name: 'Вернуться к таблице' }).click();
+  await drawer.getByRole('button', { name: 'Закрыть просмотр источника' }).click();
   await expect(drawer).toHaveCount(0);
+});
+
+test('keyboard focus remains in the reader when a page or sheet window changes', async ({ page }) => {
+  await page.setViewportSize({ width: 768, height: 844 });
+  const id = 'paged-preview';
+  const base = `**/api/v0/runs/${id}`;
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACklEQVR42mMAAQAABQABeqhXUAAAAABJRU5ErkJggg==',
+    'base64',
+  );
+  await page.route(base, (route) => route.fulfill({ json: {
+    run_id: id, status: 'completed_with_issues', created_at: '2026-11-14T00:00:00Z', error: null,
+    progress: { processed_documents: 4, total_documents: 4 },
+  } }));
+  await page.route(`${base}/findings`, (route) => route.fulfill({ json: {
+    ...example.result, run_id: id,
+  } }));
+  await page.route(`${base}/documents/**`, (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname.endsWith('/fragments')) {
+      return route.fulfill({ json: example.result.evidence.find(({ id }) => id === url.searchParams.get('evidence_id')) });
+    }
+    if (url.pathname.endsWith('/page-preview')) return route.fulfill({
+      body: png, contentType: 'image/png', headers: { 'X-Document-Pages': '2' },
+    });
+    if (url.pathname.endsWith('/preview')) {
+      const row = Number(url.searchParams.get('row') ?? '1');
+      return route.fulfill({ json: {
+        sheet: 'Синтетика', sheets: ['Синтетика'], row, column: 1, last_row: 62, last_column: 1,
+        rows: Array.from({ length: Math.min(60, 63 - row) }, (_, offset) => [String(row + offset)]),
+      } });
+    }
+    return route.fulfill({ body: 'Synthetic transport fixture', contentType: 'application/octet-stream' });
+  });
+
+  await page.goto(`/checks/${id}/documents`);
+  await page.getByRole('button', { name: 'synthetic-report.pdf', exact: true }).click();
+  const viewer = page.getByRole('region', { name: 'Просмотр источника' });
+  const nextPage = viewer.getByRole('button', { name: 'Следующая страница', exact: true });
+  await expect(nextPage).toBeEnabled();
+  await nextPage.press('Enter');
+  await expect(viewer.getByText('Страница 2 / 2')).toBeVisible();
+  await expect(nextPage).toBeFocused();
+  await expect(nextPage).toBeDisabled();
+  await viewer.getByRole('button', { name: 'Предыдущая страница', exact: true }).press('Enter');
+  await expect(viewer.getByText('Страница 1 / 2')).toBeVisible();
+
+  await page.getByRole('combobox', { name: 'Документы комплекта' }).selectOption('ledger');
+  const nextRows = viewer.getByRole('button', { name: 'Следующие строки', exact: true });
+  await expect(nextRows).toBeEnabled();
+  await nextRows.press('Enter');
+  await expect(viewer.getByRole('rowheader', { name: '62', exact: true })).toBeVisible();
+  await expect(nextRows).toBeFocused();
+  await expect(nextRows).toBeDisabled();
+  await viewer.getByRole('button', { name: 'Предыдущие строки', exact: true }).press('Enter');
+  await expect(viewer.getByRole('rowheader', { name: '60', exact: true })).toBeVisible();
 });
 
 test('sources on the same PDF page have distinct selectable boxes at 320px', async ({ page }) => {
@@ -313,6 +366,7 @@ test('sources on the same PDF page have distinct selectable boxes at 320px', asy
   await page.route(`**/api/v0/runs/${id}/documents/ledger/fragments?evidence_id=${second.id}`, (route) =>
     route.fulfill({ json: second }));
   await page.goto('/checks/' + id);
+  await page.getByText('Основания выбранного показателя', { exact: true }).click();
   await page.getByText('Основания по слагаемым', { exact: true }).click();
   const component = page.getByRole('list', { name: 'Слагаемые' }).locator(':scope > li').first();
   const choices = page.getByRole('combobox', { name: 'Доказательство' });

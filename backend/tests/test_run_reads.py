@@ -9,6 +9,8 @@ from uuid import UUID, uuid4
 import pytest
 from docx import Document
 from fastapi.testclient import TestClient
+from openpyxl import Workbook
+from PIL import Image
 from sqlalchemy.orm import Session
 from starlette.requests import ClientDisconnect
 from test_run_upload import DOCUMENT, REPORT, submit
@@ -83,6 +85,126 @@ def _complete(client, run_id, *, evidence_id: str = "amount-7") -> CheckResult:
     return job.result
 
 
+def test_archive_changes_membership_and_preserves_result(client):
+    first, second, pending = (_create(client) for _ in range(3))
+    result = _complete(client, first)
+    _complete(client, second)
+    assert client.put(f"{RUNS}/{pending}/archive").status_code == 409
+    assert client.put(f"{RUNS}/{uuid4()}/archive").status_code == 404
+
+    first_response = client.put(f"{RUNS}/{first}/archive")
+    assert first_response.status_code == 200
+    archived_at = first_response.json()["archived_at"]
+    assert datetime.fromisoformat(archived_at).tzinfo is not None
+    assert client.put(f"{RUNS}/{first}/archive").json() == {"archived_at": archived_at}
+    assert client.put(f"{RUNS}/{second}/archive").status_code == 200
+    assert client.get(f"{RUNS}/{first}").json()["archived_at"] == archived_at
+    assert client.get(f"{RUNS}/{first}/findings").json() == result.model_dump(mode="json")
+    assert [item["run_id"] for item in client.get(RUNS).json()["items"]] == [pending]
+    page = client.get(RUNS, params={"view": "archive", "limit": 1}).json()
+    assert [item["run_id"] for item in page["items"]] == [second]
+    older = client.get(RUNS, params={"view": "archive", "cursor": page["next_cursor"]}).json()
+    assert [item["run_id"] for item in older["items"]] == [first]
+
+    assert client.delete(f"{RUNS}/{first}/archive").json() == {"archived_at": None}
+    assert client.delete(f"{RUNS}/{first}/archive").json() == {"archived_at": None}
+    assert {item["run_id"] for item in client.get(RUNS).json()["items"]} == {first, pending}
+    remaining = client.get(RUNS, params={"view": "archive"}).json()["items"]
+    assert [item["run_id"] for item in remaining] == [second]
+
+
+def test_readers_return_verified_original_structure_and_page(client, tmp_path):
+    docx = Document()
+    docx.add_heading("Синтетический акт", 1)
+    table = docx.add_table(rows=1, cols=3)
+    table.cell(0, 0).merge(table.cell(0, 1)).text = "Итого"
+    table.cell(0, 2).text = "12 345,67"
+    docx.add_paragraph("Второй абзац")
+    word = BytesIO()
+    docx.save(word)
+
+    book = Workbook()
+    book.active.title = "Титул"
+    ledger = book.create_sheet("Итоги")
+    ledger["D71"] = 12345.67
+    ledger["E71"] = "=SUM(D71:D72)"
+    sheet = BytesIO()
+    book.save(sheet)
+
+    pdf = BytesIO()
+    with (
+        Image.new("RGB", (100, 120), "white") as first,
+        Image.new("RGB", (100, 120), "black") as second,
+    ):
+        first.save(pdf, "PDF", save_all=True, append_images=[second])
+    upload = submit(
+        client,
+        uuid4(),
+        files=(
+            ("report", ("report.pdf", pdf.getvalue())),
+            ("documents", ("act.docx", word.getvalue())),
+            ("documents", ("ledger.xlsx", sheet.getvalue())),
+        ),
+    )
+    assert upload.status_code == 202
+    run_id = upload.json()["run_id"]
+    report_id, act_id, sheet_id = [item["id"] for item in _manifest(client, run_id).documents]
+    base = f"{RUNS}/{run_id}/documents"
+
+    office = client.get(f"{base}/{act_id}/preview")
+    assert office.status_code == 200
+    assert office.headers["cache-control"] == "no-store"
+    assert office.json() == {
+        "blocks": [
+            {"paragraph": 1, "text": "Синтетический акт", "heading": True},
+            {
+                "table": 1,
+                "rows": [
+                    [
+                        {"column": 1, "span": 2, "text": "Итого"},
+                        {"column": 3, "span": 1, "text": "12 345,67"},
+                    ]
+                ],
+            },
+            {"paragraph": 2, "text": "Второй абзац", "heading": False},
+        ],
+        "truncated": False,
+    }
+    ledger_response = client.get(
+        f"{base}/{sheet_id}/preview",
+        params={
+            "sheet": "Итоги",
+            "row": 71,
+            "column": 4,
+        },
+    )
+    assert ledger_response.status_code == 200
+    assert ledger_response.json() == {
+        "sheet": "Итоги",
+        "sheets": ["Титул", "Итоги"],
+        "row": 71,
+        "column": 4,
+        "last_row": 71,
+        "last_column": 5,
+        "rows": [["12345.67", "=SUM(D71:D72)"]],
+    }
+    raster = client.get(f"{base}/{report_id}/page-preview", params={"page": 2})
+    assert raster.status_code == 200
+    assert raster.headers["content-type"] == "image/png"
+    assert raster.headers["x-document-pages"] == "2"
+    with Image.open(BytesIO(raster.content)) as rasterized:
+        assert rasterized.convert("RGB").getpixel((10, 10)) == (0, 0, 0)
+    assert client.get(f"{base}/{report_id}/page-preview", params={"page": 3}).status_code == 404
+    assert client.get(f"{base}/{act_id}/page-preview").status_code == 415
+
+    other_run = _create(client)
+    assert client.get(f"{RUNS}/{other_run}/documents/{act_id}/preview").status_code == 404
+    path = tmp_path / run_id / act_id
+    changed = word.getvalue()
+    path.write_bytes(bytes([changed[0] ^ 1]) + changed[1:])
+    assert client.get(f"{base}/{act_id}/preview").status_code == 404
+
+
 def test_history_cursor_orders_ties_and_survives_inserts(client):
     assert client.get(RUNS).json() == {"items": [], "next_cursor": None}
     previous = _create(client)
@@ -96,7 +218,7 @@ def test_history_cursor_orders_ties_and_survives_inserts(client):
     assert first.status_code == 200
     page = first.json()
     assert [item["run_id"] for item in page["items"]] == ordered[:2]
-    assert set(page["items"][0]) == {"run_id", "status", "created_at", "error"}
+    assert set(page["items"][0]) == {"run_id", "status", "created_at", "error", "document_count"}
     assert page["next_cursor"]
     newest = _create(client)
     _update_run(client, newest, created_at=identical_date + timedelta(seconds=1))
@@ -441,3 +563,33 @@ def test_download_closes_original_when_streaming_stops(monkeypatch, tmp_path, fa
 
     assert sent[0] == "http.response.start"
     assert original.closed
+
+
+def test_history_finding_filters_use_saved_counts_before_pagination(client):
+    mixed, complete, empty, pending = [_create(client) for _ in range(4)]
+    for run_id, counts in (
+        (mixed, {"verified": 0, "discrepancy": 1, "unverified": 2}),
+        (complete, {"verified": 2, "discrepancy": 0, "unverified": 0}),
+        (empty, {"verified": 0, "discrepancy": 0, "unverified": 0}),
+    ):
+        # The history projection reads only these keys. Full result validation
+        # and document bindings are covered by tests of the findings endpoint.
+        _update_run(
+            client,
+            run_id,
+            status="completed",
+            result={"summary": {"counts": counts}, "synthetic": True},
+        )
+
+    cases = [("discrepancy", mixed), ("unverified", mixed), ("verified", complete)]
+    for finding, expected in cases:
+        page = client.get(RUNS, params={"finding": finding, "limit": 1})
+        assert page.status_code == 200
+        assert page.json()["next_cursor"] is None
+        assert [item["run_id"] for item in page.json()["items"]] == [expected]
+        assert page.json()["items"][0]["report_number"] is None
+        assert page.json()["items"][0]["synthetic"] is True
+
+    history = client.get(RUNS).json()["items"]
+    assert {item["run_id"] for item in history} == {mixed, complete, empty, pending}
+    assert "counts" not in next(item for item in history if item["run_id"] == pending)

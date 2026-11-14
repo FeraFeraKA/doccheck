@@ -33,7 +33,7 @@ for (const missingPayroll of [false, true]) {
     const [accepted] = await Promise.all([
       page.waitForResponse((response) => response.request().method() === 'POST'
         && new URL(response.url()).pathname === '/api/v0/runs'),
-      page.getByRole('button', { name: 'Отправить на проверку' }).click(),
+      page.getByRole('button', { name: 'Запустить проверку' }).click(),
     ]);
     expect(accepted.status()).toBe(202);
     const { run_id: id } = await accepted.json();
@@ -41,6 +41,7 @@ for (const missingPayroll of [false, true]) {
     expect(accepted.headers().location).toBe(`/api/v0/runs/${id}`);
     await testInfo.attach('run-id', { body: id, contentType: 'text/plain' });
     console.log(`Case run: ${id}`);
+    await page.locator(`a[href="/checks/${id}"]`).first().click();
     await expect(page).toHaveURL(`/checks/${id}`);
 
     const status = page.getByRole('status').filter({ hasText: 'Состояние проверки' });

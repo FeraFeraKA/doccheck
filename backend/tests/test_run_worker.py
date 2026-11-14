@@ -3,6 +3,7 @@ import subprocess
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from threading import Event
 from uuid import UUID, uuid4
 
@@ -525,3 +526,42 @@ def test_restart_marks_abandoned_claim_failed(engine, queue, tmp_path, database_
     assert stored.error["code"] == "worker_interrupted"
     assert stored.finished_at >= stored.started_at
     assert _read_run(engine, waiting).status == "completed"
+
+
+def test_demo_package_persists_synthetic_label_and_document_count(engine, queue, tmp_path):
+    key = uuid4()
+    bundle = Path(__file__).resolve().parents[2] / "frontend" / "public" / "demo"
+    inputs = (
+        ("report", ("report.xlsx", (bundle / "report.xlsx").read_bytes())),
+        ("documents", ("act.docx", (bundle / "act.docx").read_bytes())),
+    )
+    assert submit(queue, key, data={"synthetic": "true"}).status_code == 422
+    created = submit(queue, key, data={"synthetic": "true"}, files=inputs)
+    assert created.status_code == 202
+    run_id = created.json()["run_id"]
+    queued = queue.get("/api/v0/runs").json()["items"][0]
+    assert queued["run_id"] == run_id
+    assert queued["synthetic"] is True
+    assert queued["document_count"] == 2
+    assert submit(queue, key, data={"synthetic": "true"}, files=inputs).json()["run_id"] == run_id
+    assert submit(queue, key, data={}, files=inputs).status_code == 409
+
+    def process(run, path):
+        assert path.is_dir()
+        report_scope = {
+            "report_document_id": run.report_document_id,
+            "contract_number": "INFERRED-SYNTHETIC",
+            "period_start": "2025-03-01",
+            "period_end": "2025-03-31",
+            "report_row_locator": {"kind": "sheet", "sheet": "КФЗ", "range": "C7"},
+        }
+        fixture_run = StoredRun(run.id, report_scope, run.documents)
+        result = _synthetic_result(fixture_run).model_copy(update={"synthetic": False})
+        return CheckJob(run_id=str(run.id), status="completed", result=result, error=None)
+
+    assert run_document_worker(engine, tmp_path, process, once=True)
+    result = queue.get(f"/api/v0/runs/{run_id}/findings").json()
+    assert result["synthetic"] is True
+    completed = queue.get("/api/v0/runs").json()["items"][0]
+    assert completed["contract_number"] == "INFERRED-SYNTHETIC"
+    assert completed["synthetic"] is True

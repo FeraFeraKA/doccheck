@@ -6,6 +6,7 @@ const runsPath = '/api/v0/runs';
 export interface RunUpload {
   report: File;
   documents: readonly File[];
+  synthetic?: boolean;
 }
 
 export interface AcceptedRun {
@@ -92,9 +93,11 @@ export function prepareRunUpload(upload: RunUpload, idempotencyKey: string) {
   const form = new FormData();
   form.append('report', upload.report);
   for (const document of upload.documents) form.append('documents', document);
+  if (upload.synthetic) form.append('synthetic', 'true');
 
-  return async (signal?: AbortSignal): Promise<AcceptedRun> => {
+  return async (signal?: AbortSignal, onProgress?: (percent: number) => void): Promise<AcceptedRun> => {
     const requestUrl = new URL(runsPath, globalThis.location.origin);
+    if (onProgress) return sendWithProgress(requestUrl, form, idempotencyKey, signal, onProgress);
     const response = await fetch(requestUrl.href, {
       method: 'POST',
       body: form,
@@ -103,19 +106,50 @@ export function prepareRunUpload(upload: RunUpload, idempotencyKey: string) {
       signal,
     });
 
-    if (!response.ok) throw new RunUploadHttpError(response.status, parseUploadError(await readJson(response)));
-    if (response.status !== 202) throw new InvalidRunUploadResponse();
-
-    const value = await readJson(response);
-    if (!isRecord(value) || value.status !== 'queued'
-      || !isRunId(value.run_id)) {
-      throw new InvalidRunUploadResponse();
-    }
-
-    const location = runsPath + '/' + value.run_id;
-    if (!hasExpectedLocation(response.headers.get('Location'), requestUrl, location)) {
-      throw new InvalidRunUploadResponse();
-    }
-    return { run_id: value.run_id, status: value.status, location };
+    return acceptResponse(response.status, await readJson(response), response.headers.get('Location'), requestUrl);
   };
+}
+
+function acceptResponse(status: number, value: unknown, location: string | null, requestUrl: URL): AcceptedRun {
+  if (status < 200 || status >= 300) throw new RunUploadHttpError(status, parseUploadError(value));
+  if (status !== 202 || !isRecord(value) || value.status !== 'queued' || !isRunId(value.run_id)) {
+    throw new InvalidRunUploadResponse();
+  }
+
+  const path = runsPath + '/' + value.run_id;
+  if (!hasExpectedLocation(location, requestUrl, path)) throw new InvalidRunUploadResponse();
+  return { run_id: value.run_id, status: 'queued', location: path };
+}
+
+function sendWithProgress(
+  url: URL, form: FormData, key: string, signal: AbortSignal | undefined, onProgress: (percent: number) => void,
+): Promise<AcceptedRun> {
+  return new Promise((resolve, reject) => {
+    signal?.throwIfAborted();
+    const request = new XMLHttpRequest();
+    const abort = () => request.abort();
+    request.open('POST', url.href);
+    request.timeout = 60_000;
+    request.responseType = 'json';
+    request.setRequestHeader('Idempotency-Key', key);
+    request.upload.addEventListener('progress', (event) => {
+      if (event.lengthComputable && event.total > 0) {
+        onProgress(Math.floor(100 * event.loaded / event.total));
+      }
+    });
+    request.addEventListener('load', () => {
+      try {
+        if (request.responseURL !== url.href) throw new InvalidRunUploadResponse();
+        resolve(acceptResponse(request.status, request.response, request.getResponseHeader('Location'), url));
+      } catch (error) {
+        reject(error);
+      }
+    });
+    request.addEventListener('error', () => reject(new TypeError('Не удалось отправить пакет')));
+    request.addEventListener('timeout', () => reject(new DOMException('Время отправки истекло', 'TimeoutError')));
+    request.addEventListener('abort', () => reject(signal?.reason ?? new DOMException('Отправка прервана', 'AbortError')));
+    request.addEventListener('loadend', () => signal?.removeEventListener('abort', abort));
+    signal?.addEventListener('abort', abort, { once: true });
+    request.send(form);
+  });
 }

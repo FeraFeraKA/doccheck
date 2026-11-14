@@ -63,7 +63,7 @@ export class InvalidSourceResponseError extends Error {
   }
 }
 
-function documentUrl(runId: string, documentId: string): string {
+export function documentUrl(runId: string, documentId: string): string {
   const segment = /^[A-Za-z0-9_-]+(?![\s\S])/;
   if (!segment.test(runId) || !segment.test(documentId)) {
     throw new TypeError('Invalid run or document ID');
@@ -219,4 +219,40 @@ export async function getSourceEvidence(
     throw new InvalidSourceResponseError();
   }
   return value;
+}
+
+type HighlightedText = { text: string; match?: [string, string, string] };
+
+export async function getSourceFragmentPreview(
+  runId: string, documentId: string, evidenceId: string, signal: AbortSignal,
+): Promise<HighlightedText | null> {
+  if (!isText(evidenceId)) throw new TypeError('Missing evidence ID');
+  const query = new URLSearchParams({ evidence_id: evidenceId });
+  const response = await requestSource(`${documentUrl(runId, documentId)}/fragment-preview?${query}`, signal);
+  const value = await responseJson(response, signal);
+  signal.throwIfAborted();
+  if (!isRecord(value)) throw new InvalidSourceResponseError();
+  const { text, highlight } = value;
+  if (text === null && highlight === null) return null;
+  if (typeof text !== 'string') throw new InvalidSourceResponseError();
+  const bytes = new TextEncoder().encode(text);
+  if (bytes.length > 4096) throw new InvalidSourceResponseError();
+  if (highlight === null) return { text };
+  if (!isRecord(highlight)) throw new InvalidSourceResponseError();
+
+  const { start_byte: start, end_byte: end } = highlight;
+  if (typeof start !== 'number' || typeof end !== 'number' || !Number.isInteger(start)
+    || !Number.isInteger(end) || start < 0 || end <= start || end > bytes.length) {
+    throw new InvalidSourceResponseError();
+  }
+  const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
+  try {
+    return { text, match: [
+      decoder.decode(bytes.subarray(0, start)),
+      decoder.decode(bytes.subarray(start, end)),
+      decoder.decode(bytes.subarray(end)),
+    ] };
+  } catch {
+    throw new InvalidSourceResponseError();
+  }
 }

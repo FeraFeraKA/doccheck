@@ -1,12 +1,15 @@
-import type { SourceAddress } from '../../shared/lib/sourceLocation';
+import type { SourceAddress, PageAddress } from '../../shared/lib/sourceLocation';
+export type { PageAddress };
 
 export { formatLocation } from '../../shared/lib/sourceLocation';
 
 interface SourceEvidence {
+  kind?: string;
   id: string;
   document_id: string;
   locator: SourceAddress;
   raw_value: string | null;
+  normalized_value?: unknown;
 }
 
 interface ReviewIssue {
@@ -68,12 +71,26 @@ interface ReviewRow {
 
 // Fields used by the transferred screens. The API client's decoder validates
 // this projection before handing a server result to a caller.
+type ResultStatus = 'verified' | 'discrepancy' | 'unverified';
+export interface RubCoverage extends Record<ResultStatus, string | null> {
+  total: string;
+  shares: Partial<Record<ResultStatus, string>> | null;
+}
+
 export interface ReviewResult {
-  scope: { contract_number: string; period_start: string; period_end: string };
+  reportNumber?: string;
+  scope: {
+    contract_number: string;
+    period_start: string;
+    period_end: string;
+    report_document_id?: string;
+    report_row_locator?: SourceAddress | null;
+  };
   documents: ReviewDocument[];
   evidence: SourceEvidence[];
   rows: ReviewRow[];
   summary: {
+    rubCoverage?: RubCoverage;
     counts: { verified: number; discrepancy: number; unverified: number };
     conclusion: string;
     primary_issues: PrimaryReviewIssue[];
@@ -89,6 +106,15 @@ export const statusLabels: Record<string, string> = {
 export function formatDecimal(value: string | null) {
   if (value === null) return '—';
   const [integer, decimals] = value.split('.');
-  const grouped = integer.replace(/\B(?=(\d{3})+(?!\d))/g, '\u00a0');
+  const grouped = integer.replace(/\B(?=(\d{3})+(?!\d))/g, '\u202f').replace(/^-/, '−');
   return decimals === undefined ? grouped : `${grouped},${decimals}`;
+}
+
+export function formatMeasure(value: string | null, unit: string) {
+  return value === null ? '—' : `${formatDecimal(value)} ${unit === 'RUB' ? '₽' : unit}`;
+}
+
+export function rowExplanation(row: ReviewRow) {
+  return row.reasons[0]?.message
+    ?? (row.status === 'unverified' ? row.completeness.reason : 'Суммы совпадают');
 }

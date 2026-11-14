@@ -3,10 +3,16 @@ import type { ReactNode } from 'react';
 const icons = {
   scan: <><path d="M4 7V6a2 2 0 0 1 2-2h2m8 0h2a2 2 0 0 1 2 2v1m0 10v1a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-1" /><path d="M7 12h10" /></>,
   plus: <path d="M12 5v14M5 12h14" />,
+  archive: <><rect x="3" y="4" width="18" height="5" rx="1" /><path d="M5 9v11h14V9m-9 4h4" /></>,
   clipboard: <><rect x="8" y="3" width="8" height="4" rx="1" /><path d="M16 5h2a2 2 0 0 1 2 2v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a2 2 0 0 1 2-2h2m2 6h6m-6 5h6M8 11h.01M8 16h.01" /></>,
   arrow: <path d="M5 12h14m-7-7 7 7-7 7" />,
   check: <path d="m5 12 4 4L19 6" />,
   file: <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Zm0 0v6h6" /><path d="M12 18v-6m-3 3 3-3 3 3" /></>,
+  search: <><circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" /></>,
+  chevron: <path d="m9 18 6-6-6-6" />,
+  warning: <path d="M10.3 3.9 2.6 17.5A2 2 0 0 0 4.3 20h15.4a2 2 0 0 0 1.7-2.5L13.7 3.9a2 2 0 0 0-3.4 0ZM12 9v4m0 3h.01" />,
+  help: <><circle cx="12" cy="12" r="10" /><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3m.1 4h.01" /></>,
+  fileSearch: <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Zm0 0v6h6m-8 8 3 3" /><circle cx="10" cy="13" r="3" /></>,
   close: <path d="m6 6 12 12M18 6 6 18" />,
   status: <><rect x="3" y="4" width="18" height="13" rx="2" /><path d="M8 21h8m-4-4v4m-3-11 2 2 4-4" /></>,
 } satisfies Record<string, ReactNode>;
