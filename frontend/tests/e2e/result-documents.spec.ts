@@ -11,7 +11,7 @@ test('synthetic document decisions, addresses and row links work without the doc
   await page.goto('/checks/synthetic-example/documents');
 
   const table = page.getByRole('region', { name: 'Таблица документов' });
-  const filters = page.getByRole('group', { name: 'Состояние файла' });
+  const filters = page.getByRole('group', { name: 'Статус файла' });
   await expect(table.getByRole('row')).toHaveCount(5);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   await filters.getByRole('button', { name: 'Прочитано (3)' }).click();
@@ -63,7 +63,7 @@ test('stored exception without an address requests only its own original', async
   });
 
   await page.goto(`/checks/${id}/exceptions`);
-  const filters = page.getByRole('group', { name: 'Состояние файла' });
+  const filters = page.getByRole('group', { name: 'Статус файла' });
   await expect(filters.getByRole('button', { name: 'Все (2)' })).toBeVisible();
   await expect(filters.getByRole('button', { name: 'Включён', exact: false })).toHaveCount(0);
   await filters.getByRole('button', { name: 'Ошибка чтения (1)' }).click();
@@ -100,12 +100,12 @@ test('reading filters separate partial, pending and legacy states without changi
   } }));
 
   await page.goto(`/checks/${id}/documents`);
-  const filters = page.getByRole('group', { name: 'Состояние файла' });
+  const filters = page.getByRole('group', { name: 'Статус файла' });
   const table = page.getByRole('region', { name: 'Таблица документов' });
   await expect(table.getByText('Чтение не указано')).toBeVisible();
   await expect(table.getByText('Ожидает чтения')).toBeVisible();
   await filters.getByRole('button', { name: 'Прочитано (0)' }).click();
-  await expect(table.getByText('Документов в этом состоянии нет.')).toBeVisible();
+  await expect(table.getByText('Документов с этим статусом нет.')).toBeVisible();
   await filters.getByRole('button', { name: 'Ошибочные (2)' }).click();
   await expect(table.getByText('Чтение не указано')).toHaveCount(0);
   await expect(table.getByText('Ожидает чтения')).toHaveCount(0);

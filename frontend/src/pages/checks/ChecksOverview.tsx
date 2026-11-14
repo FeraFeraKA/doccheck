@@ -76,10 +76,9 @@ function OverviewLayout({ demo, cursor, page, loading, error, retry }: LayoutPro
     && (filter === 'all' || (filter === 'attention' ? isAttention(entry) : entry.status === 'completed')),
   );
   // The API already sorts the cursor page by creation time and ID.
-  if (sort === 'name') matches.sort((a, b) => a.title.localeCompare(b.title, 'ru'));
+  if (sort === 'name') matches.sort((a, b) => a.title.localeCompare(b.title, 'ru', { numeric: true }));
   const shown = matches;
   const changeSort = () => setSort((current) => current === 'recent' ? 'name' : 'recent');
-  const count = (key: Filter) => page ? String(counts[key]).padStart(2, '0') : '—';
 
   return (
     <div className="checks-overview">
@@ -92,17 +91,6 @@ function OverviewLayout({ demo, cursor, page, loading, error, retry }: LayoutPro
           <OverviewIcon name="plus" size={17} />
           Новая проверка
         </Link>
-      </div>
-      <div className="overview-stats" aria-label="Сводка по странице">
-        <StatCard label="Всего проверок" value={count('all')} icon="clipboard"
-          description="На текущей странице" filter={page ? 'all' : undefined} active={filter === 'all'} select={setFilter} />
-        <StatCard label={labels.attention} value={count('attention')} icon="alert" tone="peach"
-          description="Замечания или ошибка" filter={page ? 'attention' : undefined}
-          active={filter === 'attention'} select={setFilter} />
-        <StatCard label={labels.completed} value={count('completed')} icon="check" tone="mint"
-          description="По состоянию задания" filter={page ? 'completed' : undefined}
-          active={filter === 'completed'} select={setFilter} />
-        <StatCard label="Документов" value="—" icon="files" tone="neutral" description="В составе проверок" />
       </div>
       <section className="overview-section" aria-label="История запусков" aria-busy={loading}>
         <div className="overview-section-heading">
@@ -147,15 +135,12 @@ function OverviewLayout({ demo, cursor, page, loading, error, retry }: LayoutPro
           changeSort={changeSort}
           reset={() => { setQuery(''); setFilter('all'); }}
         />}
-        {(page || cursor) && <div className="overview-footer">
-          {page && <span>Показано {shown.length} из {entries.length} проверок на странице</span>}
-          <div className="flex flex-wrap gap-2">
+        {(cursor || page?.nextCursor) && <nav className="overview-footer flex flex-wrap gap-2" aria-label="Страницы проверок">
             {cursor && <Link className="overview-secondary" to="/checks">К новым проверкам</Link>}
             {page?.nextCursor && <Link className="overview-secondary" to={{
               pathname: '/checks', search: '?' + new URLSearchParams({ cursor: page.nextCursor }),
             }}>Более ранние проверки</Link>}
-          </div>
-        </div>}
+        </nav>}
       </section>
       <section className="overview-section overview-example" aria-label="Готовый пример">
         <div className="overview-section-heading"><h2>Готовый пример</h2></div>
@@ -175,30 +160,6 @@ function OverviewLayout({ demo, cursor, page, loading, error, retry }: LayoutPro
       </section>
     </div>
   );
-}
-
-interface StatProps {
-  label: string;
-  value: string;
-  description: string;
-  icon: 'clipboard' | 'alert' | 'check' | 'files';
-  tone?: string;
-  filter?: Filter;
-  active?: boolean;
-  select?: (filter: Filter) => void;
-}
-
-function StatCard({ label, value, description, icon, tone, filter, active, select }: StatProps) {
-  const content = <>
-    <span>{label}<OverviewIcon name={icon} /></span>
-    <strong>{value}{tone === 'peach' && <OverviewIcon name="arrowUpRight" size={22} />}</strong>
-    <small>{description}</small>
-  </>;
-  const className = classes('overview-stat', tone);
-  return filter
-    ? <button type="button" className={className} aria-pressed={active}
-      aria-label={label + ' · сводка'} onClick={() => select?.(filter)}>{content}</button>
-    : <div className={className}>{content}</div>;
 }
 
 function CheckTitle({ to, title, tone }: { to: string; title: string; tone: string }) {
@@ -250,7 +211,7 @@ function HistoryTable({ entries, hasEntries, sort, changeSort, reset }: {
       {entries.length === 0 && <div className="overview-empty">
         <OverviewIcon name="file" size={32} />
         <h3>{hasEntries ? 'Проверки не найдены.' : 'Проверок пока нет.'}</h3>
-        <p>{hasEntries ? 'Попробуйте другой запрос или сбросьте фильтры.' : 'Добавьте отчёт КФЗ и первичные документы.'}</p>
+        {hasEntries && <p>Попробуйте другой запрос или сбросьте фильтры.</p>}
         {hasEntries
           ? <button type="button" className="overview-secondary" onClick={reset}>Сбросить фильтры</button>
           : <Link className="overview-primary" to="/checks/new">Новая проверка</Link>}

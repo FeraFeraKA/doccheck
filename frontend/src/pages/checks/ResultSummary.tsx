@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { Link } from 'react-router';
 import type { ReviewResult } from './reviewResult';
+import { formatDecimal } from './reviewResult';
 import { XlsxDownload } from './XlsxDownload';
 
 const statuses = [
@@ -26,6 +27,27 @@ function Card({ title, children }: { title: string; children: ReactNode }) {
   return <section className="result-summary-card rounded-lg border p-5">
     <h3 className="mb-3 text-[15px] font-medium">{title}</h3>
     {children}
+  </section>;
+}
+
+export function UnverifiedIndicators({ rows }: { rows: ReviewResult['rows'] }) {
+  const unverified = rows.filter((row) => row.status === 'unverified');
+  if (unverified.length === 0) return null;
+
+  return <section className="result-summary-card mt-5 rounded-lg border p-5"
+    aria-labelledby="unverified-indicators-title">
+    <h2 id="unverified-indicators-title" className="mb-3 text-[15px] font-medium">Недостаточно подтверждений</h2>
+    <ul className="space-y-3 text-[13px]">
+      {unverified.map((row) => {
+        const reasons = new Set([row.completeness.reason, ...row.reasons.map(({ message }) => message)]);
+        return <li key={row.id}>
+          <div className="font-medium">{row.label}</div>
+          {[...reasons].map((reason) => <p className="result-summary-muted" key={reason}>{reason}</p>)}
+          {row.observed_evidence_sum !== null &&
+            <p className="result-summary-muted">Частичная сумма: {formatDecimal(row.observed_evidence_sum)} {row.unit}</p>}
+        </li>;
+      })}
+    </ul>
   </section>;
 }
 

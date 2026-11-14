@@ -16,15 +16,16 @@ test('the accountant opens the synthetic reconciliation and sees discrepancies a
   await expect(page.getByRole('navigation', { name: 'Основная навигация' })
     .getByRole('link', { name: 'Новая проверка' })).toHaveAttribute('aria-current', 'page');
   await expect(page.getByRole('link', { name: 'Журнал действий' })).toHaveCount(0);
-  await expect(page.getByText('Добавьте отчёт и подтверждающие документы для сверки.')).toBeVisible();
+  await expect(page.getByText('Добавьте КФЗ и первичные документы.')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Отправить на проверку' })).toBeDisabled();
   await page.getByRole('link', { name: 'Открыть готовый синтетический результат' }).click();
 
   const discrepancy = page.getByRole('row').filter({ hasText: 'Синтетическая статья A' });
   await expect(discrepancy.getByRole('cell', { name: 'Расхождение', exact: true })).toBeVisible();
   await expect(discrepancy.getByRole('cell', { name: '30,00', exact: true })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Возможные причины расхождений' })).toBeVisible();
-  await expect(page.getByText(/В этом примере таких гипотез нет/)).toBeVisible();
+  const unverified = page.getByRole('region', { name: 'Недостаточно подтверждений' });
+  await expect(unverified).toContainText('Синтетическая статья B');
+  await expect(unverified).not.toContainText('Синтетическая статья A');
 
   const row = page.getByRole('row').filter({ hasText: 'Синтетическая статья B' });
   await expect(row.getByRole('cell', { name: '0,00', exact: true })).toBeVisible();

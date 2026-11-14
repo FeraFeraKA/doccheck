@@ -9,7 +9,7 @@ import { SourceContext } from './SourceContext';
 import { FindingsHttpError, loadFindings } from './loadFindings';
 import { ResultHeader } from './ResultHeader';
 import type { CheckView } from './ResultHeader';
-import { ResultSummary, resultHeadline, resultTone } from './ResultSummary';
+import { ResultSummary, UnverifiedIndicators, resultHeadline, resultTone } from './ResultSummary';
 import { documentDecisionLabels, ResultDocuments } from './ResultDocuments';
 import { ResultTable } from './ResultTable';
 import { formatDecimal, formatLocation, statusLabels } from './reviewResult';
@@ -157,10 +157,7 @@ function ResultContent({ id, view, result, run, synthetic, stored }: ResultConte
             ? <Reconciliation result={result} storedRunId={stored ? id : undefined} rowJump={rowJump?.locationKey === location.key ? rowJump : linkedRowJump} />
             : <section className="checks-card"><h2>Показатели</h2><p>Показатели отсутствуют.</p></section>}
         </div>
-        {synthetic && summary.counts.discrepancy > 0 && <section className="checks-card">
-          <h2>Возможные причины расхождений</h2>
-          <p>Правила сверки могут предложить объяснение для проверки бухгалтером. В этом примере таких гипотез нет.</p>
-        </section>}
+        <UnverifiedIndicators rows={result.rows} />
       </>}
       {(view === 'documents' || view === 'exceptions') && <ResultDocuments
         key={view} result={result} runPath={runPath} storedRunId={stored ? id : undefined}
