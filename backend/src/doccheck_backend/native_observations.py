@@ -15,6 +15,7 @@ class Observation:
     amount_role: Literal["candidate", "component", "total", "basis"] | None = None
     cached_value: Decimal | None = None
     component_locators: tuple[Locator, ...] = ()
+    column_span: int = 1
 
 
 @dataclass(frozen=True)

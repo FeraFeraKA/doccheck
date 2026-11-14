@@ -515,6 +515,69 @@ def test_worker_period_boundaries_preserve_other_admitted_amounts(
             False,
             False,
         ),
+        (
+            "merged",
+            "Период: 01.02.2031 — 28.02.2031",
+            "и с 01.04.2031 по 30.04.2031",
+            "299,12",
+            "100,00",
+            False,
+            True,
+        ),
+        (
+            "merged",
+            "Период: 01.04.2031 — 30.04.2031",
+            "и с 01.02.2031 по 28.02.2031",
+            "397,62",
+            "1,50",
+            True,
+            True,
+        ),
+        (
+            "merged",
+            "Период: 01.02.2031 — 28.02.2031",
+            "— услуги связи",
+            "299,12",
+            "100,00",
+            False,
+            False,
+        ),
+        (
+            "same_row",
+            "Период: 01.02.2031 — 28.02.2031",
+            "- 100.00 руб.",
+            "397,62",
+            "1,50",
+            True,
+            False,
+        ),
+        (
+            "next_row",
+            "Период: Февраль 2031",
+            "— апр. 2031",
+            "299,12",
+            "100,00",
+            False,
+            True,
+        ),
+        (
+            "next_row",
+            "Период: 01.02.2031 — 28.02.2031",
+            "— 01.04.2031",
+            "397,62",
+            "1,50",
+            True,
+            True,
+        ),
+        (
+            "unmerged_gap",
+            "Период: 01.02.2031 — 28.02.2031",
+            "и с 01.04.2031 по 30.04.2031",
+            "299,12",
+            "100,00",
+            False,
+            False,
+        ),
     ],
 )
 def test_worker_docx_adjacent_cells_do_not_truncate_period(
@@ -531,6 +594,12 @@ def test_worker_docx_adjacent_cells_do_not_truncate_period(
     elif layout == "next_row":
         table = document.add_table(rows=2, cols=1)
         table.cell(0, 0).text, table.cell(1, 0).text = period, continuation
+    elif layout in {"merged", "unmerged_gap"}:
+        table = document.add_table(rows=1, cols=3)
+        first = table.cell(0, 0)
+        if layout == "merged":
+            first = first.merge(table.cell(0, 1))
+        first.text, table.cell(0, 2).text = period, continuation
     else:
         table = document.add_table(rows=2, cols=2)
         table.cell(0, 0).text, table.cell(1, 0).text = period, continuation

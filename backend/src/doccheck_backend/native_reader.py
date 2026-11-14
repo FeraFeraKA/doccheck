@@ -230,6 +230,7 @@ def _observe(
     locator: Locator,
     *,
     rub_column: bool = False,
+    column_span: int = 1,
 ) -> None:
     if not text.strip():
         return
@@ -237,7 +238,13 @@ def _observe(
     if ambiguous:
         collected.issues.append(NativeIssue("ambiguous_rub_amount", locator=locator))
     collected.observations.append(
-        Observation(text, locator, amount, "candidate" if amount is not None else None)
+        Observation(
+            text,
+            locator,
+            amount,
+            "candidate" if amount is not None else None,
+            column_span=column_span,
+        )
     )
 
 
@@ -271,7 +278,16 @@ def _read_docx(path: Path | BinaryIO, collected: _Collected) -> None:
                 locator = TableCellLocator(
                     kind="table_cell", table=table_index, row=row_index, cell=cell_index
                 )
-                _observe(collected, cell.text, locator, rub_column=cell_index in rub_columns)
+                span = cell.grid_span
+                if span < 1:
+                    raise ValueError("DOCX cell has an invalid column span")
+                _observe(
+                    collected,
+                    cell.text,
+                    locator,
+                    rub_column=cell_index in rub_columns,
+                    column_span=span,
+                )
 
 
 def read_native_document(path: Path | BinaryIO, file_format: str) -> NativeDocument:

@@ -68,6 +68,11 @@ _ADDITIONAL_PERIOD = re.compile(
     re.I,
 )
 _ADDITIONAL_PERIOD_PREFIX = re.compile(r"^\s*(?:и|или|а\s+также)\s+с(?:\s+|$)", re.I)
+_ONLY_RUBLE_VALUE = re.compile(
+    r"^[+−-]?\s*[0-9][0-9 ,.\u00a0\u2009\u202f]*\s*"
+    r"(?:руб(?:\.|лей|ля|ль)?|р\.|₽|RUB)\.?$",
+    re.I,
+)
 _MONTH_ABBREVIATION = r"(?:янв|фев|мар|апр|июн|июл|авг|сен|сент|окт|ноя|дек)"
 _PERIOD_BOUND_START = re.compile(
     rf"^(?:\?|[0-9]{{1,4}}(?=$|[./-][0-9?]|\s+(?:{'|'.join(_MONTH)}|г(?:ода?)?)\b)"
@@ -228,6 +233,8 @@ def _period_continuation(text: str) -> bool:
     if not match:
         return False
     rest = text[match.end() :].strip()
+    if _ONLY_RUBLE_VALUE.fullmatch(rest) and _text_amount(rest)[0] is not None:
+        return False
     # A delimiter followed by unrelated prose (e.g. "по договору") is not
     # another period; a missing or period-shaped bound remains uncertain.
     return not rest or bool(_PERIOD_BOUND_START.match(rest))
@@ -256,7 +263,7 @@ def _period_following(first: Observation, second: Observation) -> bool:
             and isinstance(right, TableCellLocator)
             and left.table == right.table
             and (
-                (right.row == left.row and right.cell == left.cell + 1)
+                (right.row == left.row and right.cell == left.cell + first.column_span)
                 or (right.cell == left.cell and right.row == left.row + 1)
             )
         )
@@ -352,7 +359,9 @@ def _period_readings(
         candidates = list(observations[i + 1 : i + 2])
         locator = observation.locator
         if isinstance(locator, TableCellLocator):
-            candidates.extend(cells.get((locator.table, locator.row, locator.cell + 1), ()))
+            candidates.extend(
+                cells.get((locator.table, locator.row, locator.cell + observation.column_span), ())
+            )
             candidates.extend(cells.get((locator.table, locator.row + 1, locator.cell), ()))
         has_continuation = False
         if _PERIOD_FIELD.search(raw) or _MONTH_PERIOD.search(raw):
@@ -370,7 +379,7 @@ def _period_readings(
                 )
                 if _period_continuation(next_text) or additional_line:
                     unresolved_period = True
-                    ambiguous_period |= additional_line
+                    ambiguous_period = True
                     has_continuation = True
                     break
         if has_continuation:
@@ -675,6 +684,7 @@ def ground_document(
             obs.amount_role,
             obs.cached_value,
             obs.component_locators,
+            obs.column_span,
         )
         for obs in native.observations
         for line in obs.raw_text.splitlines()

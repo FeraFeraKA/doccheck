@@ -406,20 +406,41 @@ def test_explicit_continuation_in_adjacent_docx_paragraph_is_unresolved():
 
 
 def test_docx_table_continuation_requires_adjacent_row_or_column():
-    def cell(row, column, text, table=1):
+    def cell(row, column, text, table=1, span=1):
         return Observation(
-            text, TableCellLocator(kind="table_cell", table=table, row=row, cell=column)
+            text,
+            TableCellLocator(kind="table_cell", table=table, row=row, cell=column),
+            column_span=span,
         )
 
     period = cell(1, 1, "Период: 01.02.2031 — 28.02.2031")
     extra = "и с 01.04.2031 по 30.04.2031"
     assert _periods((period, cell(1, 2, extra))) == []
+    merged_period = cell(1, 1, period.raw_text, span=2)
+    assert _periods((merged_period, cell(1, 3, extra))) == []
     # Native DOCX traversal visits the second column before the next row.
     assert _periods((period, cell(1, 2, "примечание"), cell(2, 1, extra))) == []
-    for other in (cell(1, 2, "по договору № A-12"), cell(2, 2, extra), cell(1, 2, extra, 2)):
+    for other in (
+        cell(1, 2, "по договору № A-12"),
+        cell(1, 3, extra),
+        cell(2, 2, extra),
+        cell(1, 2, extra, 2),
+    ):
         assert [(p.start, p.end) for p, _ in _periods((period, other))] == [
             ("2031-02-01", "2031-02-28")
         ]
+
+
+@pytest.mark.parametrize("text", ["- 100.00 руб.", "— 1 200,50 руб.", "— услуги связи"])
+def test_separate_money_or_prose_does_not_become_a_period_continuation(text):
+    period = Observation(
+        "Период: 01.02.2031 — 28.02.2031",
+        TableCellLocator(kind="table_cell", table=1, row=1, cell=1),
+    )
+    adjacent = Observation(text, TableCellLocator(kind="table_cell", table=1, row=1, cell=2))
+    assert [(p.start, p.end) for p, _ in _periods((period, adjacent))] == [
+        ("2031-02-01", "2031-02-28")
+    ]
 
 
 @pytest.mark.parametrize("suffix", ["по договору № A-12", "— услуги связи", "— расходы 2031"])
@@ -531,7 +552,7 @@ def test_weak_ocr_abbreviated_month_end_vetoes_first_month(monkeypatch, tmp_path
         ],
     )
     source = grounded_amounts.ground_document(uuid4(), "e" * 32, path, "png", "b" * 64)
-    assert source.period is None and source.amount == "120.00"
+    assert source.period is None and source.period_ambiguous and source.amount == "120.00"
     assert not any(item.kind == "period" for item in source.assertions)
 
 
