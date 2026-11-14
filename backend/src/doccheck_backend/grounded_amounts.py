@@ -2,12 +2,15 @@
 
 import re
 from calendar import monthrange
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from math import ulp
 from pathlib import Path
 from typing import Literal
 from uuid import UUID
+
+from bench.e2e_v32_20261114.articles import ADDITIONAL_ARTICLES, ARTICLE_CODES
+from openpyxl.utils.cell import coordinate_to_tuple
 
 from doccheck_backend.contracts.locators import Locator, PageLocator, SheetLocator, TableCellLocator
 from doccheck_backend.contracts.result import FileFormat, Period
@@ -20,6 +23,7 @@ from doccheck_backend.page_ocr import page_locator, recognize_lines, render_page
 ARTICLES = {
     "payroll": ("0200", "Затраты на оплату труда"),
     "insurance": ("0300", "Страховые взносы"),
+    **ADDITIONAL_ARTICLES,
     "production_overhead": ("0800", "Общепроизводственные затраты"),
     "general_admin": ("0900", "Общехозяйственные затраты"),
     "other": (None, "Прочие расходы"),
@@ -65,7 +69,10 @@ _BASIS = re.compile(r"^основание\s*:?\s*([0-9]+(?:/[0-9]+){2}-[0-9]+)$"
 _PROJECT = re.compile(rf"^проект\s*:\s*({_CONTRACT_ID})(?=$|\s*\|)", re.I)
 _LABEL = re.compile(r"^(?:договор|контракт|основание|дата(?:\s+документа)?)\s*:?$", re.I)
 _BASIS_ID = re.compile(r"[\w]+(?:[/‑-][\w]+)+")
-_FINAL_LABEL = r"(?:итого(?:\s+к\s+(?:оплате|уч[её]ту))?|к\s+оплате(?:\s+по\s+документу)?)"
+_FINAL_LABEL = (
+    r"(?:итого(?:\s+к\s+(?:оплате|уч[её]ту)|\s+стоимость\s+(?:работ|услуг))?"
+    r"|к\s+оплате(?:\s+по\s+документу)?)"
+)
 _TOTAL_LABEL = re.compile(
     r"^(?:сумма(?:\s+по\s+акту)?|стоимость(?:\s+(?:оказанных\s+)?услуг"
     r"(?:\s+за\s+расчетный\s+период)?)?)\s*[:：]",
@@ -78,6 +85,9 @@ _BARE_FINAL = re.compile(
     re.I,
 )
 _AMOUNT_CELL_HEADER = re.compile(r"^(?:сумма|стоимость)\s*[,()]?\s*(?:руб\.?|₽)\)?$", re.I)
+_ARTICLE_CELL_HEADER = re.compile(
+    r"(?:код\s+статьи|статья)(?:\s+(?:затрат|расходов|калькуляции))?:?"
+)
 _PAGE_RUB_HEADER = re.compile(
     r"^(?:наименование\s+)?(?:сумма|стоимость)\s*[,()]?\s*(?:руб\.?|₽)\)?$", re.I
 )
@@ -214,6 +224,10 @@ def format_rubles(amount: Decimal | None, *, xlsx: bool = False) -> str | None:
 
 def _total_column(label: Observation, value: Observation) -> bool:
     left, right = label.locator, value.locator
+    if isinstance(left, SheetLocator) and isinstance(right, SheetLocator):
+        r1, c1 = coordinate_to_tuple(left.range)
+        r2, c2 = coordinate_to_tuple(right.range)
+        return left.sheet == right.sheet and r1 == r2 and c1 < c2
     if isinstance(left, TableCellLocator) and isinstance(right, TableCellLocator):
         return left.table == right.table and left.row == right.row and left.cell < right.cell
     if isinstance(left, PageLocator) and isinstance(right, PageLocator):
@@ -227,6 +241,22 @@ def _total_column(label: Observation, value: Observation) -> bool:
 
 def _rub_column(value: Observation, observations: tuple[Observation, ...]) -> bool:
     address = value.locator
+    if isinstance(address, SheetLocator):
+        row, column = coordinate_to_tuple(address.range)
+        headings = []
+        for header in observations:
+            cell = header.locator
+            if not isinstance(cell, SheetLocator) or cell.sheet != address.sheet:
+                continue
+            r, c = coordinate_to_tuple(cell.range)
+            if c != column or r >= row or header.amount is not None:
+                continue
+            if (
+                header.raw_text.strip()
+                and _text_amount(header.raw_text, rub_column=True)[0] is None
+            ):
+                headings.append((r, header.raw_text))
+        return bool(headings and _AMOUNT_CELL_HEADER.fullmatch(max(headings)[1]))
     if isinstance(address, TableCellLocator):
         return any(
             isinstance(header.locator, TableCellLocator)
@@ -293,9 +323,11 @@ def _money(
             for value in native.observations:
                 if not _total_column(obs, value):
                     continue
-                amount, ambiguous = _text_amount(
-                    value.raw_text, rub_column=_rub_column(value, native.observations)
-                )
+                rub_column = _rub_column(value, native.observations)
+                if isinstance(value.locator, SheetLocator) and value.amount is not None:
+                    amount, ambiguous = (value.amount if rub_column else None), False
+                else:
+                    amount, ambiguous = _text_amount(value.raw_text, rub_column=rub_column)
                 if ambiguous:
                     return None, []
                 if amount is not None:
@@ -332,26 +364,111 @@ def _money(
     return candidates[0], []
 
 
-def _category(
-    observations: tuple[Observation, ...], text: str
+def _article_field_lines(observations: tuple[Observation, ...]) -> dict[int, str]:
+    """Label numeric XLSX/DOCX cells only when an addressed article field covers them."""
+    positions = {}
+    for index, item in enumerate(observations):
+        address = item.locator
+        if isinstance(address, SheetLocator):
+            row, column = coordinate_to_tuple(address.range)
+            positions[(address.sheet, row, column)] = (index, item.raw_text)
+        elif isinstance(address, TableCellLocator):
+            positions[(address.table, address.row, address.cell)] = (index, item.raw_text)
+    lines = {}
+    for (group, row, column), (_, text) in positions.items():
+        if not _ARTICLE_CELL_HEADER.fullmatch(_norm(text)):
+            continue
+        right = positions.get((group, row, column + 1))
+        amount_columns = {
+            c for (block, r, c), (_, raw) in positions.items()
+            if block == group and r == row and _AMOUNT_CELL_HEADER.fullmatch(raw)
+        }
+        if not amount_columns:
+            if right and re.fullmatch(r"[0-9]{3,4}", right[1]):
+                lines[right[0]] = f"Код статьи: {right[1].zfill(4)}"
+            continue
+        rows = {}
+        for (block, r, c), entry in positions.items():
+            if block == group and r > row and entry[1].strip():
+                rows.setdefault(r, {})[c] = entry
+        for _, values in sorted(rows.items()):
+            if any(_FINAL_CELL.fullmatch(raw) for _, raw in values.values()):
+                break
+            amounts = [
+                index for c, (index, raw) in values.items()
+                if c in amount_columns and (
+                    observations[index].amount is not None
+                    or _text_amount(raw, rub_column=True)[0] is not None
+                )
+            ]
+            if not amounts:
+                continue
+            index, raw = values.get(column, (amounts[0], ""))
+            if re.fullmatch(r"[0-9]{3,4}", raw):
+                lines[index] = f"Код статьи: {raw.zfill(4)}"
+            else:
+                # An unlabelled monetary row prevents assigning the document total.
+                lines[index] = "Код статьи: 0000"
+    return lines
+
+
+def _line_observations(observations: tuple[Observation, ...]) -> tuple[Observation, ...]:
+    # Preserve the original locator when splitting a multiline paragraph/cell.
+    return tuple(
+        replace(item, raw_text=line.strip())
+        for item in observations
+        for line in item.raw_text.splitlines()
+        if line.strip()
+    )
+
+
+def read_source_article(
+    observations: tuple[Observation, ...],
 ) -> tuple[str | None, list[Observation]]:
+    category, evidence, _ = _classify_observations(_line_observations(observations))
+    return category, evidence
+
+
+def _classify_observations(
+    observations: tuple[Observation, ...],
+    *,
+    template_article: tuple[str, Observation] | None = None,
+) -> tuple[str | None, list[Observation], bool]:
     from bench.e2e_v32_20261114.classification import classify_source
 
     # The fixture disclaimer labels the source, not the work described below it.
     # Preserve its line position so classifier spans still address the source.
-    classified_text = "\n".join(
-        " "
+    lines = _article_field_lines(observations)
+    if template_article is not None:
+        # Payroll and contribution forms have their own internal subaccount codes.
+        # Their addressed form title supplies the aggregate article.
+        for index, line in tuple(lines.items()):
+            if line[-4:] not in ARTICLE_CODES:
+                lines[index] = " "
+    for index, item in enumerate(observations):
         if re.fullmatch(
             r"синтетический документ\s*[—–-]\s*не для бухгалтерского учета[.]?",
-            _norm(line),
-        )
-        else line
-        for line in text.splitlines()
+            _norm(item.raw_text),
+        ):
+            lines[index] = " "
+    classified_text = "\n".join(
+        lines.get(index, item.raw_text) for index, item in enumerate(observations)
     )
     source = classify_source(classified_text)
+    guarded = bool(
+        source["explicit_articles"]
+        or source["hard_reasons"]
+        or source["unchecked_reasons"]
+        or source["positive_categories"]
+    )
+    if template_article is not None:
+        if not source["explicit_articles"]:
+            return template_article[0], [template_article[1]], guarded
+        if source["category"] != template_article[0]:
+            return None, [], guarded
     category = source["category"]
     if source["decision"] != "resolved" or category not in ARTICLES:
-        return None, []
+        return None, [], guarded
     indices = {
         index - 1
         for statement in source["statements"]
@@ -360,8 +477,8 @@ def _category(
         for index in range(statement["line_start"], statement["line_end"] + 1)
     }
     if not indices or min(indices) < 0 or max(indices) >= len(observations):
-        return None, []
-    return category, [observations[i] for i in sorted(indices)]
+        return None, [], guarded
+    return category, [observations[i] for i in sorted(indices)], guarded
 
 
 def ground_document(
@@ -371,20 +488,7 @@ def ground_document(
     from bench.e2e_v32_20261114.document_identity import resolve_own_number
 
     native, method = _read_observations(path, format_)
-    # Match the line indices used by v3.2 to the original structural/visual location.
-    observations = tuple(
-        Observation(
-            line.strip(),
-            obs.locator,
-            obs.amount,
-            obs.amount_role,
-            obs.cached_value,
-            obs.component_locators,
-        )
-        for obs in native.observations
-        for line in obs.raw_text.splitlines()
-        if line.strip()
-    )
+    observations = _line_observations(native.observations)
     text = "\n".join(o.raw_text for o in observations)
     articles = [
         (_TITLES[_norm(o.raw_text)], o)
@@ -394,13 +498,6 @@ def ground_document(
         and _norm(o.raw_text) in _TITLES
     ]
     template = format_ == "xlsx" and len(articles) == 1
-    category, article_evidence = (
-        (articles[0][0], [articles[0][1]]) if template else _category(observations, text)
-    )
-    if not category and format_ == "pdf" and method == "ocr":
-        native_pdf = read_native_document(path, format_)
-        text_only = "\n".join(o.raw_text for o in native_pdf.observations)
-        category, article_evidence = _category(native_pdf.observations, text_only)
     if template:
         sheet = articles[0][1].locator.sheet
         observations = tuple(
@@ -408,6 +505,24 @@ def ground_document(
             for o in observations
             if isinstance(o.locator, SheetLocator) and o.locator.sheet == sheet
         )
+    total, parts = (
+        (None, [])
+        if native.issues
+        else _money(NativeDocument(observations), template=template, format_=format_)
+    )
+    if not template and total is not None and isinstance(total.locator, SheetLocator):
+        observations = tuple(
+            item for item in observations
+            if isinstance(item.locator, SheetLocator) and item.locator.sheet == total.locator.sheet
+        )
+    category, article_evidence, guarded = _classify_observations(
+        observations, template_article=articles[0] if template else None
+    )
+    if not category and not guarded and format_ == "pdf" and method == "ocr":
+        native_pdf = read_native_document(path, format_)
+        native_category, native_articles = read_source_article(native_pdf.observations)
+        if native_category in {"production_overhead", "general_admin"}:
+            category, article_evidence = native_category, native_articles
 
     assertions = []
 
@@ -452,12 +567,7 @@ def ground_document(
         for o in article_evidence:
             add("article", code or category, o)
 
-    total, parts = (
-        (None, [])
-        if native.issues
-        else _money(NativeDocument(observations), template=template, format_=format_)
-    )
-    amount = format_rubles(total.amount, xlsx=template) if total is not None else None
+    amount = format_rubles(total.amount, xlsx=format_ == "xlsx") if total is not None else None
     if amount is not None and total is not None:
         add("amount", amount, total)
         # These remain source observations. The component points to the document
@@ -473,7 +583,7 @@ def ground_document(
             if isinstance(o.locator, SheetLocator)
         )
     else:
-        identity_text = text
+        identity_text = "\n".join(o.raw_text for o in observations)
     parsed = resolve_own_number(identity_text)
     identity = parsed["resolved_number"]
     identity_observation = None

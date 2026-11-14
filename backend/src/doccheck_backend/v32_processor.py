@@ -10,6 +10,8 @@ from shutil import copyfileobj
 from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Literal
 
+from bench.e2e_v32_20261114.articles import ADDITIONAL_ARTICLES
+
 from doccheck_backend.byte_duplicates import plan_byte_duplicates
 from doccheck_backend.contracts import RESULT_SCHEMA_VERSION, CheckJob, CheckResult
 from doccheck_backend.contracts.locators import PageLocator, SheetLocator
@@ -33,9 +35,10 @@ from doccheck_backend.evidence_binding import (
     ObservationAssertion,
     bind_observations,
 )
-from doccheck_backend.grounded_amounts import format_rubles, ground_document
+from doccheck_backend.grounded_amounts import ARTICLES, format_rubles, ground_document
 from doccheck_backend.normalization import normalize_contract_number, normalize_document_period
 from doccheck_backend.page_ocr import OcrError, render_pages
+from doccheck_backend.reconciliation_comparison import compare_observed_rubles
 from doccheck_backend.result_summary import build_summary
 from doccheck_backend.run_reads import RunReadError, open_run_original
 from doccheck_backend.run_worker import StoredRun
@@ -45,18 +48,11 @@ if TYPE_CHECKING:
     from doccheck_ml.qwen import QwenReader
 
 
-_ARTICLES = {
-    "payroll": ("0200", "Затраты на оплату труда"),
-    "insurance": ("0300", "Страховые взносы"),
-    "production_overhead": ("0800", "Общепроизводственные затраты"),
-    "general_admin": ("0900", "Общехозяйственные затраты"),
-    "other": (None, "Прочие расходы"),
-    "total": (None, "Итого"),
-}
+_ARTICLES = {**ARTICLES, "total": (None, "Итого")}
 _HEX = re.compile(r"[0-9a-f]{32}")
 _MAX_PAGES = 12
 _MAX_NATIVE_CHARS = 24_000
-_RULES_VERSION = "doccheck-local-v3.2-addressed.3"
+_RULES_VERSION = "doccheck-local-v3.2-addressed.4"
 _REPORT_FIELDS = ("contract_number", "period_start", "period_end")
 _REPORT_SCHEMA = {
     "type": "object",
@@ -443,6 +439,12 @@ def _rows(run_id, scope, report, native, scanned, documents, grounds):
         for item in binding.evidence
         if item.kind == "reported_value"
     }
+    present = {category for category, *_ in report_rows}
+    report_rows.extend(
+        (category, None, None, None, None)
+        for category in ADDITIONAL_ARTICLES
+        if category in components and category not in present
+    )
     rows = []
     for category, _, amount, locator, _ in report_rows:
         code, label = _ARTICLES[category]
@@ -459,17 +461,14 @@ def _rows(run_id, scope, report, native, scanned, documents, grounds):
             components=components.get(category, []),
         )
         observed, _ = calculation.admitted_sum(unit="RUB", completeness=complete)
-        refs = (
-            [reported_refs[locator.model_dump_json()]]
-            if locator.model_dump_json() in reported_refs
-            else []
-        )
+        report_ref = reported_refs.get(locator.model_dump_json()) if locator is not None else None
+        refs = [report_ref] if report_ref is not None else []
         reasons = [Reason(code="completeness_unknown", message=complete.reason, evidence_refs=[])]
         if not refs:
             reasons.append(
                 Reason(
                     code="report_cell_unreadable",
-                    message="Не удалось подтвердить значение ячейки КФЗ.",
+                    message="Не удалось подтвердить значение по статье в КФЗ.",
                     evidence_refs=[],
                 )
             )
@@ -481,6 +480,12 @@ def _rows(run_id, scope, report, native, scanned, documents, grounds):
                     evidence_refs=[],
                 )
             )
+        if comparison := compare_observed_rubles(
+            amount if refs else None,
+            observed,
+            refs + [ref for component in calculation.components for ref in component.amount_refs],
+        ):
+            reasons.append(comparison)
         for affected, missing, evidence_ids in unresolved.values():
             if affected is None or affected == category:
                 reasons.extend(
@@ -751,7 +756,7 @@ class V32Processor:
             evidence=evidence,
             rows=rows,
             versions=Versions(
-                code_revision=os.environ.get("DOCCHECK_CODE_REVISION") or "v3.2-addressed.3",
+                code_revision=os.environ.get("DOCCHECK_CODE_REVISION") or "v3.2-addressed.4",
                 rules_version=_RULES_VERSION,
                 ml_module_version="0.1.0" if provenance else None,
                 ml_policy_version=provenance["policy_sha256"] if provenance else None,

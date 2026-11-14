@@ -9,10 +9,61 @@ from __future__ import annotations
 from copy import deepcopy
 import hashlib
 import re
+from .articles import ADDITIONAL_ARTICLES, ARTICLE_CODES
 from .document_identity import header_cells, OWN_HEADER, OWN_LABEL, MARKER, TOKEN, ABSENCE_MARKER, DATE_TAIL, FOREIGN_LABEL
 
 VERSION = "native-purpose-v3.2"
 OVERHEAD = {"production_overhead", "general_admin"}
+ARTICLE_FIELD = re.compile(
+    r"^(?:код\s+статьи|статья)(?:\s+(?:затрат|расходов|калькуляции))?"
+    r"\s*[:№]?\s*(?P<code>[0-9]{4})(?=$|[\s:.,;/()–—])",
+    re.I,
+)
+_NEXT_ARTICLE_CODE = re.compile(
+    r"^\s*(?:[,;/–—-]|\(\s*|\b(?:и|или|либо|по)\b|(?=[0-9]))"
+    r"\s*(?:(?:и|или|либо)\s+)?[0-9]{4}\b",
+    re.I,
+)
+_NEW_PURPOSE = {
+    "production_setup": re.compile(
+        r"\b(?:подготов\w*\s+и\s+освоен\w*\s+(?:нов\w*\s+)?"
+        r"(?:вид\w*\s+)?(?:производств|продукц)\w*|"
+        r"пусков\w*\s+затрат\w*|пусконалад\w*\s+(?:нов\w*\s+)?производственн\w*\s+"
+        r"(?:лини|цех|мощност)\w*)", re.I
+    ),
+    "special_tooling": re.compile(
+        r"\bспециальн\w*\s+(?:технологическ\w*\s+оснастк\w*|оснастк\w*\s+"
+        r"для\s+(?:изготовлен|выпуск)\w*)", re.I
+    ),
+    "research_equipment": re.compile(
+        r"\bспециальн\w*\s+оборудован\w*\s+для\s+"
+        r"(?:научн\w*(?:\s*\(\s*экспериментальн\w*\s*\))?|"
+        r"научно[- ]исследовательск\w*|экспериментальн\w*)\s+(?:работ|исследован)\w*", re.I
+    ),
+    "special_costs": re.compile(r"\bспециальн\w*\s+(?:затрат|расход)\w*", re.I),
+}
+_ARTICLE_PURPOSE_START = re.compile(
+    r"\b(?:подготов\w*\s+и\s+освоен\w*|специальн\w*\s+(?:оборудован|технологическ)\w*)",
+    re.I,
+)
+_EXPLICIT_OVERHEAD = {
+    "general_admin": re.compile(
+        r"\b(?:общехозяйственн\w*\s+(?:затрат|расход)\w*|"
+        r"административн\w*\s+(?:сет|подразделен|контур|сопровожд|функци)\w*|"
+        r"аппарат\w*\s+управлен\w*|бухгалтер\w*\s+(?:программ|систем|служб)\w*)", re.I
+    ),
+    "production_overhead": re.compile(
+        r"\b(?:общепроизводственн\w*\s+(?:затрат|расход)\w*|"
+        r"(?:обслуживани|ремонт|калибровк|поверк)\w*\s+"
+        r"(?:производственн|лабораторн|испытательн)\w*\s+"
+        r"(?:оборудован|помещен|участ|сет)\w*)", re.I
+    ),
+}
+_FOREIGN_ARTICLE = re.compile(
+    r"^\s*(?:шаблон|справочно)\s*:|\b(?:на|для|по)\s+друг(?:ой|ому)\s+договор\w*|"
+    r"\b(?:невыполненн|неоказанн|неосуществленн|неосуществлённ)\w*",
+    re.I,
+)
 ACTION = re.compile(r"\b(?:сопровождени|обслуживани|поддержк|настройк|поверк|калибровк|метролог|ремонт|аренд|обеспечени|подготовк|содержани)\w*", re.I)
 PURPOSE_LABEL = re.compile(r"(?:назначение|содержание\s+работ|описание\s+(?:работ|услуг)|наименование\s+(?:работ|услуг))\s*[:—-]", re.I)
 METADATA = re.compile(r"^\s*(?:[A-Z]+\d+:\s*)?(?:исполнитель|заказчик|получатель|плательщик|подпис\w*|ответствен\w*|договор|контракт|период|дата|№|итого|ндс|сумм|стоимость|расчет\s+составлен|расчёт\s+составлен|руководител\w*|директор\w*|главный\s+бухгалтер|лист)\b", re.I)
@@ -119,6 +170,9 @@ def is_purpose_line(line):
     if is_metadata(line):
         return False
     content = content_text(line)
+    if (ARTICLE_FIELD.match(content) or _ARTICLE_PURPOSE_START.search(content)
+            or any(rule.search(content) for rule in _NEW_PURPOSE.values())):
+        return True
     if OLD_REQUEST.match(content) or REQUEST_CANCELLATION.match(content):
         return True
     if any(pattern.search(line) for pattern in (
@@ -243,16 +297,20 @@ def supported_backward_prefix(prefix):
     return BACKWARD_COMPLEMENT.fullmatch(value)
 
 
-def allocation_polarity(text):
+def allocation_polarity(text, *, new_purpose=False, explicit_article=False):
     """Recognize only bounded literal positive/negative role assertions.
 
     A supported negation applies to its role phrase, including coordinated roles,
     until an explicit contrasting/affirmative clause. A sole denial cannot imply
     the opposite article. Unsupported syntax remains guarded.
     """
+    if new_purpose or explicit_article:
+        patterns = {**_EXPLICIT_OVERHEAD, **_NEW_PURPOSE}
+    else:
+        patterns = {"general_admin": ADMIN, "production_overhead": PRODUCTION}
     roles = sorted([{"category": category, "start": m.start(), "end": m.end(),
                      "text": m.group(), "polarity": "positive"}
-                    for category, pattern in (("general_admin", ADMIN), ("production_overhead", PRODUCTION))
+                    for category, pattern in patterns.items()
                     for m in pattern.finditer(text)], key=lambda item: item["start"])
     guarded = bool(re.search(r"\bне\s+только\b", text, re.I) or DENIED_SERVICE.search(text))
     allocation_notes = []
@@ -324,7 +382,9 @@ def purpose_excerpts(text, analysis_text=None):
         analysis_block = [line]
         for next_index in range(index + 1, min(index + 3, len(lines))):
             following = analyzed[next_index]
-            if not following.strip() or is_metadata(following) or re.search(r"наименование|сумма,?\s*руб", following, re.I):
+            if (not following.strip() or is_metadata(following)
+                    or ARTICLE_FIELD.match(content_text(following))
+                    or re.search(r"наименование|сумма,?\s*руб", following, re.I)):
                 break
             # Another sentence starts its own observation; retain only natural
             # wraps or an explicit one-line label's value.
@@ -362,7 +422,8 @@ def source_statements(excerpts, source_text=None, excluded_spans=()):
         if cursor < len(excerpt['text']):
             pieces.append((cursor,len(excerpt['text'])))
         matches = [(left+m.start(),left+m.end(),m.group()) for left,right in pieces
-                   for m in re.finditer(r"[^.;!?]+[.;!?]?",excerpt['text'][left:right])]
+                   for m in re.finditer(r"[^.;!?]+(?:;(?=\s*[0-9]{4}\b)[^.;!?]+)*[.;!?]?",
+                                        excerpt['text'][left:right])]
         for match_start, match_end, raw in matches:
             if not raw.strip():
                 continue
@@ -474,11 +535,22 @@ def cancelled_request_scopes(statements, text):
 def assertion(statement):
     """Parse evidence without granting authority to an unparsed role mention."""
     value = statement["text"]
-    roles, unsupported = allocation_polarity(value)
     content = content_text(value)
+    direct = ARTICLE_FIELD.match(content)
+    code = direct["code"] if direct else None
+    category = ARTICLE_CODES.get(code)
+    new_purpose = any(rule.search(value) for rule in _NEW_PURPOSE.values())
+    roles, unsupported = allocation_polarity(
+        value, new_purpose=new_purpose, explicit_article=bool(direct)
+    )
+    if category is not None:
+        start, end = (position + len(value) - len(content) for position in direct.span("code"))
+        roles.append({"category": category, "start": start, "end": end,
+                      "text": value[start:end], "polarity": "positive"})
     equipment = TEMPORARY_EQUIPMENT.match(content)
     equipment_external = equipment is not None and EXTERNAL_EQUIPMENT_CONTEXT.search(value)
-    equipment_is_own = (equipment is not None and not equipment_external
+    equipment_is_own = (equipment is not None and not new_purpose and not direct
+                        and not equipment_external
                         and not in_external_quote(statement)
                         and not OTHER_ALLOCATION.search(value))
     equipment_with_stage = (equipment_is_own and not ADMIN.search(value)
@@ -493,21 +565,29 @@ def assertion(statement):
     mentions = sorted({r["category"] for r in roles})
     result = {**statement, "roles": roles, "mentioned_categories": mentions,
               "positive_categories": [], "negative_categories": [],
-              "coreference": bool(COREFERENCE.search(value)), "state": "irrelevant"}
+              "coreference": bool(COREFERENCE.search(value)), "state": "irrelevant",
+              "article_code": code}
     if is_metadata(value):
         result["reason"] = "metadata_is_not_purpose"
         return result
-    context = (any(pattern.search(value) for pattern in (ACTION, COMPLETED_WORK, PURPOSE_LABEL, WORK_CONTEXT))
+    context = (bool(direct) or new_purpose
+               or any(pattern.search(value) for pattern in (ACTION, COMPLETED_WORK, PURPOSE_LABEL, WORK_CONTEXT))
                or any(pattern.match(content_text(value)) for pattern in
                       (COST_ALLOCATION, COST_OF_COMPLETED_WORK, REPORTED_COMPLETION)))
     quoted = in_external_quote(statement)
-    if quoted or NARRATIVE_CONTEXT.search(value) or equipment_external:
+    if (quoted or NARRATIVE_CONTEXT.search(value) or equipment_external
+            or (new_purpose and _FOREIGN_ARTICLE.search(content))):
         result.update(state="unknown", reason="quoted_or_external_context")
     elif value.endswith("?") or NONASSERTIVE.search(value):
         result.update(state="unknown", reason="nonassertive_statement")
     elif DENIED_SERVICE.search(value):
         result.update(state="denied_service", reason="explicit_service_denial")
-    elif PURCHASE.search(value):
+    elif direct and _NEXT_ARTICLE_CODE.match(content[direct.end():]):
+        result.update(state="nonexclusive", reason="multiple_article_codes")
+    elif direct and category is None:
+        result.update(state="nonexclusive", reason="unsupported_article_code")
+    elif PURCHASE.search(value) and category is None and not (
+            new_purpose and {"special_tooling", "research_equipment"} & set(mentions)):
         result.update(state="purchase", reason="purchase_requires_separate_allocation")
     elif UNALLOCATED_AMOUNT.fullmatch(value.rstrip(".;! ")):
         result.update(state="amount_context", reason="no_numeric_breakdown")
@@ -549,6 +629,20 @@ def classify_source(text):
             statements.append(assertion(item))
             end = item['source_char_end']
     cancellation_scopes = cancelled_request_scopes(statements, text)
+    direct = {item["article_code"] for item in statements if item["article_code"]}
+    explicit = {
+        ARTICLE_CODES[item["article_code"]]
+        for item in statements
+        if item["article_code"] in ARTICLE_CODES
+        and ARTICLE_CODES[item["article_code"]] in item["positive_categories"]
+    }
+    if len(explicit) == len(direct) == 1 and explicit & ADDITIONAL_ARTICLES.keys():
+        for item in statements:
+            # An explicitly coded purchase is usable if it has no conflicting purpose.
+            if (item["state"] == "purchase" and explicit & {"special_tooling", "research_equipment"}
+                    and not item["mentioned_categories"]
+                    and not NEGATION.search(item["text"])):
+                item.update(state="irrelevant", reason="purchase_with_explicit_article")
     positive = {category for item in statements for category in item["positive_categories"]}
     negative = {category for item in statements for category in item["negative_categories"]}
     hard, unresolved, uncertain_roles = [], [], set()
@@ -594,6 +688,7 @@ def classify_source(text):
     details = {"excerpts": excerpts, "statements": statements, 'own_requisite_spans':metadata,
         "role_assertions": [{k: item[k] for k in ("line_start", "line_end", "roles", "state")} for item in statements],
         "positive_categories": sorted(positive), "negative_categories": sorted(negative),
+        "explicit_articles": sorted(direct),
         "hard_reasons": sorted(set(hard)), "unchecked_reasons": sorted(set(unresolved))}
     candidates = sorted(positive | uncertain_roles)
     if (not hard and set(unresolved) == {"temporary_equipment_allocation_unknown"}
@@ -642,7 +737,9 @@ def apply_source_checks(record, native_text=None):
     evidence.update(version=VERSION, source_verified=True, source_hash=checked.get("source_hash"),
         native_text_sha256=hashlib.sha256(native_text.encode()).hexdigest(),
         original_category=original, gate_applies=True)
-    if original in OVERHEAD or original is None:
+    if (original in OVERHEAD or original in ADDITIONAL_ARTICLES or original is None
+            or evidence["explicit_articles"]
+            or set(evidence["positive_categories"]) & ADDITIONAL_ARTICLES.keys()):
         if evidence["decision"] in {"resolved", "abstain"}:
             prediction["category"] = evidence["category"]
         if evidence["decision"] == "resolved":

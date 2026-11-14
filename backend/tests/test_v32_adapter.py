@@ -99,6 +99,55 @@ def _stub_ollama(monkeypatch, amount):
     return calls
 
 
+@pytest.mark.parametrize("ambiguous_amount", [False, True])
+def test_adapter_binds_new_article_to_addressed_code(
+    uploaded_files, tmp_path, monkeypatch, ambiguous_amount
+):
+    report, source = uploaded_files
+    report_path = tmp_path / report["id"]
+    source_path = tmp_path / source["id"]
+    with report_path.open("rb") as stream:
+        book = load_workbook(stream)
+    sheet = book.active
+    sheet["A7"], sheet["B7"] = 500, "Специальная технологическая оснастка"
+    book.save(report_path)
+    report["sha256"] = sha256(report_path.read_bytes()).hexdigest()
+
+    act = Document()
+    for line in [
+        "Акт оказанных услуг № ACT-31 от 28.02.2027",
+        "Период оказания услуг: с 01.02.2027 по 28.02.2027.",
+        "Договор № E2E-31.",
+        "Подразделение А\nОтдел 2.",
+        "Код статьи: 0500",
+        "Итого стоимость услуг: 1 172,70 руб.",
+    ]:
+        act.add_paragraph(line)
+    if ambiguous_amount:
+        table = act.add_table(rows=2, cols=2)
+        table.cell(0, 1).text = "Сумма, руб."
+        table.cell(1, 1).text = "100 руб. и 50 руб."
+    act.save(source_path)
+    source["sha256"] = sha256(source_path.read_bytes()).hexdigest()
+
+    # The old model reply is wrong about the article. The original is authoritative.
+    _stub_ollama(monkeypatch, "1172.70")
+    result = process(StoredRun(uuid4(), None, uploaded_files), tmp_path).result
+    (row,) = result.rows
+    assert row.indicator_code == "0500"
+    if ambiguous_amount:
+        assert row.observed_evidence_sum is None
+        assert not row.calculation.components
+    else:
+        assert row.observed_evidence_sum == "1172.70"
+        assert any(reason.code == "observed_difference" for reason in row.reasons)
+        sources = {item.id: item for item in result.evidence}
+        (component,) = row.calculation.components
+        assert any(
+            sources[ref].raw_value == "Код статьи: 0500" for ref in component.article_refs
+        )
+
+
 def test_worker_adapter_infers_scope_and_anchors_partial_sum(uploaded_files, tmp_path, monkeypatch):
     calls = _stub_ollama(monkeypatch, "1172.70")
     run = StoredRun(uuid4(), None, uploaded_files)

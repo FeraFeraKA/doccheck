@@ -1,11 +1,13 @@
 """Read an addressed row of a visible, ruled KФЗ table with local OCR."""
 
 import re
+from collections import Counter
 from dataclasses import dataclass
 from decimal import Decimal
 from statistics import median
 
 import numpy as np
+from bench.e2e_v32_20261114.articles import ARTICLE_CODES, LEGACY_CODES, report_category
 from PIL import Image
 
 from doccheck_backend.contracts.locators import PageLocator
@@ -20,10 +22,14 @@ from doccheck_backend.page_ocr import (
 _GROUP_HEADER = {
     "0200": re.compile(r"оплат\w*\s+труд\w*"),
     "0300": re.compile(r"страхов\w*\s+взнос\w*"),
+    "0400": re.compile(r"подготов\w*\s+и\s+освоен\w*\s+производств\w*"),
+    "0500": re.compile(r"специальн\w*\s+технологическ\w*\s+оснастк\w*"),
+    "0600": re.compile(r"специальн\w*\s+оборудован\w*\s+для\s+(?:научн|экспериментальн)\w*"),
+    "0700": re.compile(r"специальн\w*\s+(?:затрат|расход)\w*"),
     "0800": re.compile(r"общепроизводствен\w*"),
     "0900": re.compile(r"общехозяйствен\w*"),
 }
-_AGGREGATES = {"0200", "0300"}
+_AGGREGATES = {"0200", "0300", "0400"}
 _CONTRACT = re.compile(
     r"\b(?:договор|контракт)\s*(?:№|No)?\s*([\w]+(?:[-/][\w]+)+)(?=$|[\s.,;:])", re.I
 )
@@ -52,17 +58,8 @@ def _peaks(values: np.ndarray, threshold: float) -> list[int]:
     return [int(group[np.argmax(values[group])]) for group in groups if group.size]
 
 
-_SIMPLE_LABELS = {
-    "оплата труда": "0200",
-    "затраты на оплату труда": "0200",
-    "страховые взносы": "0300",
-    "общепроизводственные расходы": "0800",
-    "общепроизводственные затраты": "0800",
-    "общехозяйственные расходы": "0900",
-    "общехозяйственные затраты": "0900",
-    "прочие расходы": "other",
-    "итого": "total",
-}
+_CODES_BY_CATEGORY = {category: code for code, category in ARTICLE_CODES.items()}
+_SUPPORTED_CODE = re.compile(r"(?<!\d)(?:" + "|".join(ARTICLE_CODES) + r")(?!\d)")
 _EXPLICIT_PERIOD = re.compile(
     r"^отч[её]тный период:\s*(\d{2}\.\d{2}\.\d{4})\s*[—–-]\s*"
     r"(\d{2}\.\d{2}\.\d{4})$",
@@ -115,13 +112,17 @@ def _simple_table(
     if bounds != {period}:
         return None
     amounts = {}
+    conflicts = False
     for line in lines:
         parsed = _SIMPLE_LINE.fullmatch(line.text)
         if parsed is None:
             continue
-        code = _SIMPLE_LABELS.get(parsed[1].strip(".: ").casefold())
-        if code is not None:
+        category = report_category(parsed[1])
+        if category is not None:
+            code = _CODES_BY_CATEGORY.get(category, category)
             amounts.setdefault(code, []).append(line)
+        elif _SUPPORTED_CODE.search(parsed[1]):
+            conflicts = True
     if not amounts:
         return None
     result = []
@@ -133,14 +134,22 @@ def _simple_table(
         checked = recognize_crop(image, line.box, mode=7)
         confirmed = _SIMPLE_LINE.fullmatch(" ".join(checked.split()))
         amount = _parse_money(raw)
-        if confirmed is None or _parse_money(confirmed[2]) != amount:
+        if (
+            confirmed is None
+            or report_category(confirmed[1]) != report_category(line.text[: -len(raw)])
+            or _parse_money(confirmed[2]) != amount
+        ):
             raw, amount = None, None
         result.append(ReportCell(code, page_locator(page, image, line.box), raw, amount))
     return ReportReading(
         result,
-        {code for code in _SIMPLE_LABELS.values() if code != "other"}
-        <= {cell.code for cell in result},
+        not conflicts and _complete_codes({cell.code for cell in result})
+        and len(result) == len(amounts),
     )
+
+
+def _complete_codes(codes: set[str]) -> bool:
+    return "total" in codes and LEGACY_CODES <= codes
 
 
 def _column_tracks(ink: np.ndarray, horizontals: list[int]) -> list[int]:
@@ -173,10 +182,33 @@ def _column_tracks(ink: np.ndarray, horizontals: list[int]) -> list[int]:
     ]
 
 
+def _numeric_header_code(image: Image.Image, box: PixelBox, code: str) -> bool:
+    left, top, right, bottom = box
+    # OCR may read a zero as punctuation in a Cyrillic line. Re-read just the
+    # numeric tail, keeping the original table boundary for wider characters.
+    for line in recognize_lines(image.crop(box), mode=6):
+        token = re.search(r"(?<!\d)([0-9][0-9()OoОо]{2,3})\)*$", line.text)
+        if token is None or not token[1].startswith(code[:2]):
+            continue
+        x0, y0, x1, y1 = line.box
+        height = y1 - y0
+        end = min(x1 + 5, right - left + 5)
+        for width in (2.4, 2.8):
+            start = max(x0, x1 - round(height * width))
+            code_box = (
+                left + start, max(top, top + y0 - 5),
+                left + end, min(bottom, top + y1 + 5),
+            )
+            if recognize_crop(image, code_box, mode=7, numeric=True).strip() == code:
+                return True
+    return False
+
+
 def _headers(image: Image.Image, ink: np.ndarray, xs: list[int], ys: list[int]) -> dict[str, int]:
     """Find article groups by title and code, then identify their total subcolumn."""
     content_top = ys[0]
     candidates = {}
+    uncertain = set()
     # Use the vertical rules that continue through the first header band to
     # locate the merged titles. A single-level header uses the same logic.
     for edge in ys[1:3]:
@@ -195,9 +227,24 @@ def _headers(image: Image.Image, ink: np.ndarray, xs: list[int], ys: list[int]) 
             text = " ".join(recognize_crop(image, box, mode=6).casefold().split())
             if text.strip(" .:") == "итого":
                 found.setdefault("total", set()).add(start)
+            matching_labels = {
+                code for code, pattern in _GROUP_HEADER.items() if pattern.search(text)
+            }
+            visible_codes = set(_SUPPORTED_CODE.findall(text))
+            if visible_codes - matching_labels and matching_labels:
+                uncertain.update(matching_labels | visible_codes)
+                continue
             for code, pattern in _GROUP_HEADER.items():
-                if not re.search(rf"(?<!\d){code}(?!\d)", text) or not pattern.search(text):
+                if code not in matching_labels:
                     continue
+                if code not in visible_codes:
+                    if visible_codes or len(matching_labels) != 1:
+                        continue
+                    if code in LEGACY_CODES:
+                        continue
+                    if not _numeric_header_code(image, box, code):
+                        uncertain.add(code)
+                        continue
                 if end == start + 1:
                     found.setdefault(code, set()).add(start)
                 elif code in _AGGREGATES:
@@ -208,14 +255,18 @@ def _headers(image: Image.Image, ink: np.ndarray, xs: list[int], ys: list[int]) 
                         label = " ".join(
                             recognize_crop(image, label_box, mode=6).casefold().split()
                         )
-                        if pattern.search(label) and re.search(r"\bвсего\b", label):
+                        if re.search(r"\b(?:всего|итого)\b", label) and (
+                            pattern.search(label) or code == "0400"
+                        ):
                             found.setdefault(code, set()).add(start)
                             break
         for code, indices in found.items():
             candidates.setdefault(code, set()).update(indices)
-        if all(code in candidates for code in (*_GROUP_HEADER, "total")):
-            break
-    return {code: next(iter(indices)) for code, indices in candidates.items() if len(indices) == 1}
+    return {
+        **dict.fromkeys(sorted(uncertain), -1),
+        **{code: next(iter(indices)) if len(indices) == 1 else -1
+           for code, indices in candidates.items()},
+    }
 
 
 def _row_band(
@@ -242,8 +293,12 @@ def _row_band(
     for top, bottom in zip(ys, ys[1:]):
         if bottom - top < 13 or (selected and (top, bottom) != selected):
             continue
-        label = recognize_crop(image, (xs[0] + 4, top + 3, xs[2] - 4, bottom - 3))
-        match = _ROW.fullmatch(" ".join(label.casefold().split()))
+        match = None
+        for edge in (xs[1], xs[2]):
+            label = recognize_crop(image, (xs[0] + 4, top + 3, edge - 4, bottom - 3))
+            match = _ROW.fullmatch(" ".join(label.casefold().split()))
+            if match:
+                break
         if match and (selector is None or match.groups() == selector.groups()):
             candidates.append((top, bottom, match[2]))
     return candidates[0] if len(candidates) == 1 else None
@@ -252,7 +307,9 @@ def _row_band(
 def _read_amount(image: Image.Image, box: PixelBox) -> tuple[str | None, Decimal | None]:
     left, top, right, bottom = box
     readings = []
-    for pad in (3, 5):
+    # The center of a thick rule can be several pixels inside the table cell.
+    pads = (6, 10) if min(right - left, bottom - top) >= 85 else (3, 5)
+    for pad in pads:
         raw = " ".join(
             recognize_crop(
                 image, (left + pad, top + pad, right - pad, bottom - pad), numeric=True
@@ -302,9 +359,12 @@ def read_report_row(
     if period[0][:4] != year or period[1][:4] != year:
         return None
     cols = _headers(image, ink, xs, ys)
+    used_columns = Counter(cols.values())
     cells = []
     for code, col in cols.items():
+        if col < 0 or used_columns[col] != 1:
+            continue
         box = (xs[col], top, xs[col + 1], bottom)
         raw, amount = _read_amount(image, box)
         cells.append(ReportCell(code, page_locator(page, image, box), raw, amount))
-    return ReportReading(cells, {*_GROUP_HEADER, "total"} <= cols.keys())
+    return ReportReading(cells, len(cells) == len(cols) and _complete_codes(set(cols)))

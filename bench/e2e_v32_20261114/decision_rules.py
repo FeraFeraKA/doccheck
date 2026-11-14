@@ -13,10 +13,12 @@ from decimal import Decimal, InvalidOperation
 import hashlib
 import re
 import unicodedata
+
+from .articles import ARTICLE_CODES
 from .document_identity import literal_id, validate_number_evidence
 
 
-CATEGORIES = {"production_overhead", "general_admin", "payroll", "insurance", "other"}
+CATEGORIES = {*ARTICLE_CODES.values(), "other"}
 
 
 def normalize_identifier(value):

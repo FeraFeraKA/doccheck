@@ -17,15 +17,14 @@ from zipfile import ZipFile
 from openpyxl.styles.numbers import BUILTIN_FORMATS, is_date_format, is_timedelta_format
 
 try:
+    from .articles import report_category
     from .decision_rules import parse_amount, parse_date
 except ImportError:
+    from articles import report_category
     from decision_rules import parse_amount, parse_date
 
 NS = {"x": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
 REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
-CATEGORIES = {"Оплата труда": "payroll", "Страховые взносы": "insurance",
-              "Общепроизводственные расходы": "production_overhead",
-              "Общехозяйственные расходы": "general_admin", "Прочие расходы": "other"}
 
 
 def evaluate_cell(cells, address, stack=()):
@@ -133,14 +132,16 @@ def read_native_report(path):
             total = {"amount": str(evaluate_cell(cells, f"C{row}")), "cell": f"КФЗ!C{row}", "formula": cells[f"C{row}"].get("formula")}
             break
         label = text(f"B{row}")
-        if not label:
+        code = text(f"A{row}")
+        if not label and not code:
             raise ValueError(f"Missing expense category at B{row}")
-        category = CATEGORIES.get(label)
-        if category is None or category in seen:
+        category = report_category(label, code)
+        if category in {None, "total"} or category in seen:
             raise ValueError(f"Unknown or duplicate category at B{row}: {label}")
         seen.add(category)
         rows.append({"category": category, "reported_amount": str(evaluate_cell(cells, f"C{row}")),
-                     "source_cells": {"category": f"КФЗ!B{row}", "reported_amount": f"КФЗ!C{row}"}})
+                     "source_cells": {"category": f"КФЗ!{'B' if label else 'A'}{row}",
+                                      "reported_amount": f"КФЗ!C{row}"}})
     if not rows or total is None:
         raise ValueError("Missing report rows or total")
     row_sum = sum((parse_amount(row["reported_amount"]) for row in rows), Decimal("0"))

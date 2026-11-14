@@ -7,11 +7,14 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
+from hashlib import sha256
 from pathlib import Path
 from shutil import copyfile
 from tempfile import TemporaryDirectory
 from urllib.error import URLError
 from zipfile import BadZipFile, ZipFile
+
+from bench.e2e_v32_20261114.articles import ADDITIONAL_ARTICLES, report_category
 
 from doccheck_backend.contracts.locators import PageLocator, SheetLocator
 from doccheck_backend.contracts.result import (
@@ -36,6 +39,7 @@ from doccheck_backend.contracts.result import (
 )
 from doccheck_backend.native_observations import Observation
 from doccheck_backend.native_reader import read_native_document
+from doccheck_backend.reconciliation_comparison import compare_observed_rubles
 from doccheck_backend.run_worker import StoredRun
 
 _MODEL_DIGEST = "d8b0f5e9760cd1682034f292d7ef72ec46f432149be0df7574bf2d6e92e38c04"
@@ -43,6 +47,7 @@ _VERSION = "e2e-v32-20261114"
 _ARTICLES = {
     "payroll": ("0200", "Оплата труда"),
     "insurance": ("0300", "Страховые взносы"),
+    **ADDITIONAL_ARTICLES,
     "production_overhead": ("0800", "Общепроизводственные расходы"),
     "general_admin": ("0900", "Общехозяйственные расходы"),
     "other": (None, "Прочие расходы"),
@@ -73,6 +78,7 @@ _XLSX_ARTICLES = {
 }
 _DATE = re.compile(r"(?<!\d)(?:\d{4}-\d{2}-\d{2}|\d{2}\.\d{2}\.\d{4})(?!\d)")
 _PERIOD = re.compile(r"^Период\b", re.IGNORECASE)
+_DAY_FIELD = re.compile(r"^Дата(?:\s+документа)?\s*:\s*(.+)$", re.IGNORECASE)
 _TOTAL_CANDIDATE = re.compile(
     r"\b(?:итого|всего|итоговая\s+сумма|к\s+(?:оплате|уплате)|"
     r"стоимость\s+(?:услуг|работ|оказанных|выполненных))\b",
@@ -235,31 +241,27 @@ def _read_pdf_report(
         report_row_locator=None,
     )
     evidence = {}
-    for category, (_, label) in _ARTICLES.items():
-        candidates = []
-        for item in observations:
-            text = item.raw_text.strip()
-            if text.partition(":")[0].strip().casefold() != label.casefold():
-                continue
-            if isinstance(item.locator, PageLocator):
-                amount = _PDF_MONEY.fullmatch(text[len(label) :])
-                candidates.append((item, amount[1] if amount else None))
-        if len(candidates) > 1 or (candidates and candidates[0][1] is None):
+    for item in observations:
+        text = item.raw_text.strip()
+        label, _, _ = text.partition(":")
+        category = report_category(label)
+        if category not in _ARTICLES or not isinstance(item.locator, PageLocator):
+            continue
+        amount = _PDF_MONEY.fullmatch(text[len(label):])
+        if amount is None or category in evidence:
             return None
-        if len(candidates) == 1:
-            item, raw_amount = candidates[0]
-            value = decision_rules.parse_amount(raw_amount)
-            if value is not None:
-                evidence[category] = Evidence(
-                    id=f"{file.id}-{category}-reported",
-                    document_id=file.id,
-                    kind="reported_value",
-                    raw_value=item.raw_text,
-                    normalized_value=_money(value),
-                    unit="RUB",
-                    method="native_pdf",
-                    locator=item.locator,
-                )
+        value = decision_rules.parse_amount(amount[1])
+        if value is not None:
+            evidence[category] = Evidence(
+                id=f"{file.id}-{category}-reported",
+                document_id=file.id,
+                kind="reported_value",
+                raw_value=item.raw_text,
+                normalized_value=_money(value),
+                unit="RUB",
+                method="native_pdf",
+                locator=item.locator,
+            )
     return (scope, evidence) if evidence else None
 
 
@@ -289,6 +291,15 @@ def _period_candidate(text: str) -> bool:
     return (
         _PERIOD.match(text.strip()) is not None or _XLSX_SCOPE.fullmatch(text.strip()) is not None
     )
+
+
+def _component_period(
+    text: str, parse_date: Callable[[str], date | None]
+) -> tuple[date, date] | None:
+    if match := _DAY_FIELD.fullmatch(text):
+        day = parse_date(match[1])
+        return (day, day) if day is not None else None
+    return _period(text, parse_date)
 
 
 def _source_groups(
@@ -339,6 +350,23 @@ def _source_groups(
     return amounts, articles
 
 
+def _extended_source_group(
+    file_format: str, observations: tuple[Observation, ...]
+) -> tuple[str | None, list[Observation], Observation | None, tuple[Observation, ...]]:
+    from doccheck_backend.grounded_amounts import _money as ground_total
+    from doccheck_backend.grounded_amounts import read_source_article
+    from doccheck_backend.native_observations import NativeDocument
+
+    total, _ = ground_total(NativeDocument(observations), template=False, format_=file_format)
+    if total is not None and isinstance(total.locator, SheetLocator):
+        observations = tuple(
+            item for item in observations
+            if isinstance(item.locator, SheetLocator) and item.locator.sheet == total.locator.sheet
+        )
+    category, articles = read_source_article(observations)
+    return category, articles, total, observations
+
+
 def _bind_component(
     file: InputFile,
     observations: tuple[Observation, ...],
@@ -354,14 +382,27 @@ def _bind_component(
     start, end, issue = decision_rules.document_interval(prediction)
     if issue or start is None or end is None:
         return None
-    amount_slots, article_slots = _source_groups(file.format, observations, extraction, category)
+    if category in ADDITIONAL_ARTICLES:
+        native_category, article_slots, total, observations = _extended_source_group(
+            file.format, observations
+        )
+        if native_category != category or total is None:
+            return None
+        amount_slots = [total]
+        located_amount = total.amount
+    else:
+        amount_slots, article_slots = _source_groups(
+            file.format, observations, extraction, category
+        )
+        located_amount = amount_slots[0].amount if len(amount_slots) == 1 else None
+        if located_amount is None and file.format == "pdf" and len(amount_slots) == 1:
+            cash = _PDF_MONEY.search(amount_slots[0].raw_text)
+            if cash:
+                located_amount = decision_rules.parse_amount(cash[1])
     contract_slots = [item for item in observations if _contract(item.raw_text) is not None]
     period_slots = [item for item in observations if _period_candidate(item.raw_text)]
-    located_amount = amount_slots[0].amount if len(amount_slots) == 1 else None
-    if located_amount is None and file.format == "pdf" and len(amount_slots) == 1:
-        cash = _PDF_MONEY.search(amount_slots[0].raw_text)
-        if cash:
-            located_amount = decision_rules.parse_amount(cash[1])
+    if not period_slots and category in ADDITIONAL_ARTICLES:
+        period_slots = [item for item in observations if _DAY_FIELD.fullmatch(item.raw_text)]
     groups = (amount_slots, contract_slots, period_slots, article_slots)
     if (
         len(amount_slots) != 1
@@ -369,7 +410,7 @@ def _bind_component(
         or not all(groups)
         or not all(_contract(item.raw_text) == scope.contract_number for item in contract_slots)
         or not all(
-            _period(item.raw_text, decision_rules.parse_date) == (start, end)
+            _component_period(item.raw_text, decision_rules.parse_date) == (start, end)
             for item in period_slots
         )
     ):
@@ -411,6 +452,7 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
     """Process an addressed report and anchor v3.2 findings to saved originals."""
     from bench.e2e_v32_20261114 import decision_rules, document_identity
     from bench.e2e_v32_20261114 import run as v32
+    from bench.e2e_v32_20261114.classification import VERSION as CLASSIFICATION_VERSION
 
     files = {item.id: item for item in map(InputFile.from_manifest, run.documents)}
     report = files[run.report_document_id]
@@ -481,6 +523,7 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
         documents, extractions, hashes = {}, [], {report.digest: report.id}
         previous = {}
         observations_by_id = {}
+        incomplete_sources = set()
         artifact_root = v32.runtime.ART
         try:
             v32.runtime.ART = folder / "runtime"
@@ -501,6 +544,8 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
                     entry = file.v32_entry(folder, "primary")
                     copyfile(source_path, entry["path"])
                     native = read_native_document(Path(entry["path"]), file.format)
+                    if native.issues:
+                        incomplete_sources.add(file.id)
                     if file.format == "xlsx" and any(
                         issue.code == "formula_cache_mismatch" for issue in native.issues
                     ):
@@ -525,6 +570,30 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
                         if not extracted.get("error"):
                             # The configured model schema supplies no counterparty proof.
                             extracted["prediction"].pop("counterparty", None)
+                            source = extracted.get("source_native_text")
+                            if (
+                                ADDITIONAL_ARTICLES.keys() & report_evidence.keys()
+                                and not native.issues
+                                and isinstance(source, str)
+                            ):
+                                category, _, _, _ = _extended_source_group(
+                                    file.format, observations_by_id[file.id]
+                                )
+                                if category in ADDITIONAL_ARTICLES:
+                                    raw_category = extracted["prediction"].get("category")
+                                    extracted["prediction"]["category"] = category
+                                    extracted["category_evidence"] = {
+                                        "version": CLASSIFICATION_VERSION,
+                                        "source_verified": True,
+                                        "source_hash": extracted["source_hash"],
+                                        "native_text_sha256": sha256(source.encode()).hexdigest(),
+                                        "category": category,
+                                        "decision": (
+                                            "confirmed" if raw_category == category else "corrected"
+                                        ),
+                                        "financial_usable": True,
+                                        "gate_applies": True,
+                                    }
                             extractions.append(extracted)
                             continue
                         message = "Не удалось извлечь данные из первичного документа."
@@ -583,7 +652,9 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
             evidence.append(reported)
             components = []
             for file_id in item["source_ids"]:
-                if file_id in conflicted_sources:
+                if file_id in conflicted_sources or (
+                    category in ADDITIONAL_ARTICLES and file_id in incomplete_sources
+                ):
                     continue
                 file = files[file_id]
                 bound = _bind_component(
@@ -616,6 +687,12 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
             reasons = [
                 Reason(code="completeness_unknown", message=completeness.reason, evidence_refs=[])
             ]
+            if comparison_reason := compare_observed_rubles(
+                reported.normalized_value,
+                observed,
+                [reported.id, *(ref for component in components for ref in component.amount_refs)],
+            ):
+                reasons.append(comparison_reason)
             relevant_conflicts = any(
                 decision_rules.normalize_category(by_id[file_id]["prediction"].get("category"))
                 in (None, category)
