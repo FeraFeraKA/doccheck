@@ -206,6 +206,11 @@ function Reconciliation({ result, storedRunId, rowJump }: {
     if (filter !== 'all' && item.status !== filter) return false;
     if (!search || item.label.toLocaleLowerCase('ru').includes(search)) return true;
     const issue = item.root_issue_id === null ? undefined : issuesById.get(item.root_issue_id);
+    const fileErrors = new Set(issue?.file_error_refs);
+    if (fileErrors.size > 0 && documents.some((file) =>
+      file.name.toLocaleLowerCase('ru').includes(search) &&
+      file.errors.some((error) => fileErrors.has(error.id)),
+    )) return true;
     return resultRowEvidenceIds(item, issue).some((id) => {
       const evidenceItem = allEvidenceById.get(id);
       const name = evidenceItem && documentsById.get(evidenceItem.document_id)?.name;

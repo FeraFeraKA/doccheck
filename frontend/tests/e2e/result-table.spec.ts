@@ -35,6 +35,9 @@ test('search finds document names and Alt+Arrow selects, opens and focuses an is
   await search.fill('synthetic-ledger.xlsx');
   await expect(issue).toBeVisible();
   await expect(table.getByRole('button', { name: 'Синтетическая статья B' })).toHaveCount(0);
+  await search.fill('synthetic-scan.png');
+  await expect(table.getByRole('button', { name: 'Синтетическая статья B' })).toBeVisible();
+  await expect(issue).toHaveCount(0);
   await search.fill('нет совпадений');
   await expect(workspace.getByText('Показатели не найдены.')).toBeVisible();
   await workspace.getByRole('button', { name: 'Сбросить фильтры' }).click();
