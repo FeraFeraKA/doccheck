@@ -14,7 +14,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.formparsers import MultiPartException, MultiPartParser
 from starlette.types import Receive, Scope, Send
 
-from doccheck_backend import hosted_queue, run_reads
+from doccheck_backend import hosted_preview, hosted_queue, run_reads
 from doccheck_backend.config import Settings
 from doccheck_backend.contracts import CheckResult
 from doccheck_backend.contracts.result import Evidence
@@ -70,6 +70,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         application.state.upload_root = configured.upload_root
         application.state.public_demo = configured.public_demo
         application.state.hosted_worker_digest = configured.hosted_worker_digest
+        application.state.hosted_viewers = configured.hosted_viewers
+        application.state.hosted_session_key = configured.hosted_session_key
         application.state.engine = create_database_engine(configured.database_url)
         try:
             yield
@@ -281,6 +283,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     application.include_router(document_runs)
     application.include_router(hosted_queue.router)
+    application.include_router(hosted_preview.router)
 
     @application.get("/health", response_model=HealthResponse)
     def health(request: Request) -> HealthResponse:

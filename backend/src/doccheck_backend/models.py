@@ -65,3 +65,4 @@ class HostedClaim(Base):
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     deadline_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     receipt: Mapped[str | None] = mapped_column(String(64))
+    viewer_id: Mapped[UUID | None] = mapped_column(Uuid, index=True)

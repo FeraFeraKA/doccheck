@@ -20,8 +20,10 @@ def upgrade() -> None:
         sa.Column("expires_at", sa.DateTime(timezone=True)),
         sa.Column("deadline_at", sa.DateTime(timezone=True)),
         sa.Column("receipt", sa.String(64)),
+        sa.Column("viewer_id", sa.Uuid()),
         sa.CheckConstraint("attempt BETWEEN 0 AND 3"),
     )
+    op.create_index("ix_hosted_claims_viewer_id", "hosted_claims", ["viewer_id"])
 
 
 def downgrade() -> None:

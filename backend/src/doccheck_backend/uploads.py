@@ -139,8 +139,16 @@ def _sync_directory(path: Path) -> None:
 
 
 def store_run(
-    engine: Engine, root: Path, key: UUID, form: FormData, *, hosted_synthetic: bool = False
+    engine: Engine,
+    root: Path,
+    key: UUID,
+    form: FormData,
+    *,
+    hosted_synthetic: bool = False,
+    hosted_viewer: UUID | None = None,
 ) -> UUID:
+    if hosted_viewer is not None and not hosted_synthetic:
+        raise ValueError("Viewer assignment requires synthetic admission")
     if set(form) - {*SCOPE_FIELDS, "report", "documents"}:
         raise input_error("Неизвестное поле")
     (report,) = _get_files(form, "report", 1)
@@ -198,14 +206,18 @@ def store_run(
                     raise UploadError(
                         409, "idempotency_conflict", "Ключ уже связан с другим пакетом"
                     )
-                admitted = connection.scalar(
-                    select(HostedClaim.run_id).where(HostedClaim.run_id == existing)
-                )
-                if hosted_synthetic != (admitted is not None):
+                admission = connection.execute(
+                    select(HostedClaim.viewer_id).where(HostedClaim.run_id == existing)
+                ).one_or_none()
+                if hosted_synthetic != (admission is not None) or (
+                    admission is not None and admission.viewer_id != hosted_viewer
+                ):
                     raise UploadError(409, "idempotency_conflict", "Ключ связан с другой очередью")
                 return existing
             if hosted_synthetic:
-                connection.execute(insert(HostedClaim).values(run_id=run_id, attempt=0))
+                connection.execute(
+                    insert(HostedClaim).values(run_id=run_id, attempt=0, viewer_id=hosted_viewer)
+                )
             _sync_directory(staging)
             staging.rename(root / str(run_id))
             # An uncertain commit must not delete bytes that a committed run can reference.

@@ -25,7 +25,7 @@ _TOKEN = "synthetic-test-token-" + "0" * 32
 _HEADERS = {"Authorization": f"Bearer {_TOKEN}"}
 
 
-def _seed(config, directory):
+def _seed(config, directory, *, viewer=None):
     directory.mkdir()
     report = directory / "report.xlsx"
     act = directory / "act.docx"
@@ -40,8 +40,8 @@ def _seed(config, directory):
     manifest.write_text(json.dumps(data), encoding="utf-8")
     key = uuid4()
     digest = hashlib.sha256(manifest.read_bytes()).hexdigest()
-    result = seed(config, manifest, digest, key)
-    assert seed(config, manifest, digest, key) == result
+    result = seed(config, manifest, digest, key, viewer=viewer)
+    assert seed(config, manifest, digest, key, viewer=viewer) == result
     return result, report.read_bytes()
 
 
@@ -146,3 +146,51 @@ def test_hosted_worker_pulls_verified_package_and_completes_over_http(database_u
         assert persisted.result["synthetic"] is True
     finally:
         engine.dispose()
+
+
+def test_restricted_preview_has_secure_session_and_denies_cross_viewer(database_url, tmp_path):
+    first, second = uuid4(), uuid4()
+    token_one, token_two = "1" * 48, "2" * 48
+    digest = hashlib.sha256(_TOKEN.encode()).hexdigest()
+    config = Settings(
+        database_url,
+        upload_root=tmp_path / "runs",
+        public_demo=True,
+        hosted_worker_digest=digest,
+        hosted_viewers={
+            first: hashlib.sha256(token_one.encode()).hexdigest(),
+            second: hashlib.sha256(token_two.encode()).hexdigest(),
+        },
+        hosted_session_key=b"s" * 32,
+    )
+    run_one, report = _seed(config, tmp_path / "first", viewer=first)
+    run_two, _ = _seed(config, tmp_path / "second", viewer=second)
+    base = "/api/preview/v1"
+    with TestClient(create_app(config), base_url="https://testserver") as http:
+        claim = http.post(_CLAIMS, headers=_HEADERS).json()
+        file_id = claim["documents"][0]["id"]
+        assert http.get(base + "/runs").status_code == 401
+        assert http.post(base + "/session", json={"token": _TOKEN}).status_code == 401
+        session = http.post(base + "/session", json={"token": token_one})
+        assert session.status_code == 204
+        assert "Secure" in session.headers["set-cookie"]
+        assert "HttpOnly" in session.headers["set-cookie"]
+        assert "SameSite=strict" in session.headers["set-cookie"]
+        runs = http.get(base + "/runs")
+        assert [run["run_id"] for run in runs.json()] == [str(run_one)]
+        assert runs.headers["cache-control"] == "no-store"
+        assert http.get(f"{base}/runs/{run_one}").status_code == 200
+        original = http.get(f"{base}/runs/{run_one}/documents/{file_id}")
+        assert original.content == report
+        assert original.headers["cache-control"] == "no-store"
+        for suffix in (
+            "",
+            "/findings",
+            "/documents/not-owned",
+            "/documents/not-owned/fragments?evidence_id=unknown",
+            "/documents/not-owned/fragment-preview?evidence_id=unknown",
+            "/exports/xlsx",
+        ):
+            assert http.get(f"{base}/runs/{run_two}{suffix}").status_code == 404
+        assert http.get("/api/v0/runs").status_code == 503
+        assert http.post(_CLAIMS).status_code == 401

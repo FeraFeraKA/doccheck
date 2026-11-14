@@ -6,6 +6,7 @@ from contextlib import ExitStack
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
+from stat import S_ISREG
 from typing import Literal
 from uuid import UUID
 
@@ -32,9 +33,13 @@ class SyntheticPackage(BaseModel):
     documents: list[SyntheticFile]
 
 
-def seed(settings: Settings, manifest: Path, expected: str, key: UUID) -> UUID:
+def seed(
+    settings: Settings, manifest: Path, expected: str, key: UUID, *, viewer: UUID | None = None
+) -> UUID:
     if not settings.public_demo or settings.hosted_worker_digest is None:
         raise ValueError("Synthetic worker queue is disabled")
+    if viewer is not None and viewer not in (settings.hosted_viewers or {}):
+        raise ValueError("Synthetic package viewer is not configured")
     with manifest.open("rb") as handle:
         content = handle.read(16 * 1024 + 1)
     if len(content) > 16 * 1024 or sha256(content).hexdigest() != expected:
@@ -49,7 +54,12 @@ def seed(settings: Settings, manifest: Path, expected: str, key: UUID) -> UUID:
         names = set()
         for field, file in files:
             path = root / file.name
-            if path.parent != root or path.resolve(strict=True) != path or file.name in names:
+            if (
+                path.parent != root
+                or path.resolve(strict=True) != path
+                or not S_ISREG(path.stat().st_mode)
+                or file.name in names
+            ):
                 raise ValueError("Invalid synthetic package file")
             if path.suffix.lower() != (".xlsx" if field == "report" else ".docx"):
                 raise ValueError("Invalid synthetic package file format")
@@ -63,7 +73,12 @@ def seed(settings: Settings, manifest: Path, expected: str, key: UUID) -> UUID:
         engine = create_database_engine(settings.database_url)
         stack.callback(engine.dispose)
         return store_run(
-            engine, settings.upload_root, key, FormData(uploads), hosted_synthetic=True
+            engine,
+            settings.upload_root,
+            key,
+            FormData(uploads),
+            hosted_synthetic=True,
+            hosted_viewer=viewer,
         )
 
 
@@ -72,8 +87,17 @@ def main() -> None:
     parser.add_argument("manifest", type=Path)
     parser.add_argument("manifest_sha256")
     parser.add_argument("request_id", type=UUID)
+    parser.add_argument("--viewer", type=UUID)
     args = parser.parse_args()
-    print(seed(Settings.from_env(), args.manifest, args.manifest_sha256, args.request_id))
+    print(
+        seed(
+            Settings.from_env(),
+            args.manifest,
+            args.manifest_sha256,
+            args.request_id,
+            viewer=args.viewer,
+        )
+    )
 
 
 if __name__ == "__main__":
