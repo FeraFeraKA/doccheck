@@ -27,13 +27,7 @@ export function Sidebar() {
           </Link>;
         })}
       </nav>
-      <div className="sidebar-bottom">
-        <div className="profile">
-          <span className="profile-avatar" aria-hidden="true">Б</span>
-          <strong>Бухгалтер</strong>
-        </div>
-        <Link className="system-status-link" to="/system-status">Проверка системы</Link>
-      </div>
+      <Link className="system-status-link" to="/system-status">Проверка системы</Link>
     </aside>
   );
 }
