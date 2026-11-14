@@ -31,7 +31,9 @@ _AGGREGATES = {
     "insurance": ("0300", ("страховые взносы",)),
 }
 _WORD = r"[^\W\d_]+"
-_OVERHEAD_HEADER = {
+_SECTION_HEADER = {
+    "0200": re.compile(r"(?:затраты\s+)?на\s+оплату\s+труда(?:[\s,−–—-]+всего)?"),
+    "0300": re.compile(r"страховые\s+взносы(?:\s+на\s+обязательное\s+социальное\s+страхование)?"),
     "0800": re.compile(r"общепроизводственные\s+(?:затраты|расходы)"),
     "0900": re.compile(r"общехозяйственные\s+(?:затраты|расходы)"),
 }
@@ -165,7 +167,8 @@ def _repeat_contains(
     read: ReadCell, box: PixelBox, required: tuple[str, ...], *, code: str
 ) -> bool:
     texts = [_tokens(read(box, scale)) for scale in (2, 3, 4)]
-    overhead = _OVERHEAD_HEADER.get(code)
+    section = _SECTION_HEADER[code]
+    article = rf"{section.pattern}\s*\(?\s*{{}}{code}\s*\)?\s*[.:]?"
     hits = 0
     for text in texts:
         other_roles = [
@@ -180,20 +183,15 @@ def _repeat_contains(
         codes = set(_CODE.findall(text))
         if codes - {code}:
             return False
-        if overhead is not None:
-            # Longer headings cannot stand for the complete label. The only
-            # allowed suffix is the printed expense classification and code.
-            article = rf"{overhead.pattern}\s*\(?\s*{{}}{code}\s*\)?\s*[.:]?"
-            if re.fullmatch(article.format(rf"(?:{_ARTICLE}\s+)?"), text):
-                hits += 1
-            elif all(term in text for term in required) and not re.fullmatch(
-                article.format(rf"{_UNREADABLE_ARTICLE}\s+"), text
-            ):
-                if codes or overhead.fullmatch(text) is None:
-                    return False
-            continue
-        if all(term in text for term in required) and code in codes:
+        # The complete parent role is independent of the leaves. Only the
+        # printed article reference and code may follow the section title.
+        if re.fullmatch(article.format(rf"(?:{_ARTICLE}\s+)?"), text):
             hits += 1
+        elif not re.fullmatch(article.format(rf"{_UNREADABLE_ARTICLE}\s+"), text) and (
+            required[0] in text or code in codes
+        ):
+            if codes or section.fullmatch(text) is None:
+                return False
     return hits >= 2
 
 
@@ -328,7 +326,17 @@ def _scoped_column_roles(
             continue
         if category in _REPORT_CODES:
             code, words = _REPORT_CODES[category]
-            if len(covered) != 1 or not _repeat_contains(
+            if len(covered) != 1:
+                continue
+            # The text may be narrow even if its actual parent cell is
+            # merged. Prove both sides of this section in the header band.
+            left, right = grid.x[index], grid.x[index + 1]
+            top, bottom = header_top + 3, header_bottom - 2
+            if any(
+                _line_score(image, edge, top, bottom) < 0.8
+                or _has_long_line_gap(image, edge, top, bottom)
+                for edge in (left, right)
+            ) or not _repeat_contains(
                 read, _cell_box(grid, index, header_top, header_bottom), words, code=code
             ):
                 continue

@@ -417,3 +417,46 @@ def test_overhead_only_allows_isolated_article_code_suffix(table):
 
     result = read_table_amounts(image, row, headings, read)
     assert result["production_overhead"].amount == Decimal("1234.67")
+
+
+@pytest.mark.parametrize("role", ["расходы", "затраты"])
+def test_third_qualified_overhead_read_vetoes_even_a_matching_article_code(table, role):
+    image, row, headings = table
+
+    def read(box, scale):
+        if box[1] < 145 and box[0] > 525 and scale == 4:
+            text = f"Общепроизводственные {role} по одному подразделению (0800)"
+            return (_source(text, 10, 10, 36, 36),)
+        return _default_cell_read(box, scale)
+
+    result = read_table_amounts(image, row, headings, read)
+    assert "production_overhead" not in result
+    assert result["payroll"].amount == Decimal("1234.67")
+
+
+def test_unrestricted_payroll_leaf_does_not_invalidate_parent_scope_limit(table):
+    image, row, headings = table
+
+    def read(box, scale):
+        if box[1] < 145 and box[0] < 380 and scale == 4:
+            text = "Затраты на оплату труда работников подразделения (0200)"
+            return (_source(text, 10, 10, 36, 36),)
+        return _default_cell_read(box, scale)
+
+    result = read_table_amounts(image, row, headings, read)
+    assert "payroll" not in result
+    assert result["production_overhead"].amount == Decimal("1234.67")
+
+
+def test_overhead_title_inside_one_leaf_still_requires_single_column_parent(table):
+    image, row, headings = table
+    ImageDraw.Draw(image).rectangle((668, 94, 672, 141), fill=255)
+
+    def read(box, scale):
+        if 145 < box[1] < 270 and box[0] > 525:
+            return (_source("В том числе за счёт субсидии", 10, 10, 50, 36),)
+        return _default_cell_read(box, scale)
+
+    result = read_table_amounts(image, row, headings, read)
+    assert "production_overhead" not in result
+    assert result["payroll"].amount == Decimal("1234.67")
