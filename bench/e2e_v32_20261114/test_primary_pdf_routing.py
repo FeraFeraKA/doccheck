@@ -32,9 +32,9 @@ def _text_page(writer, text, *, invisible=False, y=250):
     return page
 
 
-def _raster_page(writer, fill):
+def _raster_page(writer, fill, *, size=(300, 400)):
     image_pdf = BytesIO()
-    with Image.new("RGB", (300, 400), fill) as image:
+    with Image.new("RGB", size, fill) as image:
         image.save(image_pdf, format="PDF", resolution=72)
     return writer.add_page(PdfReader(image_pdf).pages[0])
 
@@ -66,19 +66,49 @@ class PrimaryPdfRoutingTest(unittest.TestCase):
             self.assertIn("Страница 1\nScan excerpt\nПриложение 1 (изображение)", message["content"])
             self.assertEqual(len(message["images"]), 1)
 
-    def test_small_decorative_image_preserves_native_text_route(self):
+    def test_small_visible_image_alongside_long_text_reaches_model(self):
         with TemporaryDirectory() as folder:
             root = Path(folder)
             writer = PdfWriter()
             page = _text_page(writer, "Terms and amount stated in the document below.")
-            image = _raster_page(writer, "red")
-            page.merge_scaled_page(image, 0.075)
+            image = _raster_page(writer, "red", size=(35, 20))
+            page.merge_page(image)
             del writer.pages[-1]
-            path = root / "logo.pdf"
+            path = root / "small_image.pdf"
+            writer.write(path)
+
+            with patch.object(runtime, "ART", root / "runtime"), patch.object(runtime, "api") as api:
+                api.side_effect = [
+                    {"message": {"content": json.dumps({"amount": None})}},
+                    {"models": []},
+                ]
+                record = run.extract_primary({"id": "small", "path": str(path)}, {})
+
+            self.assertIsNone(record["error"])
+            self.assertEqual(record["input_kind"], "mixed")
+            self.assertEqual(record["raster_pages"], (1,))
+            message = api.call_args_list[0].args[1]["messages"][0]
+            self.assertIn("Terms and amount", message["content"])
+            self.assertEqual(len(message["images"]), 1)
+            with Image.open(BytesIO(base64.b64decode(message["images"][0]))) as rendered:
+                red, green, blue = rendered.getpixel((20, rendered.height - 20))
+                self.assertGreater(red, 250)
+                self.assertLess(green + blue, 5)
+
+    def test_fully_cropped_image_keeps_native_text_route(self):
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            writer = PdfWriter()
+            page = _text_page(writer, "Visible text")
+            image = _raster_page(writer, "red", size=(35, 20))
+            page.merge_page(image)
+            del writer.pages[-1]
+            page.cropbox = RectangleObject((0, 200, 300, 300))
+            path = root / "cropped_image.pdf"
             writer.write(path)
 
             item, = runtime.prepare_pdf_pages(path, root / "output")
-            self.assertIn("Terms and amount", item.text)
+            self.assertEqual(item.text, "Visible text")
             self.assertIsNone(item.image)
 
     def test_cropbox_excludes_text_outside_visible_page(self):

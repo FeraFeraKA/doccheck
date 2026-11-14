@@ -107,7 +107,6 @@ def _pdf_page_content(page, text_page):
     left, bottom, right, top = page.get_bbox()
     page_area = (right - left) * (top - bottom)
     image_area = 0.0
-    substantial_image = False
     for item in page.get_objects(filter=[raw.FPDF_PAGEOBJ_IMAGE, raw.FPDF_PAGEOBJ_TEXT]):
         if item.type == raw.FPDF_PAGEOBJ_TEXT:
             mode = raw.FPDFTextObj_GetTextRenderMode(item)
@@ -124,9 +123,7 @@ def _pdf_page_content(page, text_page):
         x0, y0, x1, y1 = matrix.on_rect(0, 0, 1, 1)
         visible_width = max(0, min(right, x1) - max(left, x0))
         visible_height = max(0, min(top, y1) - max(bottom, y0))
-        visible_area = visible_width * visible_height
-        image_area += visible_area
-        substantial_image |= visible_area > 0 and max(visible_width, visible_height) > 36
+        image_area += visible_width * visible_height
         if image_area >= 0.5 * page_area:
             return None, True
     text_view = page.get_textpage()
@@ -135,14 +132,8 @@ def _pdf_page_content(page, text_page):
     finally:
         text_view.close()
     text = text.replace("\r\n", "\n").strip() or None
-    if text is None:
-        return None, True
-
-    # The content of a visible image is uncertain. Omit only small marks
-    # (at most half an inch on either axis and 1% combined page area) when
-    # substantial native text suggests a born-digital page rather than a caption.
-    decorative_only = not substantial_image and image_area <= 0.01 * page_area
-    return text, image_area > 0 and (len(text) < 40 or not decorative_only)
+    # Even a small visible image can carry a value absent from the text layer.
+    return text, text is None or image_area > 0
 
 
 def _read_pdf_pages(path, out=None):
@@ -230,7 +221,7 @@ def prepare(entry, *, split_pdf=False):
     profile = b"render-v1:scale2.5:max2000x2500:ocr-v2:ru-v5:ori1:lineori1:uvdoc0:detmax1280:recbatch1"
     split_pdf = split_pdf and path.suffix.lower() == ".pdf"
     if split_pdf:
-        profile += b":primary-pdf-page-routing-v2"
+        profile += b":primary-pdf-page-routing-v3"
     key = hashlib.sha256(path.read_bytes() + profile).hexdigest()
     out = ART / "inputs" / key
     out.mkdir(parents=True, exist_ok=True)
