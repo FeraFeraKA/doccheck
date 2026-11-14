@@ -54,7 +54,7 @@ describe('document source preview', () => {
   it('opens the exact PDF page and releases the object URL on unmount', async () => {
     mockSource(pdf.id, { kind: 'page', page: 8, line: 3, fragment_id: 'first' });
     const view = render(<DocumentSourcePreview runId="run-1" document={pdf} evidenceId={evidenceId} />);
-    expect(screen.getByText('Загрузка оригинала…')).toBeVisible();
+    expect(screen.getByRole('status')).toHaveTextContent('Загрузка документа…');
     expect(await screen.findByText('Страница 8, строка 3, фрагмент first')).toBeVisible();
     const open = screen.getByRole('link', { name: 'Открыть страницу 8 PDF (в новой вкладке)' });
     expect(open).toHaveAttribute('href', 'blob:http://localhost/fixture#page=8');
@@ -69,20 +69,22 @@ describe('document source preview', () => {
     const png = { id: 'report-image', name: 'Синтетическая страница.png', format: 'png' };
     mockSource(png.id, { kind: 'page', page: 1, bbox: [0.25, 0.125, 0.75, 0.625] });
     const view = render(<DocumentSourcePreview runId="run-1" document={png} evidenceId={evidenceId} />);
-    const image = await screen.findByRole('img', { name: png.name });
     expect(await screen.findByText('Страница 1')).toBeVisible();
+    const image = await screen.findByAltText(png.name);
     expect(createUrl).toHaveBeenCalledWith(expect.objectContaining({ type: 'image/png' }));
-    expect(view.container.querySelector('[aria-hidden="true"]')).toBeNull();
+    const box = () => view.container.querySelector('.source-viewer-highlight');
+    expect(box()).toBeNull();
     fireEvent.load(image);
-    expect(view.container.querySelector('[aria-hidden="true"]')).toHaveStyle({
+    expect(box()).toHaveStyle({
       left: '25%', top: '12.5%', width: '50%', height: '50%',
     });
     fireEvent.click(screen.getByRole('button', { name: 'Увеличить масштаб' }));
     expect(screen.getByLabelText('Масштаб документа')).toHaveTextContent('125%');
-    fireEvent.click(screen.getByRole('button', { name: 'Подсветка' }));
-    expect(view.container.querySelector('[aria-hidden="true"]')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Подсветка' }));
-    expect(view.container.querySelector('[aria-hidden="true"]')).toBeVisible();
+    const amounts = screen.getByRole('checkbox', { name: 'Суммы и значения' });
+    fireEvent.click(amounts);
+    expect(box()).toHaveAttribute('data-hidden', 'true');
+    fireEvent.click(amounts);
+    expect(box()).toHaveAttribute('data-source-field', 'amount');
     fireEvent.error(image);
     expect(screen.getByRole('alert')).toHaveTextContent('Предпросмотр изображения недоступен.');
     expect(screen.getByRole('link', { name: 'Скачать оригинал' })).toBeVisible();
@@ -104,12 +106,12 @@ describe('document source preview', () => {
   ] as const)('renders and highlights the %s address with a link to the original', async (format, locator, label, preview, address) => {
     const document = { id: 'office-1', name: `example.${format}`, format };
     mockSource(document.id, locator, preview);
-    render(<DocumentSourcePreview runId="run-1" document={document} evidenceId={evidenceId} tone="discrepancy" />);
+    render(<DocumentSourcePreview runId="run-1" document={document} evidenceId={evidenceId} />);
 
     expect(await screen.findByText(label)).toBeVisible();
     const value = await screen.findByText('1,00');
     expect(value.closest('[data-source-address]')).toHaveAttribute('data-source-address', address);
-    expect(value.closest('[data-source-tone]')).toHaveAttribute('data-source-tone', 'discrepancy');
+    expect(value.closest('[data-source-address]')).toHaveAttribute('data-source-field', 'amount');
     expect(screen.getByRole('link', { name: 'Скачать оригинал' })).toHaveAttribute('download', document.name);
     expect(screen.queryByRole('img')).not.toBeInTheDocument();
   });
