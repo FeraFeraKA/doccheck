@@ -63,6 +63,8 @@ COPY bench/e2e_v32_20261114/__init__.py \
      ./bench/e2e_v32_20261114/
 USER 10001:10001
 RUN python -m doccheck_backend.run_worker --help \
-    && tesseract --list-langs
+    && python -c "from doccheck_ml.qwen import QwenReader; from doccheck_backend.v32_processor import create_processor; from bench.e2e_v32_20261114 import classification, native_report, runtime" \
+    && tesseract --list-langs | grep -x eng \
+    && tesseract --list-langs | grep -x rus
 
 FROM runtime AS default
