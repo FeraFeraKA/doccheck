@@ -3,6 +3,7 @@ import { Link } from 'react-router';
 import { DocumentSourcePreview } from './DocumentSourcePreview';
 import { FileTypeIcon } from './FileTypeIcon';
 import { SourceDrawer } from './SourceDrawer';
+import { XlsxDownload } from './XlsxDownload';
 import type { DocumentParseStatus, ReviewResult } from './reviewResult';
 import './result-documents.css';
 
@@ -32,6 +33,7 @@ interface ResultDocumentsProps {
   result: ReviewResult;
   runPath: string;
   storedRunId?: string;
+  exportRunId?: string;
   exceptions: boolean;
   synthetic: boolean;
   rowEvidenceIds: (row: ReviewResult['rows'][number], issue: ReviewResult['summary']['primary_issues'][number] | undefined) => string[];
@@ -39,7 +41,7 @@ interface ResultDocumentsProps {
 }
 
 export function ResultDocuments({
-  result, runPath, storedRunId, exceptions, synthetic, rowEvidenceIds, formatAddress,
+  result, runPath, storedRunId, exportRunId, exceptions, synthetic, rowEvidenceIds, formatAddress,
 }: ResultDocumentsProps) {
   const [filter, setFilter] = useState('all');
   const [openId, setOpenId] = useState<string>();
@@ -90,9 +92,12 @@ export function ResultDocuments({
   return <section className="result-documents" aria-label={exceptions ? 'Исключения' : 'Документы'}>
     <header className="result-documents-heading">
       <h2>{exceptions ? 'Исключения' : 'Документы'}</h2>
-      <Link to={runPath + (exceptions ? '/documents' : '/exceptions')}>
-        {exceptions ? 'К документам' : 'К исключениям'}
-      </Link>
+      <div className="flex flex-wrap items-center gap-3">
+        {exportRunId && <XlsxDownload key={exportRunId} runId={exportRunId} />}
+        <Link to={runPath + (exceptions ? '/documents' : '/exceptions')}>
+          {exceptions ? 'К документам' : 'К исключениям'}
+        </Link>
+      </div>
     </header>
     {exceptions && synthetic && <p role="status" className="checks-caption">
       Действия бухгалтера недоступны в синтетическом режиме.

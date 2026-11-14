@@ -22,6 +22,7 @@ from doccheck_backend.contracts.locators import (
     TableCellLocator,
 )
 from doccheck_backend.native_observations import NativeDocument, NativeIssue, Observation
+from doccheck_backend.native_pdf import read_pdf
 from doccheck_backend.native_xlsx import read_workbook
 
 _GROUP_SPACES = " \u00a0\u2009\u202f"
@@ -257,6 +258,8 @@ def read_native_document(path: Path, file_format: str) -> NativeDocument:
     collected = _Collected()
     try:
         match file_format:
+            case "pdf":
+                return read_pdf(path)
             case "docx":
                 _read_docx(path, collected)
             case "xlsx":

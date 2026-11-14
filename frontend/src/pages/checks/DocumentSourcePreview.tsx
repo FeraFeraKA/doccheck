@@ -16,6 +16,7 @@ interface DocumentSourcePreviewProps {
   runId: string;
   document: SourceDocument | null;
   evidenceId: string | null;
+  active?: boolean;
 }
 
 type RequestState<T> =
@@ -60,29 +61,36 @@ function locatorMatchesDocument(evidence: SourceEvidence, format: string | null)
   }
 }
 
-export function DocumentSourcePreview({ runId, document, evidenceId }: DocumentSourcePreviewProps) {
+export function DocumentSourcePreview({ runId, document, evidenceId, active = true }: DocumentSourcePreviewProps) {
   const [attempt, setAttempt] = useState(0);
 
   if (document === null) return <p>Документ источника недоступен.</p>;
 
-  const key = JSON.stringify([runId, document.id, document.format, evidenceId, attempt]);
+  const key = JSON.stringify([runId, document.id, document.format, attempt]);
   return <SelectedDocumentSource
     key={key}
     runId={runId}
     document={document}
     evidenceId={evidenceId}
+    active={active}
     onRetry={() => setAttempt((current) => current + 1)}
   />;
 }
 
-function SelectedDocumentSource({ runId, document, evidenceId, onRetry }: {
+function SelectedDocumentSource({ runId, document, evidenceId, active, onRetry }: {
   runId: string;
   document: SourceDocument;
   evidenceId: string | null;
+  active: boolean;
   onRetry: () => void;
 }) {
   const [original, setOriginal] = useState<RequestState<string>>({ status: 'loading' });
+  const [selection, setSelection] = useState(evidenceId);
   const [evidence, setEvidence] = useState<RequestState<SourceEvidence>>({ status: 'loading' });
+  if (selection !== evidenceId) {
+    setSelection(evidenceId);
+    setEvidence({ status: 'loading' });
+  }
   const { id: documentId, format } = document;
 
   useEffect(() => {
@@ -98,21 +106,24 @@ function SelectedDocumentSource({ runId, document, evidenceId, onRetry }: {
       }
     });
 
-    if (evidenceId !== null) {
-      void getSourceEvidence(runId, documentId, evidenceId, controller.signal).then((value) => {
-        if (!controller.signal.aborted) setEvidence({ status: 'ready', value });
-      }).catch((error: unknown) => {
-        if (!controller.signal.aborted) {
-          setEvidence({ status: 'error', message: sourceError(error, 'evidence') });
-        }
-      });
-    }
-
     return () => {
       controller.abort();
       if (url !== undefined) URL.revokeObjectURL(url);
     };
-  }, [runId, documentId, format, evidenceId]);
+  }, [runId, documentId, format]);
+
+  useEffect(() => {
+    if (evidenceId === null) return;
+    const controller = new AbortController();
+    void getSourceEvidence(runId, documentId, evidenceId, controller.signal).then((value) => {
+      if (!controller.signal.aborted) setEvidence({ status: 'ready', value });
+    }).catch((error: unknown) => {
+      if (!controller.signal.aborted) {
+        setEvidence({ status: 'error', message: sourceError(error, 'evidence') });
+      }
+    });
+    return () => controller.abort();
+  }, [runId, documentId, evidenceId]);
 
   const address = evidence.status === 'ready' && locatorMatchesDocument(evidence.value, format)
     ? evidence.value.locator : null;
@@ -155,7 +166,7 @@ function SelectedDocumentSource({ runId, document, evidenceId, onRetry }: {
     {original.status === 'error' && <div className="source-viewer-placeholder"><p role="alert">{original.message}</p></div>}
     {original.status === 'ready' && format === 'png' && (
       <SourceImage key={original.value} url={original.value} name={document.name} page={page?.page}
-        box={page?.bbox} download={download} fragment={fragment} retry={retry} />
+        box={page?.bbox} active={active} download={download} fragment={fragment} retry={retry} />
     )}
     {original.status === 'ready' && format !== 'png' && <div className="source-viewer-placeholder">
       {format === 'pdf' && <p>Страница открывается в PDF-просмотрщике браузера.</p>}
@@ -172,11 +183,12 @@ function SelectedDocumentSource({ runId, document, evidenceId, onRetry }: {
   </section>;
 }
 
-function SourceImage({ url, name, page, box, download, fragment, retry }: {
+function SourceImage({ url, name, page, box, active, download, fragment, retry }: {
   url: string;
   name: string;
   page?: number;
   box?: [number, number, number, number] | null;
+  active: boolean;
   download: React.ReactNode;
   fragment: React.ReactNode;
   retry: React.ReactNode;
@@ -192,20 +204,22 @@ function SourceImage({ url, name, page, box, download, fragment, retry }: {
   function centerFragment() {
     const container = viewport.current;
     const target = mark.current;
-    if (!container || !target || typeof container.scrollBy !== 'function') return;
+    if (!container || !target || typeof container.scrollBy !== 'function') return false;
     const bounds = container.getBoundingClientRect();
     const fragmentBounds = target.getBoundingClientRect();
+    if (container.clientWidth === 0 || container.clientHeight === 0 ||
+      fragmentBounds.width === 0 || fragmentBounds.height === 0) return false;
     container.scrollBy({
       top: fragmentBounds.top + fragmentBounds.height / 2 - bounds.top - container.clientHeight / 2,
       left: fragmentBounds.left + fragmentBounds.width / 2 - bounds.left - container.clientWidth / 2,
     });
+    return true;
   }
 
   useLayoutEffect(() => {
-    if (state !== 'ready' || !boxKey || !highlight || centered.current === boxKey) return;
-    centered.current = boxKey;
-    centerFragment();
-  }, [state, boxKey, highlight]);
+    if (!active || state !== 'ready' || !boxKey || !highlight || centered.current === boxKey) return;
+    if (centerFragment()) centered.current = boxKey;
+  }, [active, state, boxKey, highlight]);
 
   return <>
     <div className="source-viewer-toolbar" role="group" aria-label="Настройки просмотра">
