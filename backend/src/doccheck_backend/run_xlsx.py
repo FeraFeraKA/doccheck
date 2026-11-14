@@ -305,6 +305,7 @@ def export_check_result(result: CheckResult) -> bytes:
             messages.append(f"По доступным документам: {row.observed_evidence_sum} {row.unit}")
         suffix = f" ({row.indicator_code})" if row.indicator_code else ""
         suffix += f" · {row.unit}"
+        suffix = _NON_XML_TEXT.sub(lambda match: ascii(match[0])[1:-1], suffix)
         if len(suffix.encode("utf-16-le")) // 2 > 32_000:
             suffix = f" · {row.unit}"
         if len(suffix.encode("utf-16-le")) // 2 > 32_000:
@@ -360,7 +361,7 @@ def export_check_result(result: CheckResult) -> bytes:
         _append(report, "Замечание", None, None, None, None, issue.message)
     for column, width in enumerate((43, 24, 29, 22, 20, 70), 1):
         report.column_dimensions[get_column_letter(column)].width = width
-    widths = (40, 22, 27, 20, 18, 67)
+    widths = (20, 11, 13, 10, 9, 33)
     for row_number in range(report.max_row, header, -1):
         values = [report.cell(row_number, column).value for column in range(1, 7)]
         lines = [
