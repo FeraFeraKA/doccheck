@@ -204,6 +204,14 @@ class QwenReader:
         self.config = config
         self._loaded = None
 
+    def prepare_cuda(self) -> None:
+        """Check CUDA and load the configured base and LoRA before accepting work."""
+        import mlx.core as mx
+
+        if not mx.cuda.is_available():
+            raise QwenUnavailableError("MLX cannot access an NVIDIA CUDA device")
+        self._load()
+
     def _load(self) -> tuple[SimpleNamespace, object, object, dict[str, object]]:
         if self._loaded is not None:
             return self._loaded
