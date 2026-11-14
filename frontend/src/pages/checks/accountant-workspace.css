@@ -97,30 +97,6 @@
   color: var(--ui-ink);
   font-weight: 500;
 }
-.sidebar-bottom {
-  margin-top: auto;
-  padding: 28px 18px 0;
-}
-.profile {
-  @apply flex items-center;
-  gap: 10px;
-  padding: 22px 4px 0;
-}
-.profile-avatar {
-  height: 36px;
-  width: 36px;
-  display: grid;
-  place-items: center;
-  background: #e9d5fb;
-  border-radius: 50%;
-  font-size: 12px;
-  color: var(--ui-ink);
-}
-.profile strong {
-  display: block;
-  font-size: 13px;
-  font-weight: 500;
-}
 .app-content {
   @apply flex min-h-screen flex-col;
   margin-left: 240px;
@@ -285,9 +261,12 @@
 }
 .app-sidebar .system-status-link, .mobile-system-status-link {
   display: inline-block;
-  margin: 12px 4px 0;
   color: var(--ui-secondary);
   font-size: 12px;
+}
+.app-sidebar .system-status-link {
+  align-self: flex-start;
+  margin: auto 22px 0;
 }
 .app-main .mobile-system-status-link { display: none; }
 
@@ -328,14 +307,6 @@
   .brand {
     padding: 0 4px;
     font-size: 24px;
-  }
-  .sidebar-bottom {
-    display: block;
-    padding: 12px 0;
-    margin: 0;
-  }
-  .sidebar-bottom .profile {
-    display: none;
   }
   .app-sidebar nav {
     display: flex;
