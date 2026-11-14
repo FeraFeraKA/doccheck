@@ -158,6 +158,37 @@ def test_scanned_table_requires_matching_year_and_identifies_missing_columns(mon
     assert {item.period for item in candidate.rows} == {("2026-01-01", "2026-05-31")}
 
 
+@pytest.mark.parametrize(("contract_confidence", "period_confidence"), [(1, 96), (95, 1)])
+def test_report_scope_rejects_weak_header_fields(
+    monkeypatch, contract_confidence, period_confidence
+):
+    image = Image.new("L", (1000, 600), "white")
+    monkeypatch.setattr(
+        scanned_report,
+        "recognize_lines",
+        lambda *args, **kwargs: [
+            OcrLine("Договор № 12345", (10, 10, 200, 50), contract_confidence),
+            OcrLine(
+                "Отчетный период: 01.01.2026 — 31.01.2026", (10, 60, 600, 85), period_confidence
+            ),
+            OcrLine("Оплата труда 625,02", (10, 400, 600, 430), 95),
+        ],
+    )
+    period = ("2026-01-01", "2026-01-31")
+    assert scanned_report.read_explicit_scope(image) is None
+    assert scanned_report.read_report_row(image, 1, None, "12345", period) is None
+
+    monkeypatch.setattr(scanned_report, "_peaks", lambda *_: [150, 220, 290, 360])
+    monkeypatch.setattr(scanned_report, "_column_tracks", lambda *_: [90, 240, 390, 540, 690, 840])
+    monkeypatch.setattr(scanned_report, "_stage_bands", lambda *_: iter([(290, 360, "3", "2026")]))
+    monkeypatch.setattr(scanned_report, "recognize_crop", lambda *_: "")
+    candidate = scanned_report.read_scan_page(image, 1)
+    assert candidate is not None and candidate.contract is None
+    assert candidate.rows[0].period is None
+    selector = PageLocator(kind="page", page=1, fragment_id="kfz-stage-3-2026")
+    assert scanned_report.read_report_row(image, 1, selector, "12345", period) is None
+
+
 def test_skipped_page_blocks_totals_from_visible_fragment(monkeypatch, tmp_path):
     from doccheck_backend import grounded_amounts
 
