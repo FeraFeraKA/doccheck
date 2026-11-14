@@ -43,7 +43,9 @@ export function UnverifiedIndicators({ rows }: { rows: ReviewResult['rows'] }) {
         return <li key={row.id}>
           <div className="font-medium">{row.label}</div>
           {[...reasons].map((reason) => <p className="result-summary-muted" key={reason}>{reason}</p>)}
-          {row.observed_evidence_sum !== null &&
+          {row.expected_value !== null &&
+            <p className="result-summary-muted">Сумма по документам: {formatDecimal(row.expected_value)} {row.unit}</p>}
+          {row.expected_value === null && row.observed_evidence_sum !== null &&
             <p className="result-summary-muted">Частичная сумма: {formatDecimal(row.observed_evidence_sum)} {row.unit}</p>}
         </li>;
       })}
