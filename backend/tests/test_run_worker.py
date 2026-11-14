@@ -162,6 +162,41 @@ def test_accepts_inferred_scope_and_serves_saved_result(engine, queue, tmp_path)
     assert queue.get(f"/api/v0/runs/{run_id}/findings").json() == saved.result
 
 
+@pytest.mark.parametrize(
+    ("processor_code", "expected_code", "expected_text"),
+    [
+        ("v32_pdf_scan_unreadable", "v32_pdf_scan_unreadable", "Проверьте оригинал."),
+        (
+            "v32_pdf_scan_scope_unconfirmed",
+            "v32_pdf_scan_scope_unconfirmed",
+            "Реквизиты и суммы требуют подтверждения",
+        ),
+        ("unknown_processor_error", "processing_failed", "Не удалось обработать пакет."),
+    ],
+)
+def test_stores_public_report_failure_without_adapter_message(
+    engine, queue, tmp_path, processor_code, expected_code, expected_text
+):
+    run_id = _enqueue(queue, infer_scope=True)
+
+    def process(run, directory):
+        return CheckJob(
+            run_id=str(run.id),
+            status="failed",
+            result=None,
+            error={"code": processor_code, "message": "Private document text"},
+        )
+
+    assert run_document_worker(engine, tmp_path, process, once=True)
+    saved = _read_run(engine, run_id)
+    state = queue.get(f"/api/v0/runs/{run_id}").json()
+    assert state["status"] == saved.status == "failed"
+    assert state["error"] == saved.error
+    assert saved.error["code"] == expected_code
+    assert expected_text in saved.error["message"]
+    assert "Private document text" not in saved.error["message"]
+
+
 def test_rejects_inferred_scope_for_a_different_report(engine, queue, tmp_path):
     run_id = _enqueue(queue, infer_scope=True)
 
