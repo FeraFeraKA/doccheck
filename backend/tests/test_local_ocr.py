@@ -331,3 +331,41 @@ def test_repeated_context_lifts_exact_word_positions(tmp_path, monkeypatch):
     assert box.raw_text[start:end] == "SYN-41"
     assert location.bbox[0] > box.locator.bbox[0]
     assert location.bbox[2] == box.locator.bbox[2]
+
+
+def test_precise_contract_read_takes_priority_over_same_value_broad_copy(scanned_stage):
+    from dataclasses import replace
+
+    _, *others = scanned_stage
+    broad = _box("Договор № SYN-41 от 2027-01-01", 0.06, 0.09, 0.36)
+    number = _box("SYN-41", 0.225, 0.09, 0.275)
+    date_reading = _box("2027-01-01", 0.299, 0.09, 0.36, confidence=0.72)
+    precise = replace(
+        broad,
+        text_boxes=(
+            (broad.raw_text.index("SYN"), broad.raw_text.index(" от"), number.locator),
+            (broad.raw_text.index("2027"), len(broad.raw_text), date_reading.locator),
+        ),
+    )
+
+    assert parse_scan_report((broad, precise, *others, date_reading)) is not None
+
+
+def test_bare_alternative_date_in_same_exact_region_rejects_scope(scanned_stage):
+    from dataclasses import replace
+
+    broad = _box("Окончание 7 этапа 17 апреля 2028 г.", 0.06, 0.15, 0.28)
+    date = _box("17 апреля 2028", 0.18, 0.15, 0.28)
+    precise = replace(
+        broad,
+        text_boxes=((broad.raw_text.index("17"), broad.raw_text.index(" г."), date.locator),),
+    )
+    alternative = replace(date, raw_text="18 апреля 2028 г.", confidence=0.74)
+    elsewhere = replace(
+        alternative,
+        locator=alternative.locator.model_copy(update={"bbox": (0.3, 0.15, 0.4, 0.168)}),
+    )
+    case = (*scanned_stage[:3], broad, precise, *scanned_stage[5:])
+
+    assert parse_scan_report((*case, elsewhere)) is not None
+    assert parse_scan_report((*case, alternative)) is None

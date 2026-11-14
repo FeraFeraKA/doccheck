@@ -101,34 +101,30 @@ def _reading_source(parts: list[Observation], family: str) -> Observation:
     )
 
 
+def _value_source(source: Observation, start: int, end: int, family: str) -> Observation | None:
+    parts = []
+    covered: set[int] = set()
+    for lower, upper, locator in source.text_boxes:
+        if lower >= end or upper <= start:
+            continue
+        # A whole-fragment fallback may cover a value and its label. Such an
+        # address is not exact enough to disambiguate two neighboring values.
+        if any(
+            character.isalnum()
+            for character in source.raw_text[lower:start] + source.raw_text[end:upper]
+        ):
+            return None
+        covered.update(range(max(lower, start), min(upper, end)))
+        parts.append(Observation(source.raw_text[max(lower, start) : min(upper, end)], locator))
+    if not parts or any(
+        index not in covered and source.raw_text[index].isalnum() for index in range(start, end)
+    ):
+        return None
+    return _reading_source(parts, family)
+
+
 def _contract_value_source(match: re.Match[str], source: Observation) -> Observation | None:
-    start, end = match.span(1)
-    boxes = [
-        locator for lower, upper, locator in source.text_boxes if lower < end and start < upper
-    ]
-    if not boxes:
-        return source
-    parts = [Observation(match[1], locator) for locator in boxes]
-    return _reading_source(parts, "contract-number")
-
-
-_TRAILING_CONTRACT_DATE = re.compile(
-    r"\bот\s+(\d{4}-\d{2}-\d{2}|\d{2}\.\d{2}\.\d{4})[.,;]?\s*$",
-    re.I,
-)
-
-
-def _matches_trailing_date(candidate: Observation, source: Observation) -> bool:
-    date = _TRAILING_CONTRACT_DATE.search(source.raw_text)
-    if date is None or date[1] != candidate.raw_text.strip():
-        return False
-    start, end = date.span(1)
-    locations = [
-        Observation(date[1], locator)
-        for lower, upper, locator in source.text_boxes
-        if start <= lower < end and start < upper <= end + 1
-    ]
-    return any(_same_region(location, candidate) for location in locations)
+    return _value_source(source, *match.span(1), "contract-number")
 
 
 def _has_intervening_text(
@@ -203,17 +199,49 @@ def _date_readings(items: tuple[Observation, ...], context: tuple[Observation, .
             value = date(int(year), _MONTHS.index(month) + 1, int(day))
         except ValueError:
             continue
-        yield int(stage.replace("з", "3")), label, value, source
+        location = _value_source(source, reading.start(3), reading.end(5), "stage-date")
+        yield int(stage.replace("з", "3")), label, value, source, location
 
 
 def _dated_stages(
     items: tuple[Observation, ...], context: tuple[Observation, ...]
-) -> dict[int, dict[str, dict[date, Observation]]]:
-    stages: dict[int, dict[str, dict[date, Observation]]] = {}
-    for stage, label, value, source in _date_readings(items, context):
+) -> dict[int, dict[str, dict[date, list[tuple[Observation, Observation | None]]]]]:
+    stages: dict[int, dict[str, dict[date, list[tuple[Observation, Observation | None]]]]] = {}
+    for stage, label, value, source, location in _date_readings(items, context):
         labels = stages.setdefault(stage, {})
-        labels.setdefault(label, {}).setdefault(value, source)
+        labels.setdefault(label, {}).setdefault(value, []).append((source, location))
     return stages
+
+
+def _preferred_value_locations(
+    readings: list[tuple[Observation, Observation | None]],
+) -> list[Observation]:
+    precise = [location for _, location in readings if location is not None]
+    return precise or [source for source, _ in readings]
+
+
+_BARE_STAGE_DATE = re.compile(
+    r'\s*[«"“”]?\s*(\d{1,2})\s*[»"”“]?\s+([а-яё]+)\s+(\d{4})\s*г?[.,]?\s*',
+    re.I,
+)
+_DOTTED_DATE = re.compile(r"(\d{2})\.(\d{2})\.(\d{4})[.,]?")
+
+
+def _bare_date(text: str) -> date | None:
+    text = text.strip()
+    try:
+        if match := _BARE_STAGE_DATE.fullmatch(text):
+            day, month, year = match.groups()
+            if month.casefold() in _MONTHS:
+                return date(int(year), _MONTHS.index(month.casefold()) + 1, int(day))
+        elif match := _DOTTED_DATE.fullmatch(text):
+            day, month, year = map(int, match.groups())
+            return date(year, month, day)
+        elif re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+            return date.fromisoformat(text)
+    except ValueError:
+        pass
+    return None
 
 
 def select_scan_contract(
@@ -243,19 +271,12 @@ def select_scan_contract(
     for reading, location in _row_readings(positioned, _CONTRACT, "contract"):
         if reading[1] != contract and any(_same_region(source, location) for source, _ in sources):
             return None
-    precise = [(source, location) for source, location in sources if location is not None]
+    locations = _preferred_value_locations(sources)
     for item in positioned:
         value = item.raw_text.strip()
         if value == contract or not _CONTRACT_TOKEN.fullmatch(value):
             continue
-        if precise:
-            if any(_same_region(location, item) for _, location in precise):
-                return None
-            if any(_matches_trailing_date(item, source) for source, _ in precise):
-                continue
-            # A compact alternative outside all precise ID boxes does not
-            # dispute the contract (e.g. the date beside the actual identifier).
-        elif any(_same_region(source, item) for source, _ in sources):
+        if any(_same_region(location, item) for location in locations):
             return None
     return contract, sources[0][0]
 
@@ -283,7 +304,8 @@ def parse_scan_report(observations: tuple[Observation, ...]) -> ScanScope | None
     if len(starts) != 1 or len(ends) != 1:
         return None
     first = next(iter(starts))
-    last, cutoff_source = next(iter(ends.items()))
+    last, cutoff_readings = next(iter(ends.items()))
+    cutoff_source, _ = cutoff_readings[0]
     start = max(first, date(last.year, 1, 1))
     if start > last:
         return None
@@ -305,15 +327,29 @@ def parse_scan_report(observations: tuple[Observation, ...]) -> ScanScope | None
         return None
     if _page(contract_source) != _page(row) or _page(cutoff_source) != _page(row):
         return None
-    start_source = starts[first]
+    start_readings = starts[first]
+    start_source, _ = start_readings[0]
     if _page(start_source) != _page(row):
         return None
     # Confidence is a promotion gate, not a reason to discard a competing
     # well-formed date in the same source region.
-    adjudicated = {"начало": (first, start_source), "окончание": (last, cutoff_source)}
-    for read_stage, name, alternative, location in _date_readings(positioned):
-        selected, source = adjudicated[name]
-        if (read_stage != stage or alternative != selected) and _same_region(source, location):
+    adjudicated = {
+        "начало": (first, _preferred_value_locations(start_readings)),
+        "окончание": (last, _preferred_value_locations(cutoff_readings)),
+    }
+    for read_stage, name, alternative, source, exact in _date_readings(positioned):
+        selected, locations = adjudicated[name]
+        if (read_stage != stage or alternative != selected) and any(
+            _same_region(location, exact or source) for location in locations
+        ):
+            return None
+    for item in positioned:
+        alternative = _bare_date(item.raw_text)
+        if alternative is not None and any(
+            alternative != selected and _same_region(location, item)
+            for selected, locations in adjudicated.values()
+            for location in locations
+        ):
             return None
     assert isinstance(row.locator, PageLocator)
     return ScanScope(contract, start, last, row.locator, contract_source, cutoff_source)
