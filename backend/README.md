@@ -104,10 +104,11 @@ pnpm install --frozen-lockfile
 pnpm dev --host 127.0.0.1
 ```
 
-Откройте адрес Vite и нажмите «Создать синтетическое задание». Без worker оно
-останется в очереди. При запущенном worker UI покажет `queued → processing →
-completed` и тестовый результат. Vite направляет `/health` и `/api` на порт
-8000; другую цель задаёт `DOCCHECK_API_TARGET` (см. [frontend README](../frontend/README.md)).
+Откройте адрес Vite для мастера проверки. Технический цикл синтетического
+worker доступен через `POST /api/synthetic-jobs` и последующий
+`GET /api/synthetic-jobs/{id}`. Без worker задание останется в очереди.
+Vite направляет `/health` и `/api` на порт 8000; другую цель задаёт
+`DOCCHECK_API_TARGET` (см. [frontend README](../frontend/README.md)).
 Компоненты останавливаются по Ctrl+C; задания сохраняются в PostgreSQL.
 
 Чтобы обработать не более одного задания и выйти:
