@@ -1,6 +1,7 @@
 """Contract smoke tests for v3.2 using native files and a stub for Ollama HTTP."""
 
 import json
+from datetime import date
 from hashlib import sha256
 from pathlib import Path
 from uuid import uuid4
@@ -202,7 +203,13 @@ def test_identity_conflict_removes_candidate_sum(uploaded_files, tmp_path, monke
 
 @pytest.mark.parametrize(
     ("cell", "formula", "invalid"),
-    [("C7", None, True), ("D7", "=D7", True), ("D7", "=SUM(D7:D7)", "#DIV/0!")],
+    [
+        ("C7", None, True),
+        ("D7", "=D7", True),
+        ("D7", "=SUM(D7:D7)", "#DIV/0!"),
+        ("C7", None, date(2027, 2, 1)),
+        ("D7", "=SUM(D7:D7)", date(2027, 2, 1)),
+    ],
 )
 def test_xlsx_nonmoney_cells_are_rejected(
     uploaded_files, tmp_path, monkeypatch, cell, formula, invalid
@@ -318,3 +325,58 @@ def test_partial_native_read_reports_file_error(uploaded_files, tmp_path, monkey
     assert job.result.documents[1].decision.state == "parse_error"
     assert job.result.documents[1].errors
     assert job.result.rows[0].observed_evidence_sum is None
+
+
+def test_xlsx_currency_style_preserves_money(uploaded_files, tmp_path, monkeypatch):
+    _stub_ollama(monkeypatch, "1172.70")
+    report = uploaded_files[0]
+    path = tmp_path / report["id"]
+    with path.open("rb") as source:
+        book = load_workbook(source)
+    book.active["C7"].number_format = '#,##0.00 "₽"'
+    book.save(path)
+    report["sha256"] = sha256(path.read_bytes()).hexdigest()
+
+    job = process(StoredRun(uuid4(), None, uploaded_files), tmp_path)
+    assert job.status == "completed"
+    assert job.result.rows[0].reported_value == "1250.50"
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_native_collision_survives_one_model_timeout(
+    uploaded_files, tmp_path, monkeypatch, reverse
+):
+    original = uploaded_files[1]
+    clone_id = uuid4().hex
+    path = tmp_path / clone_id
+    act = Document(tmp_path / original["id"])
+    act.paragraphs[4].text = "Итого стоимость услуг: 1 050,70 руб."
+    act.save(path)
+    uploaded_files.append(
+        {
+            **original,
+            "id": clone_id,
+            "name": "conflicting-act.docx",
+            "sha256": sha256(path.read_bytes()).hexdigest(),
+        }
+    )
+    if reverse:
+        uploaded_files[1:] = uploaded_files[:0:-1]
+    _stub_ollama(monkeypatch, "1172.70")
+    from bench.e2e_v32_20261114 import run as v32
+
+    request = v32.runtime.api
+
+    def timeout_on_conflicting_act(path, body=None, timeout=600):
+        if path == "/api/chat" and "1 050,70" in body["messages"][0]["content"]:
+            raise TimeoutError("synthetic model timeout")
+        return request(path, body, timeout)
+
+    monkeypatch.setattr(v32.runtime, "api", timeout_on_conflicting_act)
+
+    job = process(StoredRun(uuid4(), None, uploaded_files), tmp_path)
+    assert job.status == "completed_with_issues"
+    assert job.result.rows[0].observed_evidence_sum is None
+    by_id = {document.id: document for document in job.result.documents}
+    assert by_id[clone_id].errors
+    assert by_id[original["id"]].decision.reason_code == "source_identity_conflict"

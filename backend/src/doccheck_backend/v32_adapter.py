@@ -334,11 +334,11 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
                     if any(issue.code == "native_read_error" for issue in native.issues):
                         message = "Структуру исходного документа не удалось прочитать полностью."
                     else:
+                        observations_by_id[file.id] = native.observations
                         extracted = v32.extract_primary(entry, previous)
                         if not extracted.get("error"):
                             # The configured model schema supplies no counterparty proof.
                             extracted["prediction"].pop("counterparty", None)
-                            observations_by_id[file.id] = native.observations
                             extractions.append(extracted)
                             continue
                         message = "Не удалось извлечь данные из первичного документа."
@@ -358,9 +358,10 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
         # using model totals. The identity number and both scope fields come from
         # the submitted file, and no issuer distinction is assumed for this slice.
         identity_groups = defaultdict(list)
-        for entry in extractions:
-            number = document_identity.validate_number_evidence(entry)["number"]
-            observations = observations_by_id[entry["id"]]
+        for file_id, observations in observations_by_id.items():
+            native_text = "\n".join(item.raw_text for item in observations)
+            identity = document_identity.resolve_own_number(native_text)
+            number = identity["resolved_number"] if identity["status"] == "resolved" else None
             contracts = [
                 match[1]
                 for item in observations
@@ -374,7 +375,7 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
             if number and len(set(contracts)) == len(set(periods)) == 1:
                 period = periods[0]
                 if len(period) == 2 and all(period):
-                    identity_groups[number, contracts[0], period].append(entry["id"])
+                    identity_groups[number, contracts[0], period].append(file_id)
         native_conflicts = {
             file_id for group in identity_groups.values() if len(group) > 1 for file_id in group
         }
