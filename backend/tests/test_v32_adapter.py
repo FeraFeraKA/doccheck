@@ -118,27 +118,6 @@ def _stub_ollama(monkeypatch, amount, report_requests=None):
     return calls
 
 
-@pytest.mark.parametrize("failed_chat", [1, 2])
-def test_worker_reports_model_loss_during_inference(
-    uploaded_files, tmp_path, monkeypatch, failed_chat
-):
-    calls = _stub_ollama(monkeypatch, "1172.70")
-    from bench.e2e_v32_20261114 import runtime
-
-    underlying_request = runtime.api
-
-    def request(path, body=None, timeout=600):
-        if path == "/api/chat" and calls.count(path) + 1 == failed_chat:
-            raise runtime.ModelUnavailableError("Internal service detail")
-        return underlying_request(path, body, timeout)
-
-    monkeypatch.setattr(runtime, "api", request)
-    job = process(StoredRun(uuid4(), None, uploaded_files), tmp_path)
-    assert job.status == "failed"
-    assert job.result is None
-    assert job.error.code == "v32_model_unavailable"
-
-
 def test_worker_adapter_infers_scope_and_anchors_partial_sum(uploaded_files, tmp_path, monkeypatch):
     calls = _stub_ollama(monkeypatch, "1172.70")
     run = StoredRun(uuid4(), None, uploaded_files)

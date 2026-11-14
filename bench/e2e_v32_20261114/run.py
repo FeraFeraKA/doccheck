@@ -18,7 +18,6 @@ import time
 
 ROOT = Path(__file__).resolve().parents[2]
 from . import runtime, report_benchmark
-from .runtime import MODEL_DIGEST, ModelUnavailableError
 from .decision_rules import reconcile, parse_amount, normalize_identifier, money_string
 from .native_report import read_native_report
 from .classification import apply_source_checks
@@ -187,8 +186,6 @@ def extract_primary(entry, previous):
             record["source_native_text"] = prepared.get("text") if prepared["kind"] == "native" else None
             record.update(runtime.infer(entry, prepared, MODEL, "direct"))
         verify_source(entry)
-    except ModelUnavailableError:
-        raise
     except Exception as exc:
         record.update(error=f"{type(exc).__name__}: {exc}", prediction={})
     if not record.get("error") and VARIANT != "baseline":
@@ -355,7 +352,7 @@ def main():
     output.mkdir(parents=True, exist_ok=False)
     metadata = {"version": runtime.api("/api/version"), "tags": runtime.api("/api/tags"), "loaded_before": runtime.api("/api/ps")}
     matches = [m for m in metadata["tags"].get("models", []) if m.get("name") == MODEL]
-    if len(matches) != 1 or matches[0].get("digest") != MODEL_DIGEST:
+    if len(matches) != 1 or matches[0].get("digest") != "d8b0f5e9760cd1682034f292d7ef72ec46f432149be0df7574bf2d6e92e38c04":
         raise ValueError("Pinned local model is absent or changed; no download permitted")
     unrelated = [m for m in metadata["loaded_before"].get("models", []) if m.get("name") != MODEL]
     if unrelated:

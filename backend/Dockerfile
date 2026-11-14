@@ -22,11 +22,3 @@ RUN groupadd --gid 10001 doccheck \
 USER 10001:10001
 EXPOSE 8000
 CMD ["uvicorn", "doccheck_backend.api:app", "--host", "0.0.0.0", "--port", "8000"]
-
-FROM runtime AS document-runtime
-ENV PYTHONPATH=/app
-COPY bench/__init__.py ./bench/
-COPY bench/e2e_v32_20261114 ./bench/e2e_v32_20261114
-RUN python -c "from PIL import Image; import pypdfium2; from bench.e2e_v32_20261114 import run; from doccheck_backend.v32_adapter import process"
-
-FROM runtime AS default

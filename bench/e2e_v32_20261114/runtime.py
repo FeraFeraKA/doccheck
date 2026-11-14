@@ -6,7 +6,6 @@ import base64
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
 import hashlib
-import http.client
 import json
 import os
 from pathlib import Path
@@ -24,7 +23,6 @@ except ImportError:  # Windows has no resource module.
 ROOT = Path(__file__).resolve().parents[2]
 ART = ROOT / "artifacts" / "e2e-v32-20261114" / "unconfigured-runtime"
 MODELS = {"4b": "qwen3.5:4b-q4_K_M", "9b": "qwen3.5:9b-q4_K_M"}
-MODEL_DIGEST = "d8b0f5e9760cd1682034f292d7ef72ec46f432149be0df7574bf2d6e92e38c04"
 FIELDS = ["doc_number", "contract_number", "date", "period_start", "period_end", "amount", "category", "description", "evidence_quote"]
 SCHEMA = {"type": "object", "properties": {k: {"type": ["string", "null"]} for k in FIELDS}, "required": FIELDS, "additionalProperties": False}
 SCHEMA["properties"]["category"] = {"type": ["string", "null"], "enum": ["production_overhead", "general_admin", "payroll", "insurance", "other", None]}
@@ -41,50 +39,11 @@ description: краткое фактическое назначение расх
 
 PROMPT += "\nОпределяй назначение и category независимо от читаемости amount: отсутствующая сумма сама по себе не делает читаемое назначение неизвестным. Для связи, IT и обслуживания учитывай, кому предназначена услуга: административная/управленческая функция относится к general_admin, производственная/лабораторная — к production_overhead. Если функции смешаны и распределение не указано, category=null; не выбирай статью по сумме.\n"
 
-class ModelUnavailableError(RuntimeError):
-    """The Compose model service could not run local inference."""
-
-
-def require_pinned_model(tags):
-    digests = [m.get("digest") for m in tags.get("models", ()) if m.get("name") == MODELS["4b"]]
-    if digests != [MODEL_DIGEST]:
-        raise ModelUnavailableError(f"Expected {MODELS['4b']} with SHA-256 {MODEL_DIGEST}")
-
-
-def require_gpu():
-    allocation = [
-        model for model in api("/api/ps", timeout=10).get("models", ())
-        if model.get("name") == MODELS["4b"]
-    ]
-    if len(allocation) != 1 or not 0 < allocation[0].get("size", 0) <= allocation[0].get(
-        "size_vram", 0
-    ):
-        raise ModelUnavailableError("Ollama did not load the full v3.2 model on the NVIDIA GPU")
-
-
 def api(path, body=None, timeout=600):
-    payload = None if body is None else json.dumps(body).encode()
-    headers = {"Content-Type": "application/json"}
-    if os.environ.get("DOCCHECK_V32_COMPOSE_MODEL") == "1":
-        # Fixed service on an internal Docker network. HTTPConnection follows no redirects.
-        connection = http.client.HTTPConnection("model", 11434, timeout=timeout)
-        try:
-            connection.request("GET" if body is None else "POST", path, payload, headers)
-            with connection.getresponse() as response:
-                if response.status != 200:
-                    raise ModelUnavailableError(f"Ollama returned HTTP {response.status}")
-                result = json.load(response)
-        except (OSError, http.client.HTTPException, ValueError) as error:
-            raise ModelUnavailableError("Cannot reach the Compose model service") from error
-        finally:
-            connection.close()
-        if path == "/api/chat":
-            require_gpu()
-        return result
-
-    # Preserve the local benchmark endpoint and bypass the host's proxies.
+    # Fixed loopback endpoint; proxies and external model endpoints are excluded.
     request = urllib.request.Request("http://127.0.0.1:11438" + path,
-        data=payload, headers=headers)
+        data=None if body is None else json.dumps(body).encode(),
+        headers={"Content-Type": "application/json"})
     with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(request, timeout=timeout) as response:
         return json.load(response)
 
