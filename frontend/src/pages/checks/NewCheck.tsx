@@ -7,6 +7,7 @@ import { prepareRunTransfer, RunUploadHttpError, startPreparedRun } from './crea
 import { RunProgressBar } from './RunProgressBar';
 import { RunQueue } from './RunQueue';
 import type { QueueReceipt } from './RunQueue';
+import { runQueuePath } from './runTitle';
 import { UploadFileList, UploadSpinner } from './UploadFiles';
 import type { UploadFile } from './UploadFiles';
 import { usePreparedRun } from './usePreparedRun';
@@ -27,19 +28,21 @@ function uploadErrorMessage(error: unknown, fallback: string): string {
 }
 
 function readyPacket(
-  report: UploadFile[], documents: UploadFile[], sourceRunId?: string,
+  report: UploadFile[], documents: UploadFile[], initialPack?: InitialRunPack,
 ): Parameters<typeof prepareRunTransfer>[0] | null {
   if (report.length !== 1 || documents.length === 0) return null;
   const items = [...report, ...documents];
   if (items.some((item) => 'file' in item && item.state !== 'ready')) return null;
   const reportFile = 'file' in report[0] ? report[0].file : undefined;
   const documentFiles = documents.flatMap((item) => 'file' in item ? [item.file] : []);
-  if (!sourceRunId) return reportFile ? { report: reportFile, documents: documentFiles } : null;
+  if (!initialPack) return reportFile ? { report: reportFile, documents: documentFiles } : null;
+  const retainedDocumentIds = items.flatMap((item) => 'retained' in item ? [item.retained.id] : []);
+  if (retainedDocumentIds.length === initialPack.documents.length && !reportFile && !documentFiles.length) return null;
   return {
     report: reportFile,
     documents: documentFiles,
-    sourceRunId,
-    retainedDocumentIds: items.flatMap((item) => 'retained' in item ? [item.retained.id] : []),
+    sourceRunId: initialPack.runId,
+    retainedDocumentIds,
   };
 }
 
@@ -52,6 +55,14 @@ function transferLabel(reading: boolean, percent: number | undefined, starting: 
 
 const publicDemo = import.meta.env.VITE_DOCCHECK_PUBLIC_DEMO === '1';
 
+export function RunPackHeading({ runId, reportName }: { runId: string; reportName?: string }) {
+  return <>
+    <Link to={'/checks/' + encodeURIComponent(runId)}>К результату</Link>
+    <h1 className="wrap-anywhere">Изменение комплекта{reportName && ' · ' + reportName}</h1>
+    <p className="upload-intro">Замените КФЗ или обновите первичные документы. Исходная проверка сохранится.</p>
+  </>;
+}
+
 export function NewCheck({ initialPack }: { initialPack?: InitialRunPack } = {}) {
   const navigate = useNavigate();
   const submitButton = useRef<HTMLButtonElement>(null);
@@ -63,15 +74,14 @@ export function NewCheck({ initialPack }: { initialPack?: InitialRunPack } = {})
     const listed = new Set(entries.map(({ id }) => id));
     setReceipts((previous) => previous.filter(({ id }) => !listed.has(id)));
   }, []);
-  const history = useRunHistory({ enabled: !publicDemo, onPage: clearListedReceipts });
+  const history = useRunHistory({ enabled: !publicDemo && !initialPack, onPage: clearListedReceipts });
   const active = useRef<AbortController | null>(null);
   const { report, documents, errors, withinLimits, takeFiles, removeFile, clearFiles } = useRunUploadFiles(initialPack);
   const [submitError, setSubmitError] = useState('');
   const [starting, setStarting] = useState(false);
-  const sourceRunId = initialPack?.runId;
   const packet = useMemo(
-    () => !publicDemo && withinLimits ? readyPacket(report, documents, sourceRunId) : null,
-    [report, documents, sourceRunId, withinLimits],
+    () => !publicDemo && withinLimits ? readyPacket(report, documents, initialPack) : null,
+    [report, documents, initialPack, withinLimits],
   );
   const prepared = usePreparedRun(packet);
   const transfer = prepared.state?.phase === 'uploading' ? prepared.state : null;
@@ -88,9 +98,9 @@ export function NewCheck({ initialPack }: { initialPack?: InitialRunPack } = {})
     setSubmitError('');
   }
 
-  function chooseFiles(incoming: FileList, group: FileGroup) {
+  function chooseFiles(incoming: FileList, group: FileGroup, replaceId?: string) {
     if (active.current) return;
-    if (takeFiles(incoming, group)) selectionChanged();
+    if (takeFiles(incoming, group, replaceId)) selectionChanged();
   }
 
   function removeSelectedFile(group: FileGroup, id: string) {
@@ -119,7 +129,7 @@ export function NewCheck({ initialPack }: { initialPack?: InitialRunPack } = {})
       const accepted = await startPreparedRun(uploadId, controller.signal);
       if (controller.signal.aborted) return;
       if (initialPack) {
-        void navigate('/checks/new#queue', { replace: true });
+        void navigate(runQueuePath(accepted.run_id), { replace: true });
         return;
       }
       const receipt = { id: accepted.run_id, documentCount: 1 + documents.length };
@@ -143,9 +153,11 @@ export function NewCheck({ initialPack }: { initialPack?: InitialRunPack } = {})
 
   return (
     <div className="upload-page">
-      {sourceRunId && <Link to={'/checks/' + encodeURIComponent(sourceRunId)}>К результату</Link>}
-      <h1>{initialPack ? 'Изменить комплект' : 'Новая проверка'}</h1>
-      {!publicDemo && <p className="upload-intro">Добавьте КФЗ и первичные документы.</p>}
+      {initialPack ? <RunPackHeading runId={initialPack.runId}
+        reportName={initialPack.documents.find((item) => item.role === 'report')?.name} /> : <>
+        <h1>Новая проверка</h1>
+        {!publicDemo && <p className="upload-intro">Добавьте КФЗ и первичные документы.</p>}
+      </>}
       {publicDemo ? (
         <section className="upload-card upload-public-notice mt-6">
           <h2>Загрузка доступна в локальной установке</h2>
@@ -156,11 +168,12 @@ export function NewCheck({ initialPack }: { initialPack?: InitialRunPack } = {})
             <UploadBlock chooseButton={chooseReport} group="report" files={report} error={errors.report} disabled={starting}
               transferring={Boolean(transfer)} onFiles={chooseFiles} onRemove={(id) => removeSelectedFile('report', id)} />
             <UploadBlock group="documents" files={documents} error={errors.documents} disabled={starting}
-              transferring={Boolean(transfer)} onFiles={chooseFiles} onRemove={(id) => removeSelectedFile('documents', id)} />
+              transferring={Boolean(transfer)} onFiles={chooseFiles} onRemove={(id) => removeSelectedFile('documents', id)}
+              onReplace={initialPack ? (files, id) => chooseFiles(files, 'documents', id) : undefined} />
           </div>
           <div className="upload-navigation mt-5 flex flex-wrap items-center gap-3">
             <Button ref={submitButton} disabled={starting || !ready} onClick={() => { void submit(); }}>
-              Запустить проверку <WorkspaceIcon name="arrow" size={17} />
+              {initialPack ? 'Запустить повторную проверку' : 'Запустить проверку'} <WorkspaceIcon name="arrow" size={17} />
             </Button>
             <p role="status" className={status || ready ? 'upload-transfer' : 'sr-only'}>
               {status && <UploadSpinner />}
@@ -176,15 +189,15 @@ export function NewCheck({ initialPack }: { initialPack?: InitialRunPack } = {})
             <button type="button" onClick={prepared.retry}>Повторить загрузку</button>
           </div>}
           {submitError && !transfer && !transferError && <p className="upload-validation" role="alert">{submitError}</p>}
-          <RunQueue entries={history.page?.entries} receipts={receipts}
-            loading={history.loading} error={history.error} onRetry={history.refresh} />
+          {!initialPack && <RunQueue entries={history.page?.entries} receipts={receipts}
+            loading={history.loading} error={history.error} onRetry={history.refresh} />}
         </>
       )}
     </div>
   );
 }
 
-function UploadBlock({ group, files, error, disabled, transferring, chooseButton, onFiles, onRemove }: {
+function UploadBlock({ group, files, error, disabled, transferring, chooseButton, onFiles, onRemove, onReplace }: {
   group: FileGroup;
   files: UploadFile[];
   error: string;
@@ -193,8 +206,11 @@ function UploadBlock({ group, files, error, disabled, transferring, chooseButton
   chooseButton?: React.Ref<HTMLButtonElement>;
   onFiles: (files: FileList, group: FileGroup) => void;
   onRemove: (id: string) => void;
+  onReplace?: (files: FileList, id: string) => void;
 }) {
   const input = useRef<HTMLInputElement>(null);
+  const replacement = useRef<HTMLInputElement>(null);
+  const replacedId = useRef<string | null>(null);
   const [over, setOver] = useState(false);
   const report = group === 'report';
   const label = report ? 'КФЗ' : 'Первичные документы';
@@ -228,6 +244,14 @@ function UploadBlock({ group, files, error, disabled, transferring, chooseButton
           if (event.currentTarget.files) onFiles(event.currentTarget.files, group);
           event.currentTarget.value = '';
         }} />
+      {onReplace && <input ref={replacement} type="file" hidden
+        aria-label="Выберите замену первичного документа" accept={formats.join(',')} disabled={disabled}
+        onChange={(event) => {
+          const id = replacedId.current;
+          replacedId.current = null;
+          if (id && event.currentTarget.files) onReplace(event.currentTarget.files, id);
+          event.currentTarget.value = '';
+        }} />}
       {files.length === 0 ? <div className="upload-empty">
         <WorkspaceIcon name="file" size={28} />
         <p>{report ? 'Перетащите КФЗ сюда' : 'Перетащите документы сюда'}</p>
@@ -235,7 +259,11 @@ function UploadBlock({ group, files, error, disabled, transferring, chooseButton
           {report ? 'Выбрать файл' : 'Выбрать файлы'}
         </Button>
       </div> : <>
-        <UploadFileList files={files} disabled={disabled} transferring={transferring} onRemove={onRemove} />
+        <UploadFileList files={files} disabled={disabled} transferring={transferring} onRemove={onRemove}
+          onReplace={onReplace ? (id) => {
+            replacedId.current = id;
+            replacement.current?.click();
+          } : undefined} />
         <div className="upload-list-actions mt-3">
           <button type="button" disabled={disabled} onClick={() => input.current?.click()}>
             <WorkspaceIcon name="plus" size={16} />

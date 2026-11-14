@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 const icons = {
   scan: <><path d="M4 7V6a2 2 0 0 1 2-2h2m8 0h2a2 2 0 0 1 2 2v1m0 10v1a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-1" /><path d="M7 12h10" /></>,
   plus: <path d="M12 5v14M5 12h14" />,
+  pencil: <path d="m14 6 4 4M4 20l4-.9L20 7a2.8 2.8 0 0 0-4-4L4.9 15Z" />,
   minus: <path d="M5 12h14" />,
   download: <path d="M12 3v12m-5-5 5 5 5-5M5 16v4h14v-4" />,
   reset: <><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5" /></>,

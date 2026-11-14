@@ -1,7 +1,7 @@
 import { Link, useSearchParams } from 'react-router';
 import { getEditableRunPack } from './createRun';
 import { RunPackSkeleton } from './CheckLoadingSkeletons';
-import { NewCheck } from './NewCheck';
+import { NewCheck, RunPackHeading } from './NewCheck';
 import { useCheckData } from './useCheckData';
 
 export function RunPackEditor() {
@@ -18,8 +18,7 @@ function StoredPack({ runId }: { runId: string }) {
 
   return (
     <div className="upload-page">
-      <Link to={'/checks/' + encodeURIComponent(runId)}>К результату</Link>
-      <h1>Изменить комплект</h1>
+      <RunPackHeading runId={runId} />
       {state.phase === 'loading' ? <RunPackSkeleton /> : (
         <>
           <div className="checks-card">

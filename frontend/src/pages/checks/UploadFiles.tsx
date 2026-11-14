@@ -20,9 +20,10 @@ export function UploadSpinner() {
   return <span className="upload-spinner" aria-hidden="true" />;
 }
 
-export function UploadFileList({ files, onRemove, disabled, transferring }: {
+export function UploadFileList({ files, onRemove, onReplace, disabled, transferring }: {
   files: UploadFile[];
   onRemove: (id: string) => void;
+  onReplace?: (id: string) => void;
   disabled: boolean;
   transferring: boolean;
 }) {
@@ -35,7 +36,7 @@ export function UploadFileList({ files, onRemove, disabled, transferring }: {
         const failed = 'file' in item && item.state === 'failed';
         const uploading = transferring && 'file' in item;
         return (
-          <li className="upload-file-row" key={item.id}>
+          <li className="upload-file-row" data-replaceable={onReplace ? 'true' : undefined} key={item.id}>
             <FileTypeIcon extension={fileExtension(name)} />
             <div className="upload-file-info">
               <strong title={name}>{name}</strong>
@@ -49,6 +50,10 @@ export function UploadFileList({ files, onRemove, disabled, transferring }: {
               </>}
               {!failed && !reading && !uploading && <span aria-hidden="true"><WorkspaceIcon name="check" size={20} /></span>}
             </span>
+            {onReplace && <button className="upload-replace" type="button" disabled={disabled}
+              onClick={() => onReplace(item.id)} aria-label={`Заменить ${name}`} title="Заменить файл">
+              <WorkspaceIcon name="pencil" size={16} />
+            </button>}
             <button className="upload-remove" type="button" disabled={disabled} onClick={() => onRemove(item.id)}
               aria-label={`Удалить ${name}`} title="Убрать файл">
               <WorkspaceIcon name="close" size={18} />

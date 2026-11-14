@@ -81,7 +81,7 @@ test('the pack editor shows its upload cards while the stored pack is loading', 
   try {
     await page.goto('/checks/new?from=' + runId);
     const loading = page.getByRole('region', { name: 'Комплект документов' });
-    await expect(page.getByRole('heading', { name: 'Изменить комплект' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Изменение комплекта', exact: true })).toBeVisible();
     await expect(loading.locator('.upload-card')).toHaveCount(2);
     await expect(loading).toBeVisible();
     await expect(loading).toHaveAttribute('aria-busy', 'true');
@@ -90,9 +90,80 @@ test('the pack editor shows its upload cards while the stored pack is loading', 
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
     pack.release();
     await expect(loading).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: 'Изменение комплекта · report.pdf' })).toBeVisible();
     await expect(page.getByRole('region', { name: 'КФЗ', exact: true })).toContainText('report.pdf');
     await expect(page.getByRole('region', { name: 'Первичные документы' })).toBeVisible();
   } finally {
     pack.release();
   }
+});
+
+test('the editor uploads only new files and follows the new run', async ({ page }) => {
+  const source = 'original-run';
+  const edited = 'edited-run';
+  const pack = [
+    { id: 'existing-report', name: 'report.pdf', size: 50 * 1024 ** 2, role: 'report' },
+    { id: 'replaced-primary', name: 'original.pdf', size: 50 * 1024 ** 2, role: 'supporting' },
+    { id: 'retained-primary', name: 'retained.pdf', size: 50 * 1024 ** 2, role: 'supporting' },
+    { id: 'additional-primary', name: 'another.pdf', size: 50 * 1024 ** 2, role: 'supporting' },
+    { id: 'last-primary', name: 'final.pdf', size: 50 * 1024 ** 2, role: 'supporting' },
+  ];
+  let transfer: Buffer | null = null;
+  let startCount = 0;
+  await page.route('**/api/v0/runs', (route) => route.fulfill({ json: { items: [], next_cursor: null } }));
+  await page.route(`**/api/v0/runs/${source}/pack`, (route) => route.fulfill({ json: { documents: pack } }));
+  let transferCount = 0;
+  await page.route('**/api/v0/runs/uploads', (route) => {
+    transferCount += 1;
+    transfer = route.request().postDataBuffer();
+    const uploadId = transferCount < 3 ? 'upload-' + transferCount : edited;
+    return route.fulfill({ status: 201, json: { upload_id: uploadId } });
+  });
+  await page.route('**/api/v0/runs/uploads/upload-*', (route) => route.fulfill({ status: 204 }));
+  await page.route(`**/api/v0/runs/uploads/${edited}/start`, (route) => {
+    startCount += 1;
+    return route.fulfill({
+      status: 202,
+      headers: { Location: '/api/v0/runs/' + edited },
+      json: { run_id: edited, status: 'queued' },
+    });
+  });
+  await page.route(`**/api/v0/runs/${edited}`, (route) => route.fulfill({ json: {
+    ...summary, run_id: edited, progress: { processed_documents: 6, total_documents: 6 },
+  } }));
+
+  await page.goto('/checks/new?from=' + source);
+  const submit = page.getByRole('button', { name: 'Запустить повторную проверку' });
+  await expect(submit).toBeDisabled();
+  await expect(page.getByRole('heading', { name: 'Изменение комплекта · report.pdf' })).toBeVisible();
+
+  const candidate = { name: 'changed.pdf', mimeType: 'application/pdf', buffer: Buffer.from('synthetic content') };
+  await page.getByLabel('Выберите первичные документы', { exact: true }).setInputFiles(candidate);
+  await expect(page.getByRole('alert')).toHaveText('Размер пакета не должен превышать 250 МиБ.');
+  await expect(submit).toBeDisabled();
+  expect(transfer).toBeNull();
+
+  const chooser = page.waitForEvent('filechooser');
+  await page.getByRole('button', { name: 'Заменить original.pdf' }).click();
+  await (await chooser).setFiles(candidate);
+  await expect(submit).toBeEnabled();
+  await page.getByLabel('Выберите первичные документы', { exact: true })
+    .setInputFiles({ ...candidate, name: 'added.pdf' });
+  await expect(submit).toBeEnabled();
+  const reportChooser = page.waitForEvent('filechooser');
+  await page.getByRole('button', { name: 'Заменить КФЗ' }).click();
+  await (await reportChooser).setFiles({ ...candidate, name: 'new-report.pdf' });
+  await expect(submit).toBeEnabled();
+
+  const body = String(transfer);
+  expect(body).toMatch(/name="source_run_id"\r\n\r\noriginal-run/);
+  expect(body).toMatch(/name="retained_document_id"\r\n\r\nretained-primary/);
+  expect(body).toMatch(/name="retained_document_id"\r\n\r\nadditional-primary/);
+  expect(body).toMatch(/name="retained_document_id"\r\n\r\nlast-primary/);
+  expect(body).not.toMatch(/name="retained_document_id"\r\n\r\n(?:existing-report|replaced-primary)/);
+  expect(body.match(/filename="[^"]+"/g)).toEqual(['filename="new-report.pdf"', 'filename="changed.pdf"', 'filename="added.pdf"']);
+  await submit.click();
+  await expect(page).toHaveURL('/checks/new?run=' + edited + '#queue');
+  await expect(page.getByRole('region', { name: 'Последние проверки' }).locator('a[href="/checks/' + edited + '"]')).toBeVisible();
+  expect(startCount).toBe(1);
 });
