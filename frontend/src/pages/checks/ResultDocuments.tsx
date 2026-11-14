@@ -69,7 +69,6 @@ export function ResultDocuments({
       updateSourceQuery(next);
     },
     onClose() {
-      if (!params.has('document') && !params.has('evidence')) return;
       const next = new URLSearchParams(params);
       next.delete('document');
       next.delete('evidence');

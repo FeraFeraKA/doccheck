@@ -34,9 +34,6 @@
 }
 
 .result-exceptions {
-  margin-top: 1.5rem;
-  border-top: 1px solid var(--ui-line);
-  padding-block-start: .875rem;
   scroll-margin-top: 1rem;
 }
 .result-exceptions-heading {
