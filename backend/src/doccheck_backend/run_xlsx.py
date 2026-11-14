@@ -307,7 +307,8 @@ def export_check_result(result: CheckResult) -> bytes:
         suffix += f" · {row.unit}"
         suffix = _NON_XML_TEXT.sub(lambda match: ascii(match[0])[1:-1], suffix)
         if len(suffix.encode("utf-16-le")) // 2 > 32_000:
-            suffix = f" · {row.unit}"
+            unit = _NON_XML_TEXT.sub(lambda match: ascii(match[0])[1:-1], row.unit)
+            suffix = f" · {unit}"
         if len(suffix.encode("utf-16-le")) // 2 > 32_000:
             suffix = " · Единица на листе «Сверка»"
         label = _NON_XML_TEXT.sub(lambda match: ascii(match[0])[1:-1], row.label) + suffix
