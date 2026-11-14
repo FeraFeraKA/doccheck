@@ -1,3 +1,4 @@
+import pypdfium2
 import pytest
 
 from doccheck_backend.native_reader import read_native_document
@@ -122,6 +123,50 @@ def test_pdf_cropbox_that_keeps_full_media_does_not_suppress_text(tmp_path, rota
     result = read_native_document(pdf, "pdf")
     assert [item.raw_text for item in result.observations] == ["j"]
     assert result.issues == ()
+
+
+@pytest.mark.parametrize("rotation", [0, 90, 180, 270])
+@pytest.mark.parametrize("inside", [True, False])
+def test_pdf_text_showing_operators_use_the_same_next_line(tmp_path, rotation, inside):
+    if inside:
+        setup = b"BT /F1 24 Tf 60 TL 40 140 Td (Start) Tj "
+    else:
+        setup = b"BT /F1 24 Tf 100 TL 40 60 Td "
+    attrs = f"/Rotate {rotation}".encode()
+    endings = (
+        b'3 1 (Evidence text) " ET',
+        b"3 Tw 1 Tc (Evidence text) ' ET",
+        b"3 Tw 1 Tc T* (Evidence text) Tj ET",
+        (b"3 Tw 1 Tc 0 -60 Td " if inside else b"3 Tw 1 Tc 0 -100 Td ") + b"(Evidence text) Tj ET",
+    )
+    expected = None
+    rendered = None
+    for index, ending in enumerate(endings):
+        pdf = _write_pdf(tmp_path / f"case-{index}.pdf", [setup + ending], attrs=attrs)
+        result = read_native_document(pdf, "pdf")
+        with pypdfium2.PdfDocument(pdf) as document:
+            page = document[0]
+            bitmap = page.render()
+            pixels = bitmap.to_pil().tobytes()
+            bitmap.close()
+            page.close()
+        if expected is None:
+            expected = result
+            rendered = pixels
+        assert result == expected
+        assert pixels == rendered
+
+    if inside:
+        assert [observation.raw_text for observation in expected.observations] == [
+            "Start",
+            "Evidence text",
+        ]
+        assert expected.issues == ()
+        assert expected.observations[0].locator.bbox != expected.observations[1].locator.bbox
+    else:
+        assert expected.observations == ()
+        assert [issue.code for issue in expected.issues] == ["clipped_pdf_text"]
+        assert all(value == 255 for value in rendered)
 
 
 @pytest.mark.parametrize("operator", [b"W", b"W*"])

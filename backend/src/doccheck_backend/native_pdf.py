@@ -37,6 +37,12 @@ class _PDFTextInterpreter(PDFPageInterpreter):
             raise _UnsupportedVisibility
         super().do_Tr(render)
 
+    def do__w(self, aw, ac, text) -> None:
+        # ISO 32000-1, table 109: set spacing, then show on the next line.
+        self.do_Tw(aw)
+        self.do_Tc(ac)
+        self.do__q(text)
+
     def do_TJ(self, seq) -> None:
         if isinstance(self.textstate.font, PDFType3Font):
             raise _UnsupportedVisibility
