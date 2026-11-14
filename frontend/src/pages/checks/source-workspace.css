@@ -70,7 +70,6 @@
   background: #fff;
 }
 .source-workspace-controls > .source-document-select { flex: 1; }
-.source-evidence-select { padding: 4px 10px; }
 .checks-content .source-document-select select {
   flex: 1;
   min-width: 0;
@@ -181,5 +180,3 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-
-.source-fragment-text mark { background: var(--ui-lime); color: var(--ui-ink); }

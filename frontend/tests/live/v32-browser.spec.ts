@@ -59,7 +59,7 @@ for (const { name, contract, partial } of packages) {
     expect(fileResponse.status()).toBe(200);
     expect(await fileResponse.body()).toEqual(await readFile(act));
     const viewer = page.getByRole('region', { name: 'Просмотр источника' });
-    await expect(page.getByLabel('Доказательство').locator('option:checked')).toContainText('Абзац 6');
+    await expect(viewer.getByText('Абзац 6', { exact: true })).toBeVisible();
     await expect(viewer.getByText(partial).last()).toBeVisible();
     await expect(viewer.getByRole('link', { name: 'Скачать оригинал' })).toHaveAttribute('download', 'act.docx');
     await page.screenshot({ path: testInfo.outputPath('source.png') });

@@ -9,19 +9,21 @@ interface LoadRequest<T> {
   state: LoadState<T>;
 }
 
-export function useCheckData<T>(key: string, load: LoadRequest<T>['load']) {
+export function useCheckData<T>(key: string | undefined, load: LoadRequest<T>['load']) {
   const [attempt, setAttempt] = useState(0);
   const [request, setRequest] = useState<LoadRequest<T>>();
 
   useEffect(() => {
+    if (key === undefined) return;
+    const requestKey = key;
     const controller = new AbortController();
     function publish(state: LoadState<T>) {
-      if (!controller.signal.aborted) setRequest({ key, load, attempt, state });
+      if (!controller.signal.aborted) setRequest({ key: requestKey, load, attempt, state });
     }
 
     void Promise.resolve().then(() => {
       controller.signal.throwIfAborted();
-      return load(key, controller.signal, (data) => publish({ phase: 'ready', data }));
+      return load(requestKey, controller.signal, (data) => publish({ phase: 'ready', data }));
     }).then(
       (data) => publish({ phase: 'ready', data }),
       () => publish({ phase: 'failed' }),
@@ -29,7 +31,7 @@ export function useCheckData<T>(key: string, load: LoadRequest<T>['load']) {
     return () => controller.abort();
   }, [key, load, attempt]);
 
-  const state = request?.key === key && request.load === load && request.attempt === attempt
+  const state = request && request.key === key && request.load === load && request.attempt === attempt
     ? request.state
     : { phase: 'loading' } as const;
 
