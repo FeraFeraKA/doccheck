@@ -18,7 +18,9 @@ if TYPE_CHECKING:
 type PixelBox = tuple[int, int, int, int]
 type ReadCell = Callable[[PixelBox, int], tuple[Observation, ...]]
 
-_MONEY = re.compile(r"(?:\d+|\d{1,3}(?:[ \u00a0\u2009\u202f]\d{3})+)[,.]\d{2}")
+_MONEY = re.compile(r"[+−–-]?(?:\d+|\d{1,3}(?:[ \u00a0\u2009\u202f]\d{3})+)[,.]\d{2}")
+_ACCOUNTING = re.compile(r"\(\s*(.+?)\s*\)")
+_CODE = re.compile(r"(?<!\d)\d{4}(?!\d)")
 _REPORT_CODES = {
     "production_overhead": ("0800", ("общепроизводственн", "затрат")),
     "general_admin": ("0900", ("общехозяйственн", "затрат")),
@@ -112,10 +114,60 @@ def _tokens(observations: tuple[Observation, ...]) -> str:
     return re.sub(r"\s+", " ", " ".join(item.raw_text for item in observations)).casefold().strip()
 
 
-def _repeat_contains(read: ReadCell, box: PixelBox, required: tuple[str, ...]) -> bool:
-    # Agreement on significant words is separate from numeric agreement.
+def _repeat_contains(
+    read: ReadCell,
+    box: PixelBox,
+    required: tuple[str, ...],
+    *,
+    code: str | None = None,
+    exact_leaf: bool = False,
+) -> bool:
     texts = [_tokens(read(box, scale)) for scale in (2, 3, 4)]
-    return sum(all(term in text for term in required) for text in texts) >= 2
+    hits = 0
+    for text in texts:
+        words = re.findall(r"[а-яё]+", text)
+        codes = set(_CODE.findall(text))
+        if code is not None and codes - {code}:
+            return False
+        if (
+            exact_leaf
+            and text
+            and any(term in text for term in required)
+            and not all(any(word.startswith(term) for term in required) for word in words)
+        ):
+            return False
+        if all(term in text for term in required) and (code is None or code in codes):
+            hits += 1
+    return hits >= 2
+
+
+def _safe_row_cell(image: Image, grid: TableGrid, index: int) -> bool:
+    top, bottom = grid.row
+    for left, right in ((grid.x[0], grid.x[1]), (grid.x[index], grid.x[index + 1])):
+        span = right - left - 10
+        if span <= 0:
+            return False
+        region = image.crop((left + 5, top + 4, right - 5, bottom - 4))
+        stripe = region.tobytes()
+        if any(
+            sum(pixel <= 160 for pixel in stripe[i : i + span]) >= span * 0.68
+            for i in range(0, len(stripe), span)
+        ):
+            return False
+        for y in (top, bottom):
+            edge = image.crop((left + 5, max(0, y - 2), right - 5, y + 3))
+            if not any(
+                sum(pixel <= 200 for pixel in edge.tobytes()[i : i + span]) >= span * 0.72
+                for i in range(0, edge.width * edge.height, span)
+            ):
+                return False
+    return (
+        min(
+            _line_score(image, grid.x[column], top + 3, bottom - 2)
+            for column in (0, 1, index, index + 1)
+        )
+        >= 0.8
+    )
 
 
 def _scoped_column_roles(
@@ -173,7 +225,7 @@ def _scoped_column_roles(
         if category in _REPORT_CODES:
             code, words = _REPORT_CODES[category]
             if len(covered) != 1 or not _repeat_contains(
-                read, _cell_box(grid, index, header_top, header_bottom), (*words, code)
+                read, _cell_box(grid, index, header_top, header_bottom), words, code=code
             ):
                 continue
         else:
@@ -184,11 +236,15 @@ def _scoped_column_roles(
                 grid.x[covered[-1] + 1] - 3,
                 header_bottom - 2,
             )
-            if len(covered) < 2 or not _repeat_contains(read, heading, (*words, code)):
+            if (
+                len(grid.upper) < 3
+                or len(covered) < 2
+                or not _repeat_contains(read, heading, words, code=code)
+            ):
                 continue
             leaf_top, leaf_bottom = header_bottom, grid.upper[2]
             if leaf_bottom - leaf_top < 36 or not _repeat_contains(
-                read, _cell_box(grid, index, leaf_top, leaf_bottom), leaf
+                read, _cell_box(grid, index, leaf_top, leaf_bottom), leaf, exact_leaf=True
             ):
                 continue
         if (
@@ -206,9 +262,11 @@ def _scoped_column_roles(
 
 
 def _money_read(items: tuple[Observation, ...]) -> Decimal | None:
-    if len(items) != 1:
-        return None
-    text = items[0].raw_text.strip()
+    text = " ".join(item.raw_text.strip() for item in items)
+    text = re.sub(r"^([+−–-])\s+", r"\1", text)
+    if match := _ACCOUNTING.fullmatch(text):
+        text = "-" + match[1].strip()
+    text = text.replace("−", "-").replace("–", "-")
     if not _MONEY.fullmatch(text):
         return None
     return Decimal(re.sub(r"\s", "", text.replace(",", ".")))
@@ -227,6 +285,8 @@ def read_table_amounts(
     roles = _scoped_column_roles(gray, grid, page_observations, read)
     amounts = {}
     for category, index in roles.items():
+        if not _safe_row_cell(gray, grid, index):
+            continue
         box = _cell_box(grid, index, *grid.row)
         readings = [read(box, scale) for scale in (2, 3, 4)]
         values = [_money_read(items) for items in readings]
@@ -236,11 +296,11 @@ def read_table_amounts(
         amount = next(iter(confirmed))
         if values.count(amount) < 2:
             continue
-        (reading,) = readings[values.index(amount)]
+        reading = " ".join(item.raw_text for item in readings[values.index(amount)])
         # Whole grid cell, rather than cropped subframe coordinates, anchors preview.
         x0, y0, x1, y1 = box
         amounts[category] = Observation(
-            reading.raw_text,
+            reading,
             PageLocator(
                 kind="page",
                 page=row.page,
