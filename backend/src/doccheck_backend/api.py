@@ -14,7 +14,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.formparsers import MultiPartException, MultiPartParser
 from starlette.types import Receive, Scope, Send
 
-from doccheck_backend import run_reads
+from doccheck_backend import hosted_preview, hosted_queue, run_reads
 from doccheck_backend.config import Settings
 from doccheck_backend.contracts import CheckResult
 from doccheck_backend.contracts.result import Evidence
@@ -70,6 +70,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         configured = settings or Settings.from_env()
         application.state.upload_root = configured.upload_root
         application.state.public_demo = configured.public_demo
+        application.state.hosted_worker_digest = configured.hosted_worker_digest
+        application.state.hosted_viewers = configured.hosted_viewers
+        application.state.hosted_session_key = configured.hosted_session_key
         application.state.engine = create_database_engine(configured.database_url)
         try:
             yield
@@ -285,6 +288,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     application.include_router(document_runs)
+    application.include_router(hosted_queue.router)
+    application.include_router(hosted_preview.router)
 
     @application.get("/health", response_model=HealthResponse)
     def health(request: Request) -> HealthResponse:
@@ -295,10 +300,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @application.post("/api/synthetic-jobs", response_model=JobResponse, status_code=201)
     def post_job(request: Request) -> JobResponse:
+        if request.app.state.hosted_worker_digest is not None:
+            raise HTTPException(404, "Synthetic demo queue unavailable")
         return create_job(request.app.state.engine)
 
     @application.get("/api/synthetic-jobs/{job_id}", response_model=JobResponse)
     def read_job(job_id: UUID, request: Request) -> JobResponse:
+        if request.app.state.hosted_worker_digest is not None:
+            raise HTTPException(404, "Synthetic demo queue unavailable")
         job = get_job(request.app.state.engine, job_id)
         if job is None:
             raise HTTPException(status_code=404, detail="Job not found")

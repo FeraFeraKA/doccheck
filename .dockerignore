@@ -6,6 +6,9 @@
 !backend/alembic.ini
 !backend/src/doccheck_backend/*.py
 !backend/src/doccheck_backend/contracts/*.py
+!backend/src/doccheck_backend/hosted_demo_inputs/manifest.json
+!backend/src/doccheck_backend/hosted_demo_inputs/report.xlsx
+!backend/src/doccheck_backend/hosted_demo_inputs/act.docx
 !backend/migrations/env.py
 !backend/migrations/versions/*.py
 !frontend/Dockerfile
