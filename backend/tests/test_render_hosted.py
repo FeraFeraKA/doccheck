@@ -136,6 +136,25 @@ def test_shared_database_preflight_preserves_public_database():
                     )
                     _check_preview_database(dedicated, public_name, public_app)
                     _check_preview_database(dedicated)
+                    admin.execute(
+                        sql.SQL("ALTER ROLE {} CREATEROLE").format(sql.Identifier(public_app))
+                    )
+                    with pytest.raises(ValueError, match="could not be verified"):
+                        _check_preview_database(dedicated, public_name, public_app)
+                    admin.execute(
+                        sql.SQL("ALTER ROLE {} NOCREATEROLE").format(sql.Identifier(public_app))
+                    )
+                    admin.execute(
+                        sql.SQL("GRANT {} TO {} WITH ADMIN TRUE, INHERIT FALSE, SET FALSE").format(
+                            owner,
+                            sql.Identifier(public_app),
+                        )
+                    )
+                    with pytest.raises(ValueError, match="could not be verified"):
+                        _check_preview_database(dedicated, public_name, public_app)
+                    admin.execute(
+                        sql.SQL("REVOKE {} FROM {}").format(owner, sql.Identifier(public_app))
+                    )
                     wrong_db = make_url(dedicated).set(database=public_name)
                     with pytest.raises(ValueError, match="could not be verified"):
                         _check_preview_database(wrong_db.render_as_string(hide_password=False))
