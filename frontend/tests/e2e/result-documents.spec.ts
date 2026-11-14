@@ -217,8 +217,9 @@ test('a distinct primary issue remains visible beside the related file error', a
   await page.getByRole('button', { name: 'Синтетическая статья A', exact: true }).click();
   const indicator = page.getByRole('region', { name: 'Подробности: Синтетическая статья A' });
   await expect(indicator.getByText('Сверьте договор в сопроводительном файле.', { exact: true })).toBeVisible();
-  await expect(indicator.getByRole('list', { name: 'Источники проверки' })
-    .getByRole('button', { name: /synthetic-report\.pdf/ })).toBeVisible();
+  const issueSources = indicator.getByRole('list', { name: 'Источники замечания' });
+  await expect(issueSources.getByRole('button', { name: /synthetic-report\.pdf/ })).toHaveCount(2);
+  await expect(issueSources.getByRole('button', { name: /synthetic-report\.pdf.*строка 4, столбец 2/ })).toBeVisible();
   const diagnostics = page.getByRole('region', { name: 'Дополнительные проверки' });
   await expect(diagnostics.getByText(detail, { exact: true })).toBeVisible();
   await diagnostics.getByRole('link', { name: 'Исключения', exact: true }).click();
