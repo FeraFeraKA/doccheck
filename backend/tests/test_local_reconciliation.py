@@ -1,10 +1,12 @@
+from io import BytesIO
 from pathlib import Path
 from uuid import uuid4
 
 import pytest
 from docx import Document
 from fastapi.testclient import TestClient
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
+from scanned_kfz_fixture import ScanRow, require_raster_ocr, write_kfz_with_breakdown
 
 from doccheck_backend.api import create_app
 from doccheck_backend.config import Settings
@@ -140,3 +142,75 @@ def test_calculates_status_and_total_from_admitted_sources(database_url, tmp_pat
                 "unverified": 0,
             }
         assert client.get(f"/api/v0/runs/{run_id}/exports/xlsx").content.startswith(b"PK")
+
+
+def test_scanned_breakdown_retains_unverified_values_without_counting_them_twice(
+    database_url, tmp_path
+):
+    require_raster_ocr()
+    _, files = write_reconciliation_case(tmp_path)
+    report = write_kfz_with_breakdown(
+        tmp_path / "report.png",
+        CONTRACT,
+        (START, END),
+        ScanRow(5, 2031, ("1070,45", "351,29", "789,05", "399,12", "2609,91")),
+    )
+    settings = Settings(database_url, upload_root=tmp_path / "uploads")
+    with TestClient(create_app(settings)) as client:
+        accepted = client.post(
+            "/api/v0/runs",
+            headers={"Idempotency-Key": str(uuid4())},
+            files=[
+                ("report", (report.name, report.read_bytes())),
+                *(("documents", (p.name, p.read_bytes())) for p in files),
+            ],
+        )
+        assert accepted.status_code == 202
+        run_id = accepted.json()["run_id"]
+        assert run_document_worker(
+            client.app.state.engine,
+            settings.upload_root,
+            V32Processor(no_model, no_model),
+            once=True,
+        )
+        entry = f"/api/v0/runs/{run_id}"
+        status = client.get(entry).json()
+        assert status["status"] == "completed", status
+        result = client.get(entry + "/findings").json()
+        rows = {row["id"]: row for row in result["rows"]}
+        details = {key: row for key, row in rows.items() if row["status"] == "unverified"}
+        assert result["summary"]["counts"] == {"verified": 3, "discrepancy": 2, "unverified": 9}
+        assert {
+            "0200-subtotal",
+            "0200-base",
+            "0200-additional",
+            "0200-reserve",
+            "0300-subtotal",
+            "0300-base",
+            "0300-additional",
+            "0300-reserve",
+            "labor_intensity",
+        } == details.keys()
+        for row in details.values():
+            assert row["expected_value"] is row["observed_evidence_sum"] is row["delta"] is None
+        assert details["0200-reserve"]["parent_row_id"] == "payroll"
+        assert details["0200-reserve"]["reported_value"] == "73.30"
+        assert details["0300-additional"]["reported_value"] == "51.90"
+        assert details["0300-reserve"]["parent_row_id"] == "insurance"
+        assert details["0300-reserve"]["reported_value"] is None
+        labor = details["labor_intensity"]
+        assert labor["unit"] == "чел.-ч." and labor["reported_value"] == "17.625"
+        source = next(
+            item for item in result["evidence"] if item["id"] in labor["reported_evidence_refs"]
+        )
+        assert source["locator"]["page"] == 1 and source["locator"]["bbox"]
+        mismatch, total = rows["production_overhead"], rows["total"]
+        assert total["delta"] == mismatch["delta"] == "42.77"
+        assert total["derived_mismatch"] and total["root_issue_id"] == mismatch["root_issue_id"]
+        coverage = result["summary"]["rub_coverage"]
+        assert coverage["total"] == "2609.91" and coverage["unverified"] is None
+
+        book = load_workbook(BytesIO(client.get(entry + "/exports/xlsx").content), read_only=True)
+        labor_export = next(row for row in book["Сверка"].values if row[0] == labor["id"])
+        assert labor_export[4:9] == ("17.625", None, None, None, "Не проверен")
+        book.close()

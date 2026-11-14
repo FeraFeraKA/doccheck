@@ -125,7 +125,9 @@ def test_scanned_table_requires_matching_year_and_identifies_missing_columns(mon
         lambda *_: [OcrLine("Договор № EX-26", (10, 10, 200, 50), 99)],
     )
     monkeypatch.setattr(scanned_report, "_row_band", lambda *_: (290, 360, "2026"))
-    monkeypatch.setattr(scanned_report, "_headers", lambda *_: {"0200": 2})
+    monkeypatch.setattr(
+        scanned_report, "_headers", lambda *_: {"0200": scanned_report.HeaderGroup(2, 3, 220)}
+    )
     monkeypatch.setattr(scanned_report, "_read_amount", lambda *_: ("625.02", Decimal("625.02")))
 
     assert (

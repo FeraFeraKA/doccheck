@@ -1,15 +1,32 @@
 """Generate a synthetic raster-only Russian KФЗ and native supporting acts."""
 
+import shutil
+import subprocess
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
+import pytest
 from docx import Document
 from PIL import Image, ImageDraw, ImageFont
 
 SYNTHETIC_CONTRACT = "74/963210/26-47"
 SYNTHETIC_AMOUNTS = ("1350,00", "315,00", "240,00", "180,00", "2085,00")
 DISTRACTOR_AMOUNTS = ("2900,00", "660,00", "520,00", "100,00", "4180,00")
+
+
+def require_raster_ocr():
+    if shutil.which("tesseract") is None:
+        pytest.skip("Tesseract is required for the raster KФЗ fixture")
+    installed = subprocess.run(
+        ["tesseract", "--list-langs"], capture_output=True, text=True, timeout=10, check=True
+    )
+    if not {"rus", "eng"} <= set(installed.stdout.splitlines()):
+        pytest.skip("Tesseract rus and eng data are required for the raster KФЗ fixture")
+    try:
+        ImageFont.truetype("DejaVuSans.ttf", 30)
+    except OSError:
+        pytest.skip("DejaVu Sans is required to generate the raster KФЗ fixture")
 
 
 @dataclass(frozen=True)
@@ -128,4 +145,104 @@ def write_support(
     document.add_paragraph("Общехозяйственные расходы")
     document.add_paragraph("Итого: 180,00 руб.")
     document.save(path)
+    return path
+
+
+def write_kfz_with_breakdown(
+    path: Path, contract: str, period: tuple[str, str], row: ScanRow
+) -> Path:
+    """Draw merged article headings and real nested columns on a synthetic scan."""
+    widths = (230, 300, 260, 160, 176, 176, 180, 250, 160, 176, 176, 180, 340, 245, 340, 175)
+    xs = [70]
+    for width in widths:
+        xs.append(xs[-1] + width)
+    image = Image.new("RGB", (xs[-1] + 70, 1000), "white")
+    draw = ImageDraw.Draw(image)
+    title = ImageFont.truetype("DejaVuSans.ttf", 40)
+    heading = ImageFont.truetype("DejaVuSans.ttf", 23)
+    amount = ImageFont.truetype("DejaVuSans.ttf", 28)
+    draw.text((70, 45), "Синтетическая карточка учёта фактических затрат", fill="black", font=title)
+    draw.text((70, 114), f"Договор № {contract}", fill="black", font=title)
+    draw.text((70, 179), f"Отчетный период: {_display_period(period)}", fill="black", font=title)
+    ys = (280, 395, 516, 640, 760, 855)
+    for y in ys:
+        draw.line((xs[0], y, xs[-1], y), fill="black", width=4)
+
+    def band(index, tracks, labels, font=heading):
+        top, bottom = ys[index : index + 2]
+        for col in tracks:
+            draw.line((xs[col], top, xs[col], bottom), fill="black", width=4)
+        for start, end, text in labels:
+            draw.multiline_text(
+                ((xs[start] + xs[end]) // 2, (top + bottom) // 2),
+                text,
+                fill="black",
+                font=font,
+                spacing=5,
+                align="center",
+                anchor="mm",
+            )
+
+    major = (0, 1, 2, 7, 12, 13, 14, 15, 16)
+    band(
+        0,
+        major,
+        (
+            (0, 1, "Этап"),
+            (1, 2, "Период"),
+            (2, 7, "Затраты на оплату труда 0200"),
+            (7, 12, "Страховые взносы 0300"),
+            (12, 13, "Общепроизводственные\nрасходы 0800"),
+            (13, 14, "Трудоёмкость\n(человеко-часы)"),
+            (14, 15, "Общехозяйственные\nрасходы 0900"),
+            (15, 16, "Итого"),
+        ),
+    )
+    band(
+        1,
+        sorted((*major, 3, 6, 8, 11)),
+        (
+            (2, 3, "Затраты на оплату\nтруда, всего"),
+            (3, 6, "Заработная плата по ведомости"),
+            (6, 7, "Резерв\nотпусков"),
+            (7, 8, "Страховые\nвзносы, всего"),
+            (8, 11, "Заработная плата и взносы"),
+            (11, 12, "Резерв\nотпусков"),
+        ),
+    )
+    band(
+        2,
+        range(len(xs)),
+        (
+            (3, 4, "Всего"),
+            (4, 5, "Основная\nзаработная\nплата"),
+            (5, 6, "Дополнительная\nзаработная\nплата"),
+            (8, 9, "Всего"),
+            (9, 10, "Дополнительная\nзаработная\nплата"),
+            (10, 11, "Основная\nзаработная\nплата"),
+        ),
+        font=ImageFont.truetype("DejaVuSans.ttf", 19),
+    )
+    payroll, insurance, overhead, general, total = row.amounts
+    values = (
+        f"{row.stage} этап, {row.year} г.",
+        "",
+        payroll,
+        "997,15",
+        "812,20",
+        "184,95",
+        "73,30",
+        insurance,
+        "338,80",
+        "51,90",
+        "286,90",
+        "",
+        overhead,
+        "17,625",
+        general,
+        total,
+    )
+    band(3, range(len(xs)), ((i, i + 1, text) for i, text in enumerate(values)), font=amount)
+    band(4, range(len(xs)), ())
+    image.save(path)
     return path

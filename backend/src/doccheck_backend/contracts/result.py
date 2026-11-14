@@ -492,6 +492,7 @@ class ResultRow(ContractModel):
     root_issue_id: Text | None
     derived_mismatch: StrictBool
     is_aggregate: StrictBool | None = Field(default=None, exclude_if=lambda value: value is None)
+    parent_row_id: Text | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @model_validator(mode="after")
     def check_totals(self) -> Self:
@@ -612,7 +613,8 @@ class CheckResult(ContractModel):
         error_ids = set(file_errors)
         if len(error_ids) != len(file_errors):
             raise ValueError("file error IDs must be unique")
-        if len({row.id for row in self.rows}) != len(self.rows):
+        rows_by_id = {row.id: row for row in self.rows}
+        if len(rows_by_id) != len(self.rows):
             raise ValueError("row IDs must be unique")
         report = documents.get(self.scope.report_document_id)
         if report is None or report.role != "report":
@@ -641,6 +643,10 @@ class CheckResult(ContractModel):
                 raise ValueError("a byte copy must reference a representative with the same digest")
         addresses = _EvidenceIndex(self.evidence)
         for row in self.rows:
+            if row.parent_row_id is not None:
+                parent = rows_by_id.get(row.parent_row_id)
+                if parent is None or parent.parent_row_id is not None or parent.unit != row.unit:
+                    raise ValueError("a detail must reference a top-level row with the same unit")
             self._check_row_refs(row, report, documents, evidence, addresses)
             if row.root_issue_id is not None and row.root_issue_id not in primary:
                 raise ValueError("row root issue must refer to a primary issue in this result")

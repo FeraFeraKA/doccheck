@@ -361,7 +361,7 @@ function Reconciliation({ result, storedRunId, runPath, rowJump, onOpenRow }: {
   const filters = [
     ['all', 'Все', rows.length],
     ['discrepancy', 'Расхождения', summary.counts.discrepancy],
-    ['unverified', 'Нет данных', summary.counts.unverified],
+    ['unverified', 'Не проверено', summary.counts.unverified],
     ['verified', 'Подтверждено', summary.counts.verified],
   ] as const;
   const issue = summary.primary_issues.find(({ id }) => id === row?.root_issue_id);

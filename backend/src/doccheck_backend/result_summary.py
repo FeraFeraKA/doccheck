@@ -81,12 +81,17 @@ def build_summary(
 
 
 def build_rub_coverage(result: CheckResult) -> RubCoverage | None:
-    """Summarize the known reported amounts. Aggregate rows are context."""
+    """Summarize reported article amounts without counting totals or their breakdowns."""
     amounts: dict[RowStatus, list[str]] = defaultdict(list)
     seen_sources: set[str] = set()
     sources = _EvidenceIndex(result.evidence)
     for row in result.rows:
-        if row.unit != "RUB" or row.reported_value is None or row.derived_mismatch:
+        if (
+            row.unit != "RUB"
+            or row.reported_value is None
+            or row.derived_mismatch
+            or row.parent_row_id is not None
+        ):
             continue
         if row.is_aggregate is None:
             return None

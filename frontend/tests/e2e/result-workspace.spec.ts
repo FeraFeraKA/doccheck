@@ -153,7 +153,7 @@ test('results keep the selected row and its evidence together when filtering', a
   await panel.getByText('Основания выбранного показателя', { exact: true }).click();
   await expect(table.getByRole('button', { name: 'Синтетическая статья A' })).toHaveAttribute('aria-pressed', 'true');
   await expect(panel.getByRole('heading', { name: 'Синтетическая статья A' })).toBeVisible();
-  await panel.getByRole('button', { name: 'Нет данных 1' }).click();
+  await panel.getByRole('button', { name: 'Не проверено 1' }).click();
   await expect(table.getByRole('row')).toHaveCount(2);
   await expect(panel.getByRole('heading', { name: 'Синтетическая статья B' })).toBeVisible();
   await expect(panel.getByText('Страница 1, строка 4, столбец 2', { exact: true })).toBeVisible();

@@ -40,6 +40,7 @@ from doccheck_backend.result_summary import build_summary
 from doccheck_backend.run_reads import RunReadError, open_run_original
 from doccheck_backend.run_worker import StoredRun
 from doccheck_backend.scanned_report import (
+    ReportDetailCell,
     ReportReading,
     ScanPage,
     ScanRow,
@@ -63,7 +64,7 @@ _ARTICLES = {
 _HEX = re.compile(r"[0-9a-f]{32}")
 _MAX_PAGES = 12
 _MAX_NATIVE_CHARS = 24_000
-_RULES_VERSION = "doccheck-local-v3.2-addressed.6"
+_RULES_VERSION = "doccheck-local-v3.2-addressed.7"
 _REPORT_FIELDS = ("contract_number", "period_start", "period_end")
 _REPORT_SCHEMA = {
     "type": "object",
@@ -472,7 +473,42 @@ def _amount_components(scope, documents, grounds, bound):
     return components, unresolved
 
 
-def _rows(run_id, scope, report, native, scanned, documents, grounds):
+def _detail_row(cell: ReportDetailCell, evidence: Evidence | None) -> ResultRow:
+    reason = "По загруженным документам не удалось подтвердить этот подпоказатель."
+    reasons = [Reason(code="detail_not_supported", message=reason, evidence_refs=[])]
+    if evidence is None:
+        reasons.append(
+            Reason(
+                code="report_cell_unreadable",
+                message="Не удалось подтвердить значение ячейки КФЗ.",
+                evidence_refs=[],
+            )
+        )
+    return ResultRow(
+        id=cell.code,
+        label=cell.label,
+        indicator_code=cell.parent_code,
+        unit=cell.unit,
+        reported_value=evidence.normalized_value if evidence else None,
+        reported_evidence_refs=[evidence.id] if evidence else [],
+        expected_value=None,
+        observed_evidence_sum=None,
+        delta=None,
+        status="unverified",
+        completeness=Completeness(state="unknown", basis="none", reason=reason, evidence_refs=[]),
+        calculation=Calculation(
+            policy_id=_RULES_VERSION,
+            formula="Сверка по подтверждающим документам",
+            components=[],
+        ),
+        reasons=reasons,
+        root_issue_id=None,
+        derived_mismatch=False,
+        parent_row_id=_CODE_ARTICLES.get(cell.parent_code),
+    )
+
+
+def _rows(run_id, scope, report, native, scanned: ReportReading | None, documents, grounds):
     manifest = [
         ManifestDocument(
             doc.id, doc.sha256, doc.format, "report" if doc.role == "report" else "supporting"
@@ -480,8 +516,17 @@ def _rows(run_id, scope, report, native, scanned, documents, grounds):
         for doc in documents
     ]
     assertions = [item for source in grounds.values() for item in source.assertions]
-    report_rows = list(_reported_cells(native, scanned))
-    for _, raw, amount, locator, method in report_rows:
+    report_rows = list(_reported_cells(native, scanned.cells if scanned else []))
+    details = scanned.details if scanned else ()
+    reported = [
+        (raw, amount, locator, method, "RUB") for _, raw, amount, locator, method in report_rows
+    ]
+    reported.extend(
+        (cell.raw, format(cell.amount, "f"), cell.locator, "ocr", cell.unit)
+        for cell in details
+        if cell.amount is not None
+    )
+    for raw, amount, locator, method, unit in reported:
         if raw is not None and amount is not None:
             assertions.append(
                 ObservationAssertion(
@@ -492,7 +537,7 @@ def _rows(run_id, scope, report, native, scanned, documents, grounds):
                     kind="reported_value",
                     raw_value=raw,
                     normalized_value=amount,
-                    unit="RUB",
+                    unit=unit,
                     method=method,
                     locator=locator,
                 )
@@ -504,8 +549,8 @@ def _rows(run_id, scope, report, native, scanned, documents, grounds):
         if document.parse_status == "parsed":
             document.parse_status = "partial"
     components, unresolved = _amount_components(scope, documents, grounds, binding.evidence)
-    reported_refs = {
-        item.locator.model_dump_json(): item.id
+    reported_evidence = {
+        item.locator.model_dump_json(): item
         for item in binding.evidence
         if item.kind == "reported_value"
     }
@@ -566,8 +611,8 @@ def _rows(run_id, scope, report, native, scanned, documents, grounds):
             components=admitted,
         )
         observed, expected = calculation.admitted_sum(unit="RUB", completeness=complete)
-        reported_ref = reported_refs.get(locator.model_dump_json())
-        refs = [reported_ref] if reported_ref else []
+        source = reported_evidence.get(locator.model_dump_json())
+        refs = [source.id] if source else []
         if not refs:
             reasons.append(
                 Reason(
@@ -629,6 +674,9 @@ def _rows(run_id, scope, report, native, scanned, documents, grounds):
         issues = [issue for issue in issues if issue.id != total.root_issue_id]
         total.root_issue_id = mismatches[0].root_issue_id
         total.derived_mismatch = True
+    rows.extend(
+        _detail_row(cell, reported_evidence.get(cell.locator.model_dump_json())) for cell in details
+    )
     return rows, list(binding.evidence), issues
 
 
@@ -855,13 +903,12 @@ class V32Processor:
             if scanned.cells:
                 report.parse_status = "partial"
                 report.decision = _decision("include", "report_incomplete")
-        cells = scanned.cells if scanned else []
         rows, addressed, financial_issues = _rows(
             run.id,
             scope,
             report,
             native,
-            cells,
+            scanned,
             documents,
             grounds,
         )
@@ -873,9 +920,12 @@ class V32Processor:
         review_message = "Показатели КФЗ требуют проверки по оригиналу."
         if not rows and report.format in {"pdf", "png"} and not report.errors:
             review_message = "Не удалось прочитать выбранную строку КФЗ. Проверьте её на скане."
+        summary_rows = [row for row in rows if row.unit == "RUB" and row.parent_row_id is None]
         primary_issues = (
             []
-            if report_complete and rows and all(row.reported_value is not None for row in rows)
+            if report_complete
+            and summary_rows
+            and all(row.reported_value is not None for row in summary_rows)
             else [
                 PrimaryIssue(
                     id="report_needs_review",

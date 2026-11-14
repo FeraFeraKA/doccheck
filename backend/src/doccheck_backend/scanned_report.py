@@ -33,6 +33,28 @@ _CONTRACT = re.compile(
 _ROW = re.compile(r"^\s*(\d+)\s*этап\s*[,.:]?\s*(\d{4})\s*(?:г\.?|год)?[.:\s—–-]*$", re.I)
 _ROW_LOCATOR = re.compile(r"kfz-stage-([1-9][0-9]*)-([0-9]{4})")
 _MONEY = re.compile(r"-?(?:[0-9]+|[0-9]{1,4}(?: [0-9]{3})+)[,.][0-9]{2}")
+_QUANTITY = re.compile(r"-?[0-9]+(?:[,.][0-9]+)?")
+_LABOR_UNITS = {
+    "чел.-мес.": re.compile(r"(?:человеко|чел\.?)[\s-]*мес"),
+    "чел.-ч.": re.compile(r"(?:человеко|чел\.?)[\s-]*(?:час|ч\b)"),
+    "чел.-дн.": re.compile(r"(?:человеко|чел\.?)[\s-]*(?:д(?:ень|н))"),
+}
+_PAY = re.compile(r"\bзаработн\w*\s+плат\w*")
+_RESERVE = re.compile(r"\bрезерв\w*\s+отпуск\w*")
+_DETAIL_LABELS = {
+    "0200": {
+        "subtotal": "Заработная плата — всего",
+        "base": "Основная заработная плата",
+        "additional": "Дополнительная заработная плата",
+        "reserve": "Резерв отпусков",
+    },
+    "0300": {
+        "subtotal": "Страховые взносы с зарплаты — всего",
+        "base": "Страховые взносы с основной зарплаты",
+        "additional": "Страховые взносы с дополнительной зарплаты",
+        "reserve": "Страховые взносы по резерву отпусков",
+    },
+}
 
 
 @dataclass(frozen=True)
@@ -44,9 +66,24 @@ class ReportCell:
 
 
 @dataclass(frozen=True)
+class ReportDetailCell(ReportCell):
+    label: str
+    unit: str
+    parent_code: str | None
+
+
+@dataclass(frozen=True)
 class ReportReading:
     cells: list[ReportCell]
     complete: bool
+    details: tuple[ReportDetailCell, ...] = ()
+
+
+@dataclass(frozen=True)
+class HeaderGroup:
+    start: int
+    end: int
+    bottom: int
 
 
 def _peaks(values: np.ndarray, threshold: float) -> list[int]:
@@ -201,49 +238,122 @@ def _column_tracks(ink: np.ndarray, horizontals: list[int]) -> list[int]:
     ]
 
 
-def _headers(image: Image.Image, ink: np.ndarray, xs: list[int], ys: list[int]) -> dict[str, int]:
+def _header_tracks(ink: np.ndarray, xs: list[int], top: int, bottom: int) -> list[int]:
+    band = ink[top + 4 : bottom - 4]
+    if len(band) < 20:
+        return []
+    rules = _peaks(band.sum(axis=0), len(band) * 0.78)
+    tolerance = max(6, ink.shape[1] // 280)
+    return [i for i, x in enumerate(xs) if any(abs(x - rule) <= tolerance for rule in rules)]
+
+
+def _header_label(
+    image: Image.Image, xs: list[int], start: int, end: int, top: int, bottom: int
+) -> str:
+    box = (xs[start] + 6, top + 5, xs[end] - 6, bottom - 4)
+    return " ".join(recognize_crop(image, box, mode=6).casefold().split())
+
+
+def _headers(
+    image: Image.Image, ink: np.ndarray, xs: list[int], ys: list[int]
+) -> dict[str, HeaderGroup]:
     """Find article groups by title and code, then identify their total subcolumn."""
     content_top = ys[0]
-    candidates = {}
+    candidates: dict[str, dict[int, HeaderGroup]] = {}
     # Use the vertical rules that continue through the first header band to
     # locate the merged titles. A single-level header uses the same logic.
     for edge in ys[1:3]:
-        band = ink[content_top + 4 : edge - 4]
-        if len(band) < 20:
-            continue
-        rules = _peaks(band.sum(axis=0), len(band) * 0.78)
-        main = [
-            i
-            for i, x in enumerate(xs)
-            if any(abs(x - rule) <= max(6, image.width // 280) for rule in rules)
-        ]
-        found = {}
+        main = _header_tracks(ink, xs, content_top, edge)
         for start, end in zip(main, main[1:]):
-            box = (xs[start] + 6, content_top + 5, xs[end] - 6, edge - 4)
-            text = " ".join(recognize_crop(image, box, mode=6).casefold().split())
+            group = HeaderGroup(start, end, edge)
+            text = _header_label(image, xs, start, end, content_top, edge)
             if text.strip(" .:") == "итого":
-                found.setdefault("total", set()).add(start)
+                candidates.setdefault("total", {}).setdefault(start, group)
             for code, pattern in _GROUP_HEADER.items():
                 if not re.search(rf"(?<!\d){code}(?!\d)", text) or not pattern.search(text):
                     continue
                 if end == start + 1:
-                    found.setdefault(code, set()).add(start)
+                    candidates.setdefault(code, {}).setdefault(start, group)
                 elif code in _AGGREGATES:
                     for header_bottom in ys[2:5]:
                         if header_bottom - edge < 45:
                             continue
-                        label_box = (xs[start] + 6, edge + 5, xs[start + 1] - 6, header_bottom - 5)
-                        label = " ".join(
-                            recognize_crop(image, label_box, mode=6).casefold().split()
-                        )
+                        label = _header_label(image, xs, start, start + 1, edge, header_bottom)
                         if pattern.search(label) and re.search(r"\bвсего\b", label):
-                            found.setdefault(code, set()).add(start)
+                            candidates.setdefault(code, {}).setdefault(start, group)
                             break
-        for code, indices in found.items():
-            candidates.setdefault(code, set()).update(indices)
         if all(code in candidates for code in (*_GROUP_HEADER, "total")):
             break
-    return {code: next(iter(indices)) for code, indices in candidates.items() if len(indices) == 1}
+    return {
+        code: next(iter(groups.values())) for code, groups in candidates.items() if len(groups) == 1
+    }
+
+
+def _labor_column(
+    image: Image.Image,
+    ink: np.ndarray,
+    xs: list[int],
+    ys: list[int],
+    groups: dict[str, HeaderGroup],
+) -> tuple[int, str] | None:
+    top, bottom = ys[0], ys[min(3, len(ys) - 1)]
+    tracks = _header_tracks(ink, xs, top, bottom)
+    occupied = {col for group in groups.values() for col in range(group.start, group.end)}
+    candidates = []
+    for col, end in zip(tracks, tracks[1:]):
+        if col < 2 or end != col + 1 or col in occupied:
+            continue
+        label = _header_label(image, xs, col, end, top, bottom)
+        if re.search(r"\bтрудо[её]мкост\w*", label):
+            candidates.extend(
+                (col, unit) for unit, pattern in _LABOR_UNITS.items() if pattern.search(label)
+            )
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def _pay_leaf(label: str) -> str | None:
+    if label.strip(" .:") in {"всего", "итого"}:
+        return "subtotal"
+    if _PAY.search(label):
+        words = set(re.findall(r"\b(?:основн|дополн)\w*", label))
+        if len(words) == 1:
+            return "base" if next(iter(words)).startswith("основн") else "additional"
+    return None
+
+
+def _pay_breakdown(
+    image: Image.Image, ink: np.ndarray, xs: list[int], ys: list[int], group: HeaderGroup
+) -> dict[str, int]:
+    edges = [y for y in ys if y >= group.bottom][:4]
+    for band, (top, bottom) in enumerate(zip(edges, edges[1:])):
+        # The first subcolumn is the already identified article total.
+        tracks = [i for i in _header_tracks(ink, xs, top, bottom) if group.start < i <= group.end]
+        found: dict[str, list[int]] = {}
+        for col, end in zip(tracks, tracks[1:]):
+            label = _header_label(image, xs, col, end, top, bottom)
+            if end == col + 1:
+                kind = "reserve" if _RESERVE.search(label) else _pay_leaf(label)
+                if kind and kind != "subtotal":
+                    found.setdefault(kind, []).append(col)
+                continue
+            if not _PAY.search(label) or band + 2 >= len(edges):
+                continue
+            leaf_bottom = edges[band + 2]
+            leaf_tracks = set(_header_tracks(ink, xs, bottom, leaf_bottom))
+            for leaf in range(col, end):
+                if leaf not in leaf_tracks or leaf + 1 not in leaf_tracks:
+                    continue
+                text = _header_label(image, xs, leaf, leaf + 1, bottom, leaf_bottom)
+                if not text:
+                    # Sparse layout handles short labels missed by block OCR.
+                    text = recognize_crop(
+                        image, (xs[leaf], bottom, xs[leaf + 1], leaf_bottom), mode=11
+                    ).casefold()
+                if kind := _pay_leaf(text):
+                    found.setdefault(kind, []).append(leaf)
+        if found:
+            return {kind: cols[0] for kind, cols in found.items() if len(cols) == 1}
+    return {}
 
 
 def _table_rules(image: Image.Image) -> tuple[np.ndarray, list[int], list[int]]:
@@ -360,7 +470,9 @@ def _row_band(
     return candidates[0] if len(candidates) == 1 else None
 
 
-def _read_amount(image: Image.Image, box: PixelBox) -> tuple[str | None, Decimal | None]:
+def _read_amount(
+    image: Image.Image, box: PixelBox, pattern: re.Pattern[str] = _MONEY
+) -> tuple[str | None, Decimal | None]:
     left, top, right, bottom = box
     readings = []
     for pad in (3, 5):
@@ -369,7 +481,7 @@ def _read_amount(image: Image.Image, box: PixelBox) -> tuple[str | None, Decimal
                 image, (left + pad, top + pad, right - pad, bottom - pad), numeric=True
             ).split()
         )
-        if _MONEY.fullmatch(raw):
+        if pattern.fullmatch(raw):
             readings.append((raw, Decimal(raw.replace(" ", "").replace(",", "."))))
     if len(readings) == 2 and readings[0][1] == readings[1][1]:
         return readings[0]
@@ -426,10 +538,45 @@ def read_report_row(
     top, bottom, year = band
     if period[0][:4] != year or period[1][:4] != year:
         return None
-    cols = _headers(image, ink, xs, ys)
+    header_edges = [y for y in ys if y <= top]
+    groups = _headers(image, ink, xs, header_edges)
     cells = []
-    for code, col in cols.items():
-        box = (xs[col], top, xs[col + 1], bottom)
+    for code, group in groups.items():
+        box = (xs[group.start], top, xs[group.start + 1], bottom)
         raw, amount = _read_amount(image, box)
         cells.append(ReportCell(code, page_locator(page, image, box), raw, amount))
-    return ReportReading(cells, {*_GROUP_HEADER, "total"} <= cols.keys())
+    details = []
+    if labor := _labor_column(image, ink, xs, header_edges, groups):
+        col, unit = labor
+        box = (xs[col], top, xs[col + 1], bottom)
+        raw, amount = _read_amount(image, box, _QUANTITY)
+        details.append(
+            ReportDetailCell(
+                "labor_intensity",
+                page_locator(page, image, box),
+                raw,
+                amount,
+                "Трудоёмкость",
+                unit,
+                None,
+            )
+        )
+    for code, labels in _DETAIL_LABELS.items():
+        if (group := groups.get(code)) is None or group.end == group.start + 1:
+            continue
+        breakdown = _pay_breakdown(image, ink, xs, header_edges, group)
+        for kind, col in sorted(breakdown.items(), key=lambda item: item[1]):
+            box = (xs[col], top, xs[col + 1], bottom)
+            raw, amount = _read_amount(image, box)
+            details.append(
+                ReportDetailCell(
+                    f"{code}-{kind}",
+                    page_locator(page, image, box),
+                    raw,
+                    amount,
+                    labels[kind],
+                    "RUB",
+                    code,
+                )
+            )
+    return ReportReading(cells, {*_GROUP_HEADER, "total"} <= groups.keys(), tuple(details))

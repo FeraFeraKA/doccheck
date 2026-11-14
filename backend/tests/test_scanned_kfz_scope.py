@@ -1,15 +1,13 @@
-import shutil
-import subprocess
 from hashlib import sha256
 from uuid import uuid4
 
 import pytest
-from PIL import ImageFont
 from scanned_kfz_fixture import (
     DISTRACTOR_AMOUNTS,
     SYNTHETIC_AMOUNTS,
     SYNTHETIC_CONTRACT,
     ScanRow,
+    require_raster_ocr,
     write_scanned_kfz,
     write_support,
 )
@@ -30,18 +28,8 @@ TARGET_ROW = ScanRow(3, 2034, SYNTHETIC_AMOUNTS)
 
 
 @pytest.fixture(scope="module", autouse=True)
-def require_raster_ocr():
-    if shutil.which("tesseract") is None:
-        pytest.skip("Tesseract is required for the raster KФЗ fixture")
-    installed = subprocess.run(
-        ["tesseract", "--list-langs"], capture_output=True, text=True, timeout=10, check=True
-    )
-    if not {"rus", "eng"} <= set(installed.stdout.splitlines()):
-        pytest.skip("Tesseract rus and eng data are required for the raster KФЗ fixture")
-    try:
-        ImageFont.truetype("DejaVuSans.ttf", 30)
-    except OSError:
-        pytest.skip("DejaVu Sans is required to generate the raster KФЗ fixture")
+def raster_ocr_available():
+    require_raster_ocr()
 
 
 def _read_scan(path):
@@ -95,6 +83,7 @@ def test_selects_the_only_ruled_row_from_explicit_report_period(tmp_path):
     )
 
     assert reading is not None and reading.complete
+    assert not reading.details
     assert {cell.code: str(cell.amount) for cell in reading.cells} == {
         "0200": "1350.00",
         "0300": "315.00",

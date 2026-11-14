@@ -1277,6 +1277,19 @@
           ],
           "default": null,
           "title": "Is Aggregate"
+        },
+        "parent_row_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Row Id"
         }
       },
       "required": [
