@@ -462,9 +462,15 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
             native_report = read_native_document(report_path, "pdf")
             if not native_report.observations and {
                 issue.code for issue in native_report.issues
-            } <= {"no_native_text"}:
+            } <= {"no_native_text", "unsupported_pdf_visibility"}:
+                # Native extraction may decline a valid CropBox; both OCR
+                # implementations normalize to PDFium's visible page frame.
                 scan = read_scan(report_path, "pdf")
-                parsed_scan = parse_scan_report(scan.observations) if not scan.issues else None
+                parsed_scan = (
+                    parse_scan_report(scan.observations)
+                    if all(issue.code == "ocr_no_text" for issue in scan.issues)
+                    else None
+                )
                 if parsed_scan is None:
                     return _failure(
                         run,
@@ -788,7 +794,7 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
         document = documents[file_id]
         if document.decision.state != "needs_review":
             continue
-        contract = select_scan_contract(source_items)
+        contract = select_scan_contract(source_items, require_one_location=True)
         if contract is None or contract[0] != scope.contract_number:
             continue
         _, item = contract
