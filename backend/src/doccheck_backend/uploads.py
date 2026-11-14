@@ -200,7 +200,9 @@ def store_run(
                 )
                 if already_submitted is None:
                     pending = connection.scalar(
-                        select(func.count()).select_from(Run).where(
+                        select(func.count())
+                        .select_from(Run)
+                        .where(
                             Run.web_session_id.is_not(None),
                             Run.status.in_(("queued", "processing")),
                         )

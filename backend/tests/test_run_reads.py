@@ -422,6 +422,7 @@ def test_download_closes_original_when_streaming_stops(monkeypatch, tmp_path, fa
                 raise asyncio.CancelledError
 
     original = Original(b"data")
+
     def open_original(_engine, _root, _run_id, _document_id, *, web_session=None):
         assert web_session is None
         return original, 4, "example.pdf"

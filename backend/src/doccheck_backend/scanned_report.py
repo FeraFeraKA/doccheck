@@ -143,7 +143,8 @@ def _simple_table(
         result.append(ReportCell(code, page_locator(page, image, line.box), raw, amount))
     return ReportReading(
         result,
-        not conflicts and _complete_codes({cell.code for cell in result})
+        not conflicts
+        and _complete_codes({cell.code for cell in result})
         and len(result) == len(amounts),
     )
 
@@ -196,8 +197,10 @@ def _numeric_header_code(image: Image.Image, box: PixelBox, code: str) -> bool:
         for width in (2.4, 2.8):
             start = max(x0, x1 - round(height * width))
             code_box = (
-                left + start, max(top, top + y0 - 5),
-                left + end, min(bottom, top + y1 + 5),
+                left + start,
+                max(top, top + y0 - 5),
+                left + end,
+                min(bottom, top + y1 + 5),
             )
             if recognize_crop(image, code_box, mode=7, numeric=True).strip() == code:
                 return True
@@ -264,8 +267,10 @@ def _headers(image: Image.Image, ink: np.ndarray, xs: list[int], ys: list[int]) 
             candidates.setdefault(code, set()).update(indices)
     return {
         **dict.fromkeys(sorted(uncertain), -1),
-        **{code: next(iter(indices)) if len(indices) == 1 else -1
-           for code, indices in candidates.items()},
+        **{
+            code: next(iter(indices)) if len(indices) == 1 else -1
+            for code, indices in candidates.items()
+        },
     }
 
 

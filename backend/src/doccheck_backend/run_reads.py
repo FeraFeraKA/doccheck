@@ -248,8 +248,13 @@ def get_run_fragment(
     web_session: UUID | None = None,
 ) -> Evidence:
     evidence, stream, _, _ = _open_fragment(
-        engine, root, run_id, document_id, evidence_id,
-        path_segment=path_segment, web_session=web_session
+        engine,
+        root,
+        run_id,
+        document_id,
+        evidence_id,
+        path_segment=path_segment,
+        web_session=web_session,
     )
     stream.close()
     return evidence

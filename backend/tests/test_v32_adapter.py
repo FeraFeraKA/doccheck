@@ -143,9 +143,7 @@ def test_adapter_binds_new_article_to_addressed_code(
         assert any(reason.code == "observed_difference" for reason in row.reasons)
         sources = {item.id: item for item in result.evidence}
         (component,) = row.calculation.components
-        assert any(
-            sources[ref].raw_value == "Код статьи: 0500" for ref in component.article_refs
-        )
+        assert any(sources[ref].raw_value == "Код статьи: 0500" for ref in component.article_refs)
 
 
 def test_worker_adapter_infers_scope_and_anchors_partial_sum(uploaded_files, tmp_path, monkeypatch):

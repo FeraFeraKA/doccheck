@@ -247,7 +247,7 @@ def _read_pdf_report(
         category = report_category(label)
         if category not in _ARTICLES or not isinstance(item.locator, PageLocator):
             continue
-        amount = _PDF_MONEY.fullmatch(text[len(label):])
+        amount = _PDF_MONEY.fullmatch(text[len(label) :])
         if amount is None or category in evidence:
             return None
         value = decision_rules.parse_amount(amount[1])
@@ -360,7 +360,8 @@ def _extended_source_group(
     total, _ = ground_total(NativeDocument(observations), template=False, format_=file_format)
     if total is not None and isinstance(total.locator, SheetLocator):
         observations = tuple(
-            item for item in observations
+            item
+            for item in observations
             if isinstance(item.locator, SheetLocator) and item.locator.sheet == total.locator.sheet
         )
     category, articles = read_source_article(observations)

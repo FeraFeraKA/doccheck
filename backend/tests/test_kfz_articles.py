@@ -82,9 +82,7 @@ def test_scanned_column_requires_a_code_consistent_with_the_label(monkeypatch):
         216: "Подготовка и освоение производства 0400 / 0700",
         406: "Итого",
     }
-    monkeypatch.setattr(
-        scanned_report, "recognize_crop", lambda _, box, **kwargs: texts[box[0]]
-    )
+    monkeypatch.setattr(scanned_report, "recognize_crop", lambda _, box, **kwargs: texts[box[0]])
     checked = []
 
     def numeric_read(_, box, code):
@@ -93,7 +91,10 @@ def test_scanned_column_requires_a_code_consistent_with_the_label(monkeypatch):
 
     monkeypatch.setattr(scanned_report, "_numeric_header_code", numeric_read)
     assert scanned_report._headers(image, ink, xs, ys) == {
-        "0400": -1, "0600": 0, "0700": -1, "total": 2,
+        "0400": -1,
+        "0600": 0,
+        "0700": -1,
+        "total": 2,
     }
     assert checked == [(26, "0600")]
 
@@ -165,8 +166,10 @@ def test_common_total_cannot_be_attributed_to_first_code_in_a_table(tmp_path, se
         ("18.00", "17.99", "observed_difference", "0.01 ₽ больше"),
         ("17.99", "18.00", "observed_difference", "0.01 ₽ меньше"),
         (
-            "100000000000000000000000000.00", "-0.01",
-            "observed_difference", "100000000000000000000000000.01 ₽ больше",
+            "100000000000000000000000000.00",
+            "-0.01",
+            "observed_difference",
+            "100000000000000000000000000.01 ₽ больше",
         ),
     ],
 )

@@ -31,8 +31,7 @@ def compare_observed_rubles(
     return Reason(
         code="observed_difference",
         message=(
-            f"Сумма в КФЗ на {difference.copy_abs():.2f} ₽ {relation}"
-            " суммы по доступной первичке."
+            f"Сумма в КФЗ на {difference.copy_abs():.2f} ₽ {relation} суммы по доступной первичке."
         ),
         evidence_refs=evidence_refs,
     )

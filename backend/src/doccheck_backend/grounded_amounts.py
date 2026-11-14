@@ -380,7 +380,8 @@ def _article_field_lines(observations: tuple[Observation, ...]) -> dict[int, str
             continue
         right = positions.get((group, row, column + 1))
         amount_columns = {
-            c for (block, r, c), (_, raw) in positions.items()
+            c
+            for (block, r, c), (_, raw) in positions.items()
             if block == group and r == row and _AMOUNT_CELL_HEADER.fullmatch(raw)
         }
         if not amount_columns:
@@ -395,8 +396,10 @@ def _article_field_lines(observations: tuple[Observation, ...]) -> dict[int, str
             if any(_FINAL_CELL.fullmatch(raw) for _, raw in values.values()):
                 break
             amounts = [
-                index for c, (index, raw) in values.items()
-                if c in amount_columns and (
+                index
+                for c, (index, raw) in values.items()
+                if c in amount_columns
+                and (
                     observations[index].amount is not None
                     or _text_amount(raw, rub_column=True)[0] is not None
                 )
@@ -512,7 +515,8 @@ def ground_document(
     )
     if not template and total is not None and isinstance(total.locator, SheetLocator):
         observations = tuple(
-            item for item in observations
+            item
+            for item in observations
             if isinstance(item.locator, SheetLocator) and item.locator.sheet == total.locator.sheet
         )
     category, article_evidence, guarded = _classify_observations(
