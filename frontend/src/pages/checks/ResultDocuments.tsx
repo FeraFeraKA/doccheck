@@ -62,13 +62,12 @@ export function ResultDocuments({
     initialDocumentId: params.get('document') ?? undefined,
     initialEvidenceId: params.get('evidence') ?? undefined,
     initialScopeOnly: params.get('anchor') === 'report-row',
-    onSelectionChange(documentId, evidenceId, scopeOnly) {
+    onSelectionChange(documentId, evidenceId) {
       const next = new URLSearchParams(params);
       next.set('document', documentId);
       if (evidenceId) next.set('evidence', evidenceId);
       else next.delete('evidence');
-      if (scopeOnly) next.set('anchor', 'report-row');
-      else next.delete('anchor');
+      next.delete('anchor');
       updateSourceQuery(next);
     },
     onClose() {

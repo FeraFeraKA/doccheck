@@ -8,9 +8,8 @@ import './source-context.css';
 const tabs = [['source', 'Источник'], ['rule', 'Правило проверки']] as const;
 type Panel = (typeof tabs)[number][0];
 
-export function SourceContext({ row, picker, children, compact = false }: {
+export function SourceContext({ row, children, compact = false }: {
   row: ReviewResult['rows'][number];
-  picker: ReactNode;
   compact?: boolean;
   children: (active: boolean) => ReactNode;
 }) {
@@ -48,7 +47,6 @@ export function SourceContext({ row, picker, children, compact = false }: {
     </div>
     <div className="source-context-preview" role="tabpanel" id={id + '-source'}
       aria-labelledby={id + '-source-tab'} hidden={panel !== 'source'}>
-      {picker}
       {children(panel === 'source')}
     </div>
     <div className="source-context-rule" role="tabpanel" id={id + '-rule'} tabIndex={0}

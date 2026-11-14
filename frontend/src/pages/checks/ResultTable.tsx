@@ -74,15 +74,20 @@ export function ResultTable({
             const messages = new Set([
               rowExplanation(row), ...row.reasons.map(({ message }) => message), row.completeness.reason,
             ]);
-            const rowEvidence = new Set([
-              ...row.reported_evidence_refs,
-              ...components.flatMap((component) => evidenceFields.flatMap(([field]) => component[field] ?? [])),
-            ]);
-            const issueSources = [...new Set(issue?.evidence_refs)].filter((id) => !rowEvidence.has(id));
             const reportSource = row.reported_evidence_refs.find((id) => {
               const item = evidenceById.get(id);
               return item && documentsById.has(item.document_id);
             });
+            const shownSources = new Set(
+              components.flatMap((component) => evidenceFields.flatMap(([field]) => component[field] ?? [])),
+            );
+            if (reportSource && row.reported_value !== null) shownSources.add(reportSource);
+            const otherSources = [...new Set([
+              ...(issue?.evidence_refs ?? []),
+              ...row.reasons.flatMap(({ evidence_refs }) => evidence_refs),
+              ...row.completeness.evidence_refs,
+              ...row.reported_evidence_refs,
+            ])].filter((id) => !shownSources.has(id));
             const sourceDocuments = new Set(components.flatMap((component) =>
               component.amount_refs.flatMap((id) => {
                 const item = evidenceById.get(id);
@@ -138,12 +143,12 @@ export function ResultTable({
                     <p><strong>{statusLabels[row.status]}.</strong>{' '}
                       {[...messages].join(' ')}
                     </p>
-                    {issue && (!messages.has(issue.message) || issueSources.length > 0) && (
+                    {(otherSources.length > 0 || (issue && !messages.has(issue.message))) && (
                       <div className="indicator-issue">
-                        {!messages.has(issue.message) && <p>{issue.message}</p>}
-                        {issueSources.length > 0 && (
-                          <ul className="indicator-addresses" aria-label="Источники замечания">
-                            {issueSources.map((id) => {
+                        {issue && !messages.has(issue.message) && <p>{issue.message}</p>}
+                        {otherSources.length > 0 && (
+                          <ul className="indicator-addresses" aria-label="Источники проверки">
+                            {otherSources.map((id) => {
                               const item = evidenceById.get(id);
                               const document = item && documentsById.get(item.document_id);
                               return <li key={id}>{item && document ? (
