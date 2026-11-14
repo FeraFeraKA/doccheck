@@ -936,8 +936,14 @@ class V32Processor:
                             scanned = reading
                 except OcrError:
                     _file_error(report, "source_unreadable")
+        documents_by_id = {document.id: document for document in documents}
         for document in documents:
             if copy := copies.get(document.id):
+                representative = documents_by_id[copy.duplicate_of]
+                if not document.errors and any(
+                    error.code == "encrypted_pdf" for error in representative.errors
+                ):
+                    _file_error(document, "encrypted_pdf")
                 document.duplicate_of = copy.duplicate_of
                 document.decision = copy.decision
 

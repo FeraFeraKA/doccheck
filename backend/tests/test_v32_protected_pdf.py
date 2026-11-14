@@ -1,3 +1,4 @@
+import json
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
@@ -6,6 +7,7 @@ from uuid import uuid4
 import pytest
 from docx import Document
 from fastapi.testclient import TestClient
+from jsonschema import Draft202012Validator
 from openpyxl import Workbook
 from pypdf import PdfWriter
 
@@ -59,6 +61,7 @@ def _run(
     primary: list[tuple[str, bytes]],
     *,
     explicit_scope: bool = False,
+    fixed_ids: dict[str, str] | None = None,
 ):
     run_id = uuid4()
     run_dir = root / str(run_id)
@@ -68,7 +71,7 @@ def _run(
         ("report", report),
         *(("supporting", item) for item in primary),
     ]:
-        document_id = uuid4().hex
+        document_id = (fixed_ids or {}).get(name, uuid4().hex)
         (run_dir / document_id).write_bytes(contents)
         documents.append(
             {
@@ -129,6 +132,48 @@ def test_protected_primary_preserves_other_sources_and_unverified_rows(
     )
 
 
+@pytest.mark.parametrize("duplicate_first", [False, True])
+def test_duplicate_protected_primary_is_excluded_and_marked_unreadable(tmp_path, duplicate_first):
+    report, readable = _native_inputs("TST-62", "128.60")
+    locked = _locked_pdf("synthetic-password-only", "AES-256")
+    original = ("protected-a.pdf", locked)
+    duplicate = ("protected-b.pdf", locked)
+    primary = (
+        [duplicate, ("act.docx", readable), original]
+        if duplicate_first
+        else [original, ("act.docx", readable), duplicate]
+    )
+    outcome = _run(
+        tmp_path,
+        ("report.xlsx", report),
+        primary,
+        fixed_ids={"protected-a.pdf": "a" * 32, "protected-b.pdf": "b" * 32},
+    )
+
+    assert outcome.status == "completed_with_issues" and outcome.result is not None
+    originals = {doc.name: doc for doc in outcome.result.documents}
+    representative = originals["protected-a.pdf"]
+    copy = originals["protected-b.pdf"]
+    assert representative.parse_status == copy.parse_status == "error"
+    assert [error.code for error in representative.errors] == ["encrypted_pdf"]
+    assert [error.code for error in copy.errors] == ["encrypted_pdf"]
+    assert "парол" in copy.errors[0].message.lower()
+    assert representative.errors[0].id != copy.errors[0].id
+    assert copy.duplicate_of == representative.id
+    assert copy.decision.state == "exclude" and copy.decision.reason_code == "byte_duplicate"
+    row = next(row for row in outcome.result.rows if row.id == "general_admin")
+    assert row.status == "unverified" and row.expected_value is None and row.delta is None
+    assert row.observed_evidence_sum == "128.60"
+    assert row.calculation is not None and len(row.calculation.components) == 1
+
+    schema = json.loads(
+        (Path(__file__).resolve().parents[2] / "contracts/check-result.v1.schema.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    Draft202012Validator(schema).validate(outcome.model_dump(mode="json"))
+
+
 @pytest.mark.parametrize(("explicit_scope", "algorithm"), [(False, "RC4-128"), (True, "AES-256")])
 def test_protected_report_fails_with_safe_specific_error(tmp_path, explicit_scope, algorithm):
     password = "synthetic-password-TST-62"
@@ -179,7 +224,7 @@ def test_worker_persists_protected_pdf_outcome_and_readable_original(
     report_file = ("report.pdf", locked) if protected_report else ("report.xlsx", report)
     documents = [("act.docx", readable)]
     if not protected_report:
-        documents.append(("protected.pdf", locked))
+        documents.extend([("protected-a.pdf", locked), ("protected-b.pdf", locked)])
     settings = Settings(database_url, upload_root=tmp_path / "uploads")
     with TestClient(create_app(settings)) as client:
         response = client.post(
@@ -210,10 +255,17 @@ def test_worker_persists_protected_pdf_outcome_and_readable_original(
             assert state.json()["status"] == "completed_with_issues"
             assert findings.status_code == 200
             result = findings.json()
-            protected = next(
-                item for item in result["documents"] if item["name"] == "protected.pdf"
-            )
-            assert protected["errors"][0]["code"] == "encrypted_pdf"
+            protected = [
+                item for item in result["documents"] if item["name"].startswith("protected-")
+            ]
+            assert len(protected) == 2
+            assert all(item["parse_status"] == "error" for item in protected)
+            assert all(item["errors"][0]["code"] == "encrypted_pdf" for item in protected)
+            copy = next(item for item in protected if item["duplicate_of"] is not None)
+            representative = next(item for item in protected if item["duplicate_of"] is None)
+            assert copy["duplicate_of"] == representative["id"]
+            assert copy["decision"]["state"] == "exclude"
+            assert copy["decision"]["reason_code"] == "byte_duplicate"
             row = next(item for item in result["rows"] if item["id"] == "general_admin")
             assert row["status"] == "unverified" and row["delta"] is None
             assert row["observed_evidence_sum"] == "128.60"
