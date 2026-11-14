@@ -15,7 +15,7 @@ RowStatus = Literal["verified", "discrepancy", "unverified"]
 FileFormat = Literal["pdf", "png", "xlsx", "docx"]
 FileDecisionState = Literal["include", "exclude", "needs_review", "parse_error"]
 EvidenceKind = Literal[
-    "reported_value", "amount", "contract", "period", "article", "document_identity"
+    "reported_value", "amount", "contract", "period", "article", "document_identity", "stage"
 ]
 _DECIMAL_PATTERN = re.compile(r"^-?[0-9]+(?:\.[0-9]+)?(?![\s\S])")
 _RUB_PATTERN = re.compile(r"^(?!-0+\.00(?![\s\S]))-?[0-9]+\.[0-9]{2}(?![\s\S])")
@@ -27,7 +27,7 @@ _DECIMAL_FIELDS = ("reported_value", "expected_value", "observed_evidence_sum", 
 _COMPLETED_JOB_STATES = ("completed", "completed_with_issues")
 _UNSUPPORTED_FORMAT = "unsupported_format"
 PageLine = tuple[str, int, int]
-ReadingKind = Literal["numeric", "contract", "period", "article", "document_identity"]
+ReadingKind = Literal["numeric", "contract", "period", "article", "document_identity", "stage"]
 DateBounds = tuple[str | None, str | None]
 Reading = tuple[str | None, Decimal | str | DateBounds]
 Digest = Annotated[
@@ -312,7 +312,7 @@ class Completeness(ContractModel):
     )
 
     state: Literal["complete", "incomplete", "unknown"]
-    basis: Literal["manifest", "user_declaration", "dataset_fixture", "none"]
+    basis: Literal["manifest", "user_declaration", "dataset_fixture", "uploaded_package", "none"]
     reason: Text
     evidence_refs: list[Text]
 
@@ -348,7 +348,12 @@ class Calculation(ContractModel):
         amounts = [component.amount for component in self.components]
         _check_amount_unit(unit, amounts)
         if not amounts:
-            return None, None
+            zero_for_missing = (
+                unit == "RUB"
+                and completeness.state == "complete"
+                and completeness.basis == "uploaded_package"
+            )
+            return None, "0.00" if zero_for_missing else None
         observed = format(_sum_exact_amounts(amounts), "f")
         return observed, observed if completeness.state == "complete" else None
 
@@ -434,12 +439,28 @@ class ResultRow(ContractModel):
                         "properties": {
                             "calculation": {
                                 "required": ["operation"],
-                                "properties": {
-                                    "operation": {"const": "sum"},
-                                    "components": {"minItems": 1},
-                                },
+                                "properties": {"operation": {"const": "sum"}},
                             },
-                        }
+                        },
+                        "anyOf": [
+                            {
+                                "properties": {
+                                    "calculation": {"properties": {"components": {"minItems": 1}}}
+                                }
+                            },
+                            {
+                                "properties": {
+                                    "unit": {"const": "RUB"},
+                                    "expected_value": {"const": "0.00"},
+                                    "completeness": {
+                                        "properties": {
+                                            "basis": {"const": "uploaded_package"},
+                                        }
+                                    },
+                                    "calculation": {"properties": {"components": {"maxItems": 0}}},
+                                }
+                            },
+                        ],
                     },
                 },
                 {
@@ -471,6 +492,7 @@ class ResultRow(ContractModel):
     root_issue_id: Text | None
     derived_mismatch: StrictBool
     is_aggregate: StrictBool | None = Field(default=None, exclude_if=lambda value: value is None)
+    parent_row_id: Text | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @model_validator(mode="after")
     def check_totals(self) -> Self:
@@ -489,9 +511,14 @@ class ResultRow(ContractModel):
         if self.expected_value is not None:
             if self.completeness.state != "complete":
                 raise ValueError("an expected value requires complete coverage")
-            if self.calculation.operation != "sum" or self.observed_evidence_sum is None:
+            if self.calculation.operation != "sum":
                 raise ValueError("an expected value requires a supported calculation with evidence")
-            if Decimal(self.expected_value) != Decimal(self.observed_evidence_sum):
+            _, expected = self.calculation.admitted_sum(
+                unit=self.unit, completeness=self.completeness
+            )
+            if expected is None:
+                raise ValueError("an expected value requires a supported calculation with evidence")
+            if Decimal(self.expected_value) != Decimal(expected):
                 raise ValueError("an expected sum must equal the sum of admitted components")
         if self.derived_mismatch and (self.status != "discrepancy" or self.root_issue_id is None):
             raise ValueError("a derived mismatch requires a discrepancy and a root issue")
@@ -586,7 +613,8 @@ class CheckResult(ContractModel):
         error_ids = set(file_errors)
         if len(error_ids) != len(file_errors):
             raise ValueError("file error IDs must be unique")
-        if len({row.id for row in self.rows}) != len(self.rows):
+        rows_by_id = {row.id: row for row in self.rows}
+        if len(rows_by_id) != len(self.rows):
             raise ValueError("row IDs must be unique")
         report = documents.get(self.scope.report_document_id)
         if report is None or report.role != "report":
@@ -615,6 +643,10 @@ class CheckResult(ContractModel):
                 raise ValueError("a byte copy must reference a representative with the same digest")
         addresses = _EvidenceIndex(self.evidence)
         for row in self.rows:
+            if row.parent_row_id is not None:
+                parent = rows_by_id.get(row.parent_row_id)
+                if parent is None or parent.parent_row_id is not None or parent.unit != row.unit:
+                    raise ValueError("a detail must reference a top-level row with the same unit")
             self._check_row_refs(row, report, documents, evidence, addresses)
             if row.root_issue_id is not None and row.root_issue_id not in primary:
                 raise ValueError("row root issue must refer to a primary issue in this result")

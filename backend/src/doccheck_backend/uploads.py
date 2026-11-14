@@ -222,7 +222,7 @@ def _store_pack_file(root: Path, item: _PackFile, destination: Path) -> str:
         return _copy_file(item.upload.file, destination)
     if item.source_id is None or item.original is None:
         raise ValueError("Retained file must reference a saved original")
-    stream, _ = run_reads._open_original(
+    stream, _ = run_reads.open_run_original(
         root, item.source_id, str(item.original["id"]), item.original
     )
     with stream:
