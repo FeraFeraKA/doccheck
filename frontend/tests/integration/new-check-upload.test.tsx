@@ -5,6 +5,21 @@ import { NewCheck } from '../../src/pages/checks';
 
 afterEach(() => vi.unstubAllGlobals());
 
+function mockUpload(...responses: Array<Response | Promise<Response> | Error>) {
+  const pending = [...responses];
+  const upload = vi.fn<typeof fetch>().mockImplementation(async () => {
+    const next = pending.shift();
+    if (next instanceof Error) throw next;
+    if (!next) throw new Error('Unexpected upload');
+    return await next;
+  });
+  vi.stubGlobal('fetch', (url: RequestInfo | URL, init?: RequestInit) =>
+    init?.method === 'POST' ? upload(url, init) : Promise.resolve(
+      Response.json({ items: [], next_cursor: null }),
+    ));
+  return upload;
+}
+
 function RunCard() {
   const { id } = useParams();
   return <h1>Карточка {id}</h1>;
@@ -38,11 +53,10 @@ function accept(id: string) {
   });
 }
 
-it('отправляет только два поля, блокирует двойное действие и открывает принятый ID', async () => {
+it('отправляет только два поля, блокирует двойное действие и оставляет форму готовой к следующему комплекту', async () => {
   let finish: ((response: Response) => void) | undefined;
   const pending = new Promise<Response>((resolve) => { finish = resolve; });
-  const fetchMock = vi.fn<typeof fetch>().mockReturnValueOnce(pending);
-  vi.stubGlobal('fetch', fetchMock);
+  const fetchMock = mockUpload(pending, accept('second-run'));
 
   renderWizard();
   selectPacket();
@@ -50,7 +64,7 @@ it('отправляет только два поля, блокирует дво
   fireEvent.click(submit);
   fireEvent.click(submit);
   expect(submit).toBeDisabled();
-  expect(screen.getByRole('status')).toHaveTextContent('Отправляем пакет');
+  expect(screen.getByRole('status')).toHaveTextContent('Загрузка файлов');
   expect(fetchMock).toHaveBeenCalledTimes(1);
 
   const [url, init] = fetchMock.mock.calls[0];
@@ -60,15 +74,26 @@ it('отправляет только два поля, блокирует дво
   expect(Array.from(form.keys())).toEqual(['report', 'documents', 'documents']);
   expect(form.getAll('documents')).toMatchObject([{ name: 'B.xlsx' }, { name: 'A.docx' }]);
   finish?.(accept('saved-run'));
-  expect(await screen.findByRole('heading', { name: 'Карточка saved-run' })).toBeVisible();
+  expect(await screen.findByRole('link', { name: 'Проверка КФЗ №saved-run' })).toHaveAttribute('href', '/checks/saved-run');
+  expect(screen.queryByText('report.pdf')).not.toBeInTheDocument();
+  expect(submit).toBeDisabled();
+  pick('Выберите КФЗ', [new File(['report two'], 'second.pdf')]);
+  pick('Выберите первичные документы', [new File(['new support'], 'support.png')]);
+  fireEvent.click(submit);
+  expect(await screen.findByRole('link', { name: 'Проверка КФЗ №second-run' })).toBeVisible();
+  expect(screen.getByRole('link', { name: 'Проверка КФЗ №saved-run' })).toBeVisible();
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+  const firstKey = new Headers(fetchMock.mock.calls[0][1]?.headers).get('Idempotency-Key');
+  const secondKey = new Headers(fetchMock.mock.calls[1][1]?.headers).get('Idempotency-Key');
+  expect(secondKey).not.toBe(firstKey);
 });
 
 it('повторяет тот же ключ после потери ответа и создаёт новый при изменении пакета', async () => {
-  const fetchMock = vi.fn<typeof fetch>()
-    .mockRejectedValueOnce(new TypeError('network'))
-    .mockResolvedValueOnce(Response.json({ code: 'invalid_input', message: 'Проверьте КФЗ' }, { status: 422 }))
-    .mockResolvedValueOnce(accept('new-run'));
-  vi.stubGlobal('fetch', fetchMock);
+  const fetchMock = mockUpload(
+    new TypeError('network'),
+    Response.json({ code: 'invalid_input', message: 'Проверьте КФЗ' }, { status: 422 }),
+    accept('new-run'),
+  );
   renderWizard();
   selectPacket();
 
@@ -80,7 +105,7 @@ it('повторяет тот же ключ после потери ответа
 
   fireEvent.click(screen.getByRole('button', { name: 'Удалить B.xlsx' }));
   fireEvent.click(submit);
-  expect(await screen.findByRole('heading', { name: 'Карточка new-run' })).toBeVisible();
+  expect(await screen.findByRole('link', { name: 'Проверка КФЗ №new-run' })).toBeVisible();
   const attempts = fetchMock.mock.calls.map(([, init]) => new Headers(init?.headers).get('Idempotency-Key'));
   expect(attempts[0]).toMatch(/^[a-f0-9-]{36}$/);
   expect(attempts[1]).toBe(attempts[0]);
@@ -91,7 +116,10 @@ it('не отправляет синтетический пример и отм�
   const fetchMock = vi.fn<typeof fetch>().mockImplementation((_path, init) => new Promise((_resolve, reject) => {
     init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true });
   }));
-  vi.stubGlobal('fetch', fetchMock);
+  vi.stubGlobal('fetch', (url: RequestInfo | URL, init?: RequestInit) =>
+    init?.method === 'POST' ? fetchMock(url, init) : Promise.resolve(
+      Response.json({ items: [], next_cursor: null }),
+    ));
   renderWizard();
   selectPacket();
 
@@ -103,8 +131,10 @@ it('не отправляет синтетический пример и отм�
   expect(fetchMock).toHaveBeenCalledTimes(1);
 });
 
-it('принимает первичные документы до отчёта и показывает ошибки отдельно', () => {
+it('принимает первичные документы до отчёта и показывает ошибки отдельно', async () => {
+  mockUpload();
   renderWizard();
+  await screen.findByText('Проверок пока нет.');
   const report = screen.getByRole('region', { name: 'КФЗ' });
   const documents = screen.getByRole('region', { name: 'Первичные документы' });
 

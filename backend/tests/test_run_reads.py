@@ -441,3 +441,33 @@ def test_download_closes_original_when_streaming_stops(monkeypatch, tmp_path, fa
 
     assert sent[0] == "http.response.start"
     assert original.closed
+
+
+def test_history_finding_filters_use_saved_counts_before_pagination(client):
+    mixed, complete, empty, pending = [_create(client) for _ in range(4)]
+    for run_id, counts in (
+        (mixed, {"verified": 0, "discrepancy": 1, "unverified": 2}),
+        (complete, {"verified": 2, "discrepancy": 0, "unverified": 0}),
+        (empty, {"verified": 0, "discrepancy": 0, "unverified": 0}),
+    ):
+        # The history projection reads only these keys. Full result validation
+        # and document bindings are covered by tests of the findings endpoint.
+        _update_run(
+            client,
+            run_id,
+            status="completed",
+            result={"summary": {"counts": counts}, "synthetic": True},
+        )
+
+    cases = [("discrepancy", mixed), ("unverified", mixed), ("verified", complete)]
+    for finding, expected in cases:
+        page = client.get(RUNS, params={"finding": finding, "limit": 1})
+        assert page.status_code == 200
+        assert page.json()["next_cursor"] is None
+        assert [item["run_id"] for item in page.json()["items"]] == [expected]
+        assert page.json()["items"][0]["report_number"] is None
+        assert page.json()["items"][0]["synthetic"] is True
+
+    history = client.get(RUNS).json()["items"]
+    assert {item["run_id"] for item in history} == {mixed, complete, empty, pending}
+    assert "counts" not in next(item for item in history if item["run_id"] == pending)

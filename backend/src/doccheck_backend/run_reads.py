@@ -10,15 +10,15 @@ from os import fstat, stat_result
 from os.path import samestat
 from pathlib import Path
 from stat import S_ISREG
-from typing import BinaryIO
+from typing import BinaryIO, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ValidationError
-from sqlalchemy import Engine, select, tuple_
+from sqlalchemy import Engine, and_, select, tuple_
 from sqlalchemy.orm import Session, defer
 
 from doccheck_backend.contracts import CheckResult
-from doccheck_backend.contracts.result import Evidence, Issue, JobStatus
+from doccheck_backend.contracts.result import Evidence, Issue, JobStatus, StatusCounts
 from doccheck_backend.fragment_preview import MAX_INPUT_BYTES, FragmentPreview, render_preview
 from doccheck_backend.models import Run
 
@@ -51,8 +51,17 @@ class RunState(RunSummary):
     progress: RunProgress | None
 
 
+class HistoryRun(RunSummary):
+    counts: StatusCounts | None = None
+    report_number: str | None = None
+    synthetic: bool | None = None
+
+
+FindingFilter = Literal["discrepancy", "unverified", "verified"]
+
+
 class RunPage(BaseModel):
-    items: list[RunSummary]
+    items: list[HistoryRun]
     next_cursor: str | None
 
 
@@ -60,16 +69,46 @@ def unavailable() -> RunReadError:
     return RunReadError(503, "service_unavailable", "Хранилище проверок недоступно")
 
 
-def list_runs(engine: Engine, limit: int, cursor: str | None) -> RunPage:
-    query = select(Run.id, Run.status, Run.created_at, Run.error)
+def list_runs(
+    engine: Engine, limit: int, cursor: str | None, finding: FindingFilter | None = None
+) -> RunPage:
+    counts = Run.result["summary"]["counts"]
+    columns = (
+        Run.id,
+        Run.status,
+        Run.created_at,
+        Run.error,
+        counts,
+        Run.result["report_number"].as_string(),
+        Run.result["synthetic"].as_boolean(),
+    )
+    query = select(*columns)
+    if finding is not None:
+        query = query.where(Run.status.in_(("completed", "completed_with_issues")))
+        if finding == "verified":
+            query = query.where(
+                and_(
+                    counts["verified"].as_integer() > 0,
+                    counts["discrepancy"].as_integer() == 0,
+                    counts["unverified"].as_integer() == 0,
+                )
+            )
+        else:
+            query = query.where(counts[finding].as_integer() > 0)
     if cursor is not None:
         query = query.where(tuple_(Run.created_at, Run.id) < _decode_cursor(cursor))
     query = query.order_by(Run.created_at.desc(), Run.id.desc()).limit(limit + 1)
     with Session(engine) as session:
-        items = [
-            RunSummary(run_id=run_id, status=status, created_at=created_at, error=error)
-            for run_id, status, created_at, error in session.execute(query)
-        ]
+        items = []
+        for run_id, status, created_at, error, row_counts, number, synthetic in session.execute(
+            query
+        ):
+            item = HistoryRun(run_id=run_id, status=status, created_at=created_at, error=error)
+            if status in ("completed", "completed_with_issues") and row_counts is not None:
+                item.counts = StatusCounts.model_validate(row_counts)
+                item.report_number = number
+                item.synthetic = synthetic
+            items.append(item)
     if len(items) <= limit:
         return RunPage(items=items, next_cursor=None)
     last = items[limit - 1]

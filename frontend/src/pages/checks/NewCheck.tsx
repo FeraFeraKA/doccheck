@@ -1,10 +1,13 @@
-import { useEffect, useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router';
 import { classes } from '../../shared/lib/classes';
 import { Button } from '../../shared/ui/Button';
 import { UploadFileList } from './UploadFiles';
 import { WorkspaceIcon } from './WorkspaceIcon';
 import { prepareRunUpload, RunUploadHttpError } from './createRun';
+import type { CheckHistory } from './checkData';
+import { RunQueue } from './RunQueue';
+import { useRunHistory } from './useRunHistory';
 import { demoRunPath } from './demoData';
 
 type FileGroup = 'report' | 'documents';
@@ -43,7 +46,16 @@ function uploadErrorMessage(error: unknown): string {
 const publicDemo = import.meta.env.VITE_DOCCHECK_PUBLIC_DEMO === '1';
 
 export function NewCheck() {
-  const navigate = useNavigate();
+  const submitButton = useRef<HTMLButtonElement>(null);
+  const chooseReport = useRef<HTMLButtonElement>(null);
+  const restoreUploadFocus = useRef(false);
+  const [announceAccepted, setAnnounceAccepted] = useState(false);
+  const [receipts, setReceipts] = useState<string[]>([]);
+  const clearListedReceipts = useCallback(({ entries }: CheckHistory) => {
+    const listed = new Set(entries.map(({ id }) => id));
+    setReceipts((previous) => previous.filter((id) => !listed.has(id)));
+  }, []);
+  const history = useRunHistory({ enabled: !publicDemo, onPage: clearListedReceipts });
   const nextFileId = useRef(0);
   const active = useRef<AbortController | null>(null);
   const attempt = useRef<ReturnType<typeof prepareRunUpload> | null>(null);
@@ -55,6 +67,7 @@ export function NewCheck() {
   const canStart = report.length === 1 && documents.length > 0;
 
   useEffect(() => () => active.current?.abort(), []);
+
 
   function changeFiles(group: FileGroup, next: SelectedFile[]) {
     attempt.current = null;
@@ -106,12 +119,20 @@ export function NewCheck() {
     changeFiles(group, isReport ? items : [...documents, ...items]);
   }
 
+  useEffect(() => {
+    if (isSending || !restoreUploadFocus.current) return;
+    restoreUploadFocus.current = false;
+    if (document.activeElement === document.body) chooseReport.current?.focus({ preventScroll: true });
+  }, [isSending]);
+
   async function submit() {
     if (publicDemo || active.current || !canStart) return;
     const controller = new AbortController();
     active.current = controller;
+    setAnnounceAccepted(false);
     setIsSending(true);
     setSubmitError('');
+    const submitHadFocus = document.activeElement === submitButton.current;
     try {
       attempt.current ??= prepareRunUpload({
         report: report[0].file,
@@ -119,7 +140,14 @@ export function NewCheck() {
       }, newIdempotencyKey());
       const accepted = await attempt.current(controller.signal);
       if (controller.signal.aborted) return;
-      void navigate('/checks/' + encodeURIComponent(accepted.run_id));
+      setReceipts((previous) => [accepted.run_id, ...previous.filter((id) => id !== accepted.run_id)].slice(0, 20));
+      setAnnounceAccepted(true);
+      restoreUploadFocus.current = submitHadFocus;
+      setReport([]);
+      setDocuments([]);
+      setErrors({ report: '', documents: '' });
+      attempt.current = null;
+      history.refresh();
     } catch (error) {
       if (!controller.signal.aborted) setSubmitError(uploadErrorMessage(error));
     } finally {
@@ -131,21 +159,21 @@ export function NewCheck() {
   return (
     <div className="upload-page">
       <h1>Новая проверка</h1>
-      <p className="upload-intro">Добавьте КФЗ и первичные документы.</p>
+      {!publicDemo && <p className="upload-intro">Добавьте КФЗ и первичные документы.</p>}
       {publicDemo ? (
         <section className="upload-card upload-public-notice mt-6">
           <h2>Загрузка доступна в локальной установке</h2>
         </section>
       ) : (
         <div className="mt-6 grid grid-cols-1 items-start gap-5 md:grid-cols-2">
-          <UploadBlock group="report" files={report} error={errors.report} disabled={isSending}
+          <UploadBlock chooseButton={chooseReport} group="report" files={report} error={errors.report} disabled={isSending}
             onFiles={takeFiles} onRemove={(id) => removeFile('report', id)} />
           <UploadBlock group="documents" files={documents} error={errors.documents} disabled={isSending}
             onFiles={takeFiles} onRemove={(id) => removeFile('documents', id)} />
         </div>
       )}
       <div className="upload-navigation mt-5 flex flex-wrap items-center gap-3">
-        {!publicDemo && <Button disabled={isSending || !canStart} onClick={() => { void submit(); }}>
+        {!publicDemo && <Button ref={submitButton} disabled={isSending || !canStart} onClick={() => { void submit(); }}>
           Отправить на проверку <WorkspaceIcon name="arrow" size={17} />
         </Button>}
         <Link className="workspace-button workspace-button-outline upload-example" to={demoRunPath}>
@@ -153,16 +181,21 @@ export function NewCheck() {
         </Link>
       </div>
       {submitError && <p className="upload-validation" role="alert">{submitError}</p>}
-      {isSending && <p role="status">Отправляем пакет…</p>}
+      <p role="status" className={isSending ? undefined : 'sr-only'}>
+        {isSending ? 'Загрузка файлов…' : announceAccepted && 'Сервер получил пакет.'}
+      </p>
+      {!publicDemo && <RunQueue entries={history.page?.entries} receipts={receipts}
+        loading={history.loading} error={history.error} onRetry={history.refresh} />}
     </div>
   );
 }
 
-function UploadBlock({ group, files, error, disabled, onFiles, onRemove }: {
+function UploadBlock({ group, files, error, disabled, chooseButton, onFiles, onRemove }: {
   group: FileGroup;
   files: SelectedFile[];
   error: string;
   disabled: boolean;
+  chooseButton?: React.Ref<HTMLButtonElement>;
   onFiles: (files: FileList, group: FileGroup) => void;
   onRemove: (id: number) => void;
 }) {
@@ -203,7 +236,7 @@ function UploadBlock({ group, files, error, disabled, onFiles, onRemove }: {
       {files.length === 0 ? <div className="upload-empty">
         <WorkspaceIcon name="file" size={28} />
         <p>{report ? 'Перетащите КФЗ сюда' : 'Перетащите документы сюда'}</p>
-        <Button variant="outline" disabled={disabled} onClick={() => input.current?.click()}>
+        <Button ref={chooseButton} variant="outline" disabled={disabled} onClick={() => input.current?.click()}>
           {report ? 'Выбрать файл' : 'Выбрать файлы'}
         </Button>
       </div> : <>

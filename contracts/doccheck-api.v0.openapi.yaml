@@ -132,7 +132,14 @@ paths:
         - name: cursor
           in: query
           schema: {type: string, minLength: 1}
-          description: Непрозрачный next_cursor из предыдущего ответа.
+          description: Непрозрачный next_cursor из предыдущего ответа для того же фильтра.
+        - name: finding
+          in: query
+          schema: {type: string, enum: [discrepancy, unverified, verified]}
+          description: |
+            Фильтр по сохранённым показателям применяется до пагинации.
+            discrepancy и unverified могут включать одну проверку.
+            verified требует хотя бы один проверенный показатель и отсутствие двух других статусов.
       responses:
         '200':
           description: Страница истории.
@@ -144,7 +151,7 @@ paths:
                 properties:
                   items:
                     type: array
-                    items: {$ref: '#/components/schemas/RunSummary'}
+                    items: {$ref: '#/components/schemas/HistoryRun'}
                   next_cursor: {type: [string, 'null']}
         '422': {$ref: '#/components/responses/InvalidInput'}
         '503': {$ref: '#/components/responses/Unavailable'}
@@ -366,6 +373,14 @@ components:
           anyOf:
             - $ref: './check-result.v1.schema.json#/$defs/Issue'
             - type: 'null'
+    HistoryRun:
+      allOf:
+        - $ref: '#/components/schemas/RunSummary'
+        - type: object
+          properties:
+            counts: {$ref: './check-result.v1.schema.json#/$defs/StatusCounts'}
+            report_number: {type: [string, 'null']}
+            synthetic: {type: [boolean, 'null']}
     RunState:
       allOf:
         - $ref: '#/components/schemas/RunSummary'

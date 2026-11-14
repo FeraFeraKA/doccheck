@@ -188,11 +188,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             headers={"Location": f"/api/v0/runs/{run_id}"},
         )
 
-    @document_runs.get("")
+    @document_runs.get("", response_model_exclude_unset=True)
     def list_runs(
-        request: Request, limit: Annotated[int, Query(ge=1, le=100)] = 20, cursor: str | None = None
+        request: Request,
+        limit: Annotated[int, Query(ge=1, le=100)] = 20,
+        cursor: str | None = None,
+        finding: run_reads.FindingFilter | None = None,
     ) -> run_reads.RunPage:
-        return run_reads.list_runs(request.app.state.engine, limit, cursor)
+        return run_reads.list_runs(request.app.state.engine, limit, cursor, finding)
 
     @document_runs.get("/{run_id}")
     def get_run(request: Request, run_id: str) -> run_reads.RunState:
