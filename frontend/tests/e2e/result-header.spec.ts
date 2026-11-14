@@ -10,7 +10,7 @@ test('the result opens with a conclusion and retains legacy document routes', as
   await expect(summary.getByRole('heading', { name: 'Есть расхождения' })).toBeVisible();
   await expect(summary.getByText(/По статье A обнаружено расхождение/)).toBeVisible();
   await expect(summary.getByText('0 из 2 подтверждено')).toBeVisible();
-  await expect(summary.getByRole('button', { name: 'Скачать XLSX' })).toBeDisabled();
+  await expect(summary.getByRole('button', { name: 'Скачать XLSX' })).toHaveCount(0);
   const indicator = page.getByRole('button', { name: 'Синтетическая статья A', exact: true });
   await summary.getByRole('button', { name: 'К показателю «Синтетическая статья A»' }).click();
   await expect(indicator).toBeFocused();
@@ -24,7 +24,7 @@ test('the result opens with a conclusion and retains legacy document routes', as
   await expect(page).toHaveURL(/\/documents$/);
   await expect(page.getByText('synthetic-report.pdf', { exact: true })).toBeVisible();
   await page.goto('/checks/synthetic-example/conclusion');
-  await expect(summary.getByRole('button', { name: 'Скачать XLSX' })).toBeDisabled();
+  await expect(summary.getByRole('button', { name: 'Скачать XLSX' })).toHaveCount(0);
   await expect(tabs.getByRole('link', { name: 'Результат' })).toHaveAttribute('aria-current', 'page');
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
 });
