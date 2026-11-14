@@ -378,11 +378,19 @@ def test_pdf_terminal_space_does_not_join_id_to_amount(
 
 @pytest.mark.parametrize("rotation", [0, 90, 180, 270])
 @pytest.mark.parametrize("rule", [False, True])
-def test_pdf_single_show_can_contain_two_cells(tmp_path, rotation, rule):
+@pytest.mark.parametrize(
+    "operands",
+    [
+        b"(123) -1116.666667 (456 RUB)",
+        b"(123 ) -516.666667 (456 RUB)",
+        b"(123) -516.666667 ( 456 RUB)",
+    ],
+)
+def test_pdf_single_show_can_contain_two_cells(tmp_path, rotation, rule, operands):
     stream = (
         b"BT /F1 12 Tf 20 160 Td (ID) Tj ET\n"
         b"BT /F1 12 Tf 55 160 Td (Amount) Tj ET\n"
-        b"BT /F1 12 Tf 20 140 Td [(123) -1116.666667 (456 RUB)] TJ ET\n"
+        b"BT /F1 12 Tf 20 140 Td [" + operands + b"] TJ ET\n"
     )
     if rule:
         stream += b"51 126 m 51 154 l S\n"
@@ -393,6 +401,28 @@ def test_pdf_single_show_can_contain_two_cells(tmp_path, rotation, rule):
     assert [o.raw_text for o in result.observations[-2:]] == ["123", "456 RUB"]
     assert [o.amount for o in result.observations[-2:]] == [None, Decimal(456) if rule else None]
     assert [issue.code for issue in result.issues] == ([] if rule else ["ambiguous_rub_amount"])
+
+
+@pytest.mark.parametrize("rotation", [0, 90, 180, 270])
+@pytest.mark.parametrize(
+    "text",
+    [
+        b"(1 234,56 RUB) Tj",
+        b"[(1 ) (234,56 RUB)] TJ",
+        b"[(1) ( 234,56 RUB)] TJ",
+        b"[(1 ) 25 (234,56 RUB)] TJ",
+    ],
+)
+def test_pdf_written_grouping_keeps_its_amount_without_a_position_advance(tmp_path, rotation, text):
+    path = _single_page_pdf(
+        tmp_path / "upload",
+        b"BT /F1 12 Tf 20 140 Td " + text + b" ET",
+        font=b"Courier",
+        page_attrs=f"/Rotate {rotation}".encode(),
+    )
+    result = read_native_document(path, "pdf")
+    assert [observation.amount for observation in result.observations] == [Decimal("1234.56")]
+    assert result.issues == ()
 
 
 @pytest.mark.parametrize("rotation", [0, 90, 180, 270])

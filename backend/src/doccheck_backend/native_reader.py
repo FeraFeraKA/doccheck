@@ -248,6 +248,7 @@ def _visible_pdf_box(page: Page) -> tuple[float, float, float, float]:
 
 class _PDFShowAggregator(PDFPageAggregatorWithMarkedContent):
     show_id = 0
+    position_id = 0
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -276,14 +277,25 @@ class _PDFShowAggregator(PDFPageAggregatorWithMarkedContent):
         super().end_figure(name)
         self.form_boxes.pop()
 
-    def render_string(self, *args, **kwargs) -> None:
+    def render_string(self, textstate, seq, ncs, graphicstate) -> None:
         self.show_id += 1
-        super().render_string(*args, **kwargs)
+        self.position_id = 0
+
+        def positioned_operands():
+            for operand in seq:
+                # A negative TJ operand advances the text position independently of
+                # the encoded glyphs. Keep it distinct from a written space.
+                if isinstance(operand, (int, float)) and operand < 0:
+                    self.position_id += 1
+                yield operand
+
+        super().render_string(textstate, positioned_operands(), ncs, graphicstate)
 
     def render_char(self, *args, **kwargs) -> float:
         width = super().render_char(*args, **kwargs)
         glyph = self.cur_item._objs[-1]
         glyph.doccheck_show_id = self.show_id
+        glyph.doccheck_position_id = self.position_id
         if self.form_boxes:
             glyph.doccheck_form_box = self.form_boxes[-1]
         return width
@@ -307,6 +319,7 @@ class _NativePDFPage(Page):
         item = super().process_object(obj)
         if isinstance(obj, LTChar):
             item["show_id"] = obj.doccheck_show_id
+            item["position_id"] = obj.doccheck_position_id
             if hasattr(obj, "doccheck_form_box"):
                 clip = obj.doccheck_form_box
                 item["form_box"] = (
@@ -359,14 +372,18 @@ def _pdf_line_fragments(
                         first = bisect_left(space_starts, previous["x1"] - 0.1)
                         last = bisect_left(space_starts, char["x0"])
                         written_space = any(
-                            abs(top - previous["top"]) <= 1 and end <= char["x0"] + 0.1
-                            for _, top, end in spaces[first:last]
+                            abs(top - previous["top"]) <= 1 and (start + end) / 2 < char["x0"]
+                            for start, top, end in spaces[first:last]
                         )
                     # Across text-show operations, a terminal blank can be padding.
                     # Within one operation, a wide shift may still cross a cell boundary.
                     inferred_numeric_space = (
                         numeric_boundary
-                        and (not same_show or not written_space)
+                        and (
+                            not same_show
+                            or not written_space
+                            or previous["position_id"] != char["position_id"]
+                        )
                         and text_map.as_string[previous_index + 1 : index].isspace()
                     )
                     if ruled or gap > 1.5 * height or inferred_numeric_space:
