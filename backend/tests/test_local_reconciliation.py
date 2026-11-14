@@ -170,7 +170,7 @@ def test_calculates_status_and_total_from_admitted_sources(database_url, tmp_pat
 @pytest.mark.parametrize(
     ("filename", "code"),
     [
-        ("truncated.pdf", "source_unreadable"),
+        ("truncated.pdf", "pdf_unreadable"),
         ("truncated.docx", "source_incomplete"),
         ("truncated.xlsx", "source_incomplete"),
         ("empty.docx", "source_incomplete"),
@@ -213,6 +213,8 @@ def test_unreadable_source_keeps_the_rest_of_the_run(database_url, tmp_path, fil
         assert damaged["decision"]["state"] == "parse_error"
         assert damaged["parse_status"] == "error"
         assert any(issue["code"] == code for issue in damaged["errors"])
+        if filename.endswith(".pdf"):
+            assert any("PDF" in issue["message"] for issue in damaged["errors"])
         assert any(doc["decision"]["state"] == "include" for doc in result["documents"])
         row = next(row for row in result["rows"] if row["id"] == "payroll")
         assert row["reported_value"] == row["observed_evidence_sum"] == "1070.45"
