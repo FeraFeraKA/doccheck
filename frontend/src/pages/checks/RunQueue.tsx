@@ -27,7 +27,14 @@ const dateFormat = new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short', timeSt
 export function RunQueue({ entries = [], receipts, loading, error, onRetry }: RunQueueProps) {
   const listedIds = new Set(entries.map(({ id }) => id));
   const pendingReceipts = receipts.filter((id) => !listedIds.has(id));
-  const hasEntries = pendingReceipts.length > 0 || entries.length > 0;
+  const items: RunQueueItemProps[] = [
+    ...pendingReceipts.map((id): RunQueueItemProps => ({
+      id, title: runTitle(id), label: 'Сервер получил пакет', tone: 'neutral',
+    })),
+    ...entries.map(({ id, title, createdAt, status, synthetic, error }) => ({
+      id, title, label: runStatusLabels[status], tone: tones[status], createdAt, synthetic, error,
+    })),
+  ];
   return (
     <section className="upload-card queue-card" aria-label="Последние проверки" aria-busy={loading}>
       <header className="upload-card-header">
@@ -38,17 +45,10 @@ export function RunQueue({ entries = [], receipts, loading, error, onRetry }: Ru
         {' '}<button type="button" onClick={onRetry} className="underline">Повторить</button>
       </p>}
       {loading && <p className="queue-message">Загрузка истории…</p>}
-      {hasEntries && <ul className="queue-list">
-        {pendingReceipts.map((id) => (
-          <RunQueueItem key={id} id={id} title={runTitle(id)} label="Сервер получил пакет" tone="neutral" />
-        ))}
-        {entries.map(({ id, title, createdAt, status, synthetic, error: runError }) => (
-          <RunQueueItem key={id} id={id} title={title} label={runStatusLabels[status]}
-            tone={tones[status]}
-            createdAt={createdAt} synthetic={synthetic} error={runError} />
-        ))}
+      {items.length > 0 && <ul className="queue-list">
+        {items.map((item) => <RunQueueItem key={item.id} {...item} />)}
       </ul>}
-      {!loading && !error && !hasEntries && <p className="queue-message">Проверок пока нет.</p>}
+      {!loading && !error && items.length === 0 && <p className="queue-message">Проверок пока нет.</p>}
     </section>
   );
 }

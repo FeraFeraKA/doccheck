@@ -487,3 +487,37 @@ test('API mock: two uploads stay on the form and history is restored on reload',
   await expect(history.getByRole('link', { name: 'Проверка КФЗ №queued-1', exact: true })).toBeVisible();
   await expect(history.getByRole('link', { name: 'Проверка КФЗ №queued-2', exact: true })).toBeVisible();
 });
+
+test('the upload receipt keeps its focus when history confirms the same run', async ({ page }) => {
+  const id = 'queued-confirmed';
+  let accepted = false;
+  let resolveHistory!: () => void;
+  const releaseHistory = new Promise<void>((resolve) => { resolveHistory = resolve; });
+  await page.route(/\/api\/v0\/runs(?:\?.*)?$/, async (route) => {
+    if (route.request().method() === 'POST') {
+      accepted = true;
+      return route.fulfill({ status: 202, headers: { Location: '/api/v0/runs/' + id },
+        json: { run_id: id, status: 'queued' } });
+    }
+    if (!accepted) return route.fulfill({ json: { items: [], next_cursor: null } });
+    await releaseHistory;
+    return route.fulfill({ json: { items: [{
+      run_id: id, status: 'queued', created_at: '2026-11-14T10:00:00Z', error: null,
+    }], next_cursor: null } });
+  });
+  await page.goto('/checks/new');
+  await page.getByLabel('Выберите КФЗ').setInputFiles({
+    name: 'report.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4 synthetic'),
+  });
+  await page.getByLabel('Выберите первичные документы').setInputFiles({
+    name: 'support.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4 synthetic'),
+  });
+  await page.getByRole('button', { name: 'Отправить на проверку' }).press('Enter');
+  await expect(page.getByRole('status').filter({ hasText: /^Сервер получил пакет\.$/ })).toHaveCount(1);
+  const receipt = page.getByRole('link', { name: 'Проверка КФЗ №' + id });
+  await receipt.focus();
+  await expect(receipt).toBeFocused();
+  resolveHistory();
+  await expect(receipt).toContainText('В очереди');
+  await expect(receipt).toBeFocused();
+});
