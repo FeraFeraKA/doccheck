@@ -130,6 +130,8 @@ docker compose up --wait
 - [Второй человек: worker-b на macOS](docs/nightly/second-person.md)
 - [Работа с ветками и проверка изменений](CONTRIBUTING.md)
 - [Границы модулей](docs/architecture.md)
+- [Продуктовые решения и границы MVP](docs/product-decisions.md)
+- [Два воспроизводимых сценария К6](docs/case/use-cases.md)
 - [Кейс и уточнения консультации](docs/case/README.md) — актуальный сценарий, открытые вопросы и ссылка на исходную формулировку организаторов.
 - [Обезличенные примеры документов](docs/case/examples/)
 - [Общий контракт](contracts/README.md)
