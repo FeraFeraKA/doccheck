@@ -25,7 +25,7 @@ test('synthetic document decisions, addresses and row links work without the doc
   const file = table.getByRole('button', { name: 'synthetic-ledger.xlsx', exact: true });
   await file.press('Enter');
   const dialog = page.getByLabel('Источник документа', { exact: true }).and(page.locator('.source-workspace-panel[open]'));
-  await expect(dialog.getByText('Оригинал в готовом примере недоступен.')).toBeVisible();
+  await expect(dialog.getByText(/^Оригинал (в готовом примере|документа) недоступен\.$/)).toBeVisible();
   await dialog.getByRole('combobox', { name: 'Адрес доказательства' }).selectOption('amount-2');
   await expect(dialog.getByRole('paragraph').filter({ hasText: 'Лист «Синтетика», C7' })).toBeVisible();
   await page.keyboard.press('Escape');
@@ -63,11 +63,13 @@ test('stored exception without an address requests only its own original', async
   });
 
   await page.goto(`/checks/${id}/exceptions`);
-  const filters = page.getByRole('group', { name: 'Статус файла' });
+  const exceptions = page.getByRole('region', { name: 'Исключения', exact: true });
+  const filters = exceptions.getByRole('group', { name: 'Статус исключения' });
   await expect(filters.getByRole('button', { name: 'Все (2)' })).toBeVisible();
   await expect(filters.getByRole('button', { name: 'Включён', exact: false })).toHaveCount(0);
   await filters.getByRole('button', { name: 'Ошибка чтения (1)' }).click();
-  const table = page.getByRole('region', { name: 'Таблица документов' });
+  const table = exceptions.getByRole('region', { name: 'Таблица исключений' });
+  await expect(page.getByRole('region', { name: 'Таблица документов' })).toBeVisible();
   await expect(table.getByRole('row')).toHaveCount(2);
   await expect(table.getByRole('link', { name: 'Синтетическая статья B' })).toHaveCount(1);
   const file = table.getByRole('button', { name: example.result.documents[3].name });
@@ -78,6 +80,26 @@ test('stored exception without an address requests only its own original', async
   expect([...new Set(originals)]).toEqual([`/api/v0/runs/${id}/documents/unreadable`]);
   await page.keyboard.press('Escape');
   await expect(file).toBeFocused();
+});
+
+test('an exception can be opened from the document list without leaving the documents tab', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/checks/synthetic-example/documents');
+  const anchor = page.getByRole('link', { name: 'К исключениям' });
+  await anchor.press('Enter');
+  const exceptions = page.getByRole('region', { name: 'Исключения', exact: true });
+  await expect(page).toHaveURL(/\/documents#exceptions$/);
+  await expect(exceptions).toBeFocused();
+  await expect(exceptions.getByRole('heading', { name: 'Исключения' })).toBeInViewport();
+
+  const file = exceptions.getByRole('button', { name: 'synthetic-ledger-copy.xlsx' });
+  await file.press('Enter');
+  await expect(page.getByLabel('Источник документа', { exact: true }).and(page.locator('.source-workspace-panel[open]')))
+    .toBeVisible();
+  await expect(page).toHaveURL(/document=ledger-copy.*#exceptions$/);
+  await page.keyboard.press('Escape');
+  await expect(file).toBeFocused();
+  await expect(page).toHaveURL(/\/documents#exceptions$/);
 });
 
 test('reading filters separate partial, pending and legacy states without changing decisions', async ({ page }) => {

@@ -1,6 +1,7 @@
 .result-documents {
   min-width: 0;
   margin-top: 1rem;
+  font-family: var(--font-sans);
 }
 
 .result-document-filters,
@@ -26,7 +27,34 @@
   background: #e5f0ed;
 }
 
-.result-document-actions { font-size: 13px; }
+.result-document-anchor {
+  display: inline-block;
+  margin-block: .125rem .625rem;
+  font-size: 13px;
+}
+
+.result-exceptions {
+  margin-top: 1.5rem;
+  border-top: 1px solid var(--ui-line);
+  padding-block-start: .875rem;
+  scroll-margin-top: 1rem;
+}
+.result-exceptions-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .375rem .75rem;
+  margin-block-end: .5rem;
+}
+.checks-content .result-exceptions-heading h2 { font: 500 18px/1.4 var(--font-sans); }
+.result-document-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .5rem 1rem;
+  margin-top: 1rem;
+  font-size: 13px;
+}
 .result-document-scroll { overflow-x: auto; background: #fff; }
 
 .result-document-table {
@@ -35,6 +63,7 @@
   margin: 0;
   font-size: 13px;
 }
+.result-exceptions .result-document-table { min-width: 650px; }
 
 .checks-content .result-document-table th {
   height: 54px;
@@ -60,7 +89,7 @@
 .result-document-table tbody tr:hover { background: #eff4f2; }
 .result-document-table tr[data-selected="true"] { background: var(--ui-selected); }
 
-.result-document-file { gap: 13px; }
+.result-document-file { gap: 10px; }
 .result-documents .result-document-table tbody tr { cursor: pointer; }
 .document-reading-status { display: flex; align-items: center; gap: 7px; }
 .document-read-icon {
@@ -76,11 +105,11 @@
 .document-decision-details summary { cursor: pointer; }
 .document-reading-status + .result-document-state { margin-top: 4px; }
 .result-document-file .file-type-icon {
-  flex: 0 0 42px;
-  width: 42px;
-  height: 48px;
+  flex: 0 0 32px;
+  width: 32px;
+  height: 36px;
 }
-.result-document-file .file-type-icon svg { width: 42px; height: 48px; }
+.result-document-file .file-type-icon svg { width: 25px; height: 30px; }
 .checks-content .result-document-file button {
   margin: 0;
   border: 0;

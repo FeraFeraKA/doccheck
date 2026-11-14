@@ -33,16 +33,18 @@ export function UnverifiedIndicators({ rows, onOpenRow }: {
   const unverified = rows.filter((row) => row.status === 'unverified');
   if (unverified.length === 0) return null;
 
-  return <section className="result-summary-card mt-5 rounded-lg border p-4" aria-labelledby="unverified-indicators-title">
-    <h3 id="unverified-indicators-title" className="mb-2 text-[15px] font-medium">Недостаточно подтверждений</h3>
-    <ul className="space-y-2 text-[13px]">
+  return <section className="result-unverified" aria-labelledby="unverified-indicators-title">
+    <h3 id="unverified-indicators-title">Недостаточно подтверждений</h3>
+    <ul className="result-unverified-list">
       {unverified.map((row) => <li key={row.id}>
-        <button type="button" className="text-left font-medium underline" onClick={() => onOpenRow(row.id)}>{row.label}</button>
-        <p className="result-summary-muted">{rowExplanation(row)}</p>
-        {row.expected_value !== null &&
-          <p className="result-summary-muted">Сумма по документам: {formatDecimal(row.expected_value)} {row.unit}</p>}
-        {row.expected_value === null && row.observed_evidence_sum !== null &&
-          <p className="result-summary-muted">Частичная сумма: {formatDecimal(row.observed_evidence_sum)} {row.unit}</p>}
+        <button type="button" onClick={() => onOpenRow(row.id)}>{row.label}</button>
+        <div className="result-summary-muted">
+          <p>{rowExplanation(row)}</p>
+          {row.expected_value !== null &&
+            <p>Сумма по документам: {formatMeasure(row.expected_value, row.unit)}</p>}
+          {row.expected_value === null && row.observed_evidence_sum !== null &&
+            <p>Частичная сумма: {formatMeasure(row.observed_evidence_sum, row.unit)}</p>}
+        </div>
       </li>)}
     </ul>
   </section>;
@@ -56,6 +58,7 @@ export function AdditionalChecks({ result, runPath, onOpenRow, onOpenDocument, o
   onOpenEvidence?: (id: string, trigger: HTMLElement) => void;
 }) {
   const files = result.documents.filter(({ decision, errors }) => decision.state !== 'include' || errors.length > 0);
+  const hasExceptions = files.some(({ decision }) => decision.state !== 'include');
   const rowIssueIds = new Set(result.rows.map(({ root_issue_id }) => root_issue_id));
   const issues = result.summary.primary_issues.filter(({ id }) => !rowIssueIds.has(id));
   const evidenceById = new Map(result.evidence.map((item) => [item.id, item]));
@@ -94,7 +97,7 @@ export function AdditionalChecks({ result, runPath, onOpenRow, onOpenDocument, o
     </div>}
     {issues.length > 0 && <ul className="list-disc pl-5 text-sm">{issues.map((issue) => <li key={issue.id}>{issue.message}{sourceLinks(issue.evidence_refs)}</li>)}</ul>}
     <UnverifiedIndicators rows={result.rows} onOpenRow={onOpenRow} />
-    {files.length > 0 && <Link to={runPath + '/exceptions'} className="inline-block text-[13px] underline">Исключения</Link>}
+    {hasExceptions && <Link to={runPath + '/documents#exceptions'} className="inline-block text-[13px] underline">Исключения</Link>}
     {files.length === 0 && issues.length === 0 && result.summary.counts.unverified === 0
       && <p className="result-summary-muted text-sm">Дополнительные замечания отсутствуют.</p>}
   </section>;
