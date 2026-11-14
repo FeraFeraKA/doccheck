@@ -739,3 +739,27 @@ def test_scan_reports_inferred_period_and_marks_missing_amounts(
     assert contract.kind == "contract" and contract.normalized_value == "E2E-31"
     assert contract.locator.bbox[:2] == (0.06, 0.09)
     assert job.result.documents[0].decision.evidence_refs == [cutoff.id, contract.id]
+
+
+def test_unrelated_xlsx_heading_cannot_relabel_total():
+    from decimal import Decimal
+
+    from doccheck_backend.contracts.locators import SheetLocator
+    from doccheck_backend.native_observations import Observation
+    from doccheck_backend.v32_adapter import _source_groups
+
+    def cell(address, text, **values):
+        return Observation(
+            text, SheetLocator(kind="sheet", sheet="Взносы", range=address), **values
+        )
+
+    observations = (
+        cell("A1", "Расчет страховых взносов"),
+        cell("E1", "Расчетная ведомость по оплате труда"),
+        cell("B6", "1172.70", amount=Decimal("1172.70"), amount_role="total"),
+    )
+    assert _source_groups("xlsx", observations, {}, "payroll") == ([], [])
+    assert _source_groups("xlsx", observations, {}, "insurance") == (
+        [observations[2]],
+        [observations[0]],
+    )

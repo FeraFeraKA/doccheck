@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation, localcontext
 from pathlib import Path, PurePosixPath
-from typing import Literal
+from typing import BinaryIO, Literal
 from xml.etree.ElementTree import Element
 from zipfile import ZipFile
 
@@ -117,7 +117,7 @@ def _cells(
         style = int(node.get("s", "0"))
         if not 0 <= style < len(temporal_styles):
             raise ValueError("Invalid spreadsheet cell style")
-        if kind in {"b", "d", "e"} or temporal_styles[style]:
+        if kind in {"b", "d", "e"} or (kind == "n" and temporal_styles[style]):
             cells[key] = _Cell(value, "nonmonetary", formula=formula is not None)
             continue
         if formula is not None:
@@ -308,7 +308,7 @@ def _amount_role(
     return "candidate"
 
 
-def read_workbook(path: Path) -> NativeDocument:
+def read_workbook(path: Path | BinaryIO) -> NativeDocument:
     observations: list[Observation] = []
     issues: list[NativeIssue] = []
     with ZipFile(path) as archive:
