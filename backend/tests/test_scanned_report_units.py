@@ -4,7 +4,8 @@ from decimal import Decimal
 from uuid import uuid4
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
+from scanned_kfz_fixture import ScanRow, require_raster_ocr, write_kfz_with_breakdown
 
 from doccheck_backend import scanned_report
 from doccheck_backend.contracts.locators import PageLocator
@@ -237,3 +238,49 @@ def test_unconfirmed_unit_keeps_source_address_without_asserting_rubles():
         assert row.status == "unverified" and row.reported_value is None and row.delta is None
         reason = next(reason for reason in row.reasons if reason.code == "report_unit_unverified")
         assert reason.evidence_refs == row.reported_evidence_refs and len(reason.evidence_refs) == 1
+
+
+@pytest.mark.parametrize(
+    ("label", "offset", "confirmed"),
+    [
+        ("Суммы КФЗ: руб.", (30, 30), True),
+        ("Суммы КФЗ: тыс. руб.", (110, 60), False),
+        ("Суммы КФЗ: CAD", (200, 90), False),
+    ],
+)
+def test_real_ocr_does_not_treat_other_units_as_rubles(label, offset, confirmed):
+    require_raster_ocr()
+    image = Image.new("RGB", (1000, 180), "white")
+    ImageDraw.Draw(image).text(
+        offset, label, fill="black", font=ImageFont.truetype("DejaVuSans.ttf", 36)
+    )
+    lines = scanned_report.recognize_lines(image)
+    assert scanned_report._confirmed_rubles(lines) is confirmed
+
+
+def test_real_ocr_reads_an_explicit_ruble_multilevel_report(tmp_path):
+    require_raster_ocr()
+    period = ("2031-01-01", "2031-03-31")
+    contract = "SYN-10"
+    path = write_kfz_with_breakdown(
+        tmp_path / "report.png",
+        contract,
+        period,
+        ScanRow(5, 2031, ("1070,45", "351,29", "789,05", "399,12", "2609,91")),
+    )
+    with Image.open(path) as image:
+        reading = scanned_report.read_report_row(
+            image,
+            1,
+            PageLocator(kind="page", page=1, fragment_id="kfz-stage-5-2031"),
+            contract,
+            period,
+        )
+    assert reading is not None and reading.complete
+    assert {cell.code: str(cell.amount) for cell in reading.cells} == {
+        "0200": "1070.45",
+        "0300": "351.29",
+        "0800": "789.05",
+        "0900": "399.12",
+        "total": "2609.91",
+    }
