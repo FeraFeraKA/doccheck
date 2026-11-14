@@ -267,11 +267,12 @@ test('accepting a saved check archives it and downloads its conclusion', async (
   const acceptedDownload = page.waitForEvent('download');
   await accept.click();
   expect((await acceptedDownload).suggestedFilename()).toBe(`doccheck-${runId}.xlsx`);
-  await expect(page.getByText(/^Принят ·/)).toBeVisible();
+  const accepted = page.getByRole('status').filter({ hasText: /Принят ·/ });
+  await expect(accepted).toBeVisible();
   expect(archiveCalls).toBe(1);
 
   await page.goto(`/checks/${runId}/conclusion`);
-  await expect(page.getByText(/^Принят ·/)).toBeVisible();
+  await expect(accepted).toBeVisible();
   const repeatedDownload = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Скачать XLSX' }).click();
   expect((await repeatedDownload).suggestedFilename()).toBe(`doccheck-${runId}.xlsx`);
@@ -348,9 +349,10 @@ test('the finished check loads stored findings and can retry without repeating s
   await zero.getByRole('button', { name: 'Синтетическая статья B', exact: true }).click();
   const reconciliation = page.getByRole('region', { name: 'Рабочее место сверки' });
   await expect(reconciliation.getByRole('region', { name: 'Подробности: Синтетическая статья B' }))
-    .toContainText('Источник ожидаемого значения не прочитан');
+    .toContainText('Нет подтверждённых слагаемых.');
+  await expect(reconciliation.getByRole('cell', { name: 'Источник ожидаемого значения не прочитан' })).toBeVisible();
   await page.getByRole('link', { name: 'Исключения' }).click();
-  await expect(page.getByRole('region', { name: 'Исключения', exact: true })
+  await expect(page.getByRole('region', { name: 'Таблица документов', exact: true })
     .getByText('Ошибка чтения', { exact: true })).toBeVisible();
   expect(statusCalls).toBe(1);
   expect(findingsCalls).toBe(2);

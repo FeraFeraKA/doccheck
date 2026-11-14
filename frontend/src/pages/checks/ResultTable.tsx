@@ -71,6 +71,8 @@ export function ResultTable({
             const detailsId = `details-${row.id}`;
             const components = row.calculation?.components ?? [];
             const issue = row.root_issue_id !== null ? issuesById.get(row.root_issue_id) : undefined;
+            const explanation = rowExplanation(row, issue);
+            const additionalIssue = issue?.message.trim();
             const reportSource = row.reported_evidence_refs.find((id) => {
               const item = evidenceById.get(id);
               return item && documentsById.has(item.document_id);
@@ -132,11 +134,12 @@ export function ResultTable({
                     <span className="indicator-status-label" aria-hidden="true">{statusLabels[row.status]}</span>
                   </span></td>
                   <td className="indicator-explanation">
-                    <p>{rowExplanation(row, issue)}</p>
+                    <p>{explanation}</p>
                   </td>
                 </tr>
                 {isExpanded && <tr className="source-subrow"><td colSpan={6}>
                   <div id={detailsId} role="region" aria-label={`Подробности: ${row.label}`} className="indicator-details">
+                    {additionalIssue && additionalIssue !== explanation.trim() && <p>{additionalIssue}</p>}
                     {components.length === 0 ? <p>Нет подтверждённых слагаемых.</p> :
                       <ol className="indicator-documents" aria-label={`Слагаемые показателя: ${row.label}`}>
                         {components.map((component) => <li key={component.amount_refs[0]}>

@@ -8,7 +8,7 @@ import { RunProgressBar } from './RunProgressBar';
 import { RunQueue } from './RunQueue';
 import type { QueueReceipt } from './RunQueue';
 import { runQueuePath } from './runTitle';
-import { UploadFileList, UploadSpinner } from './UploadFiles';
+import { uploadFileInfo, UploadFileList, UploadSpinner } from './UploadFiles';
 import type { UploadFile } from './UploadFiles';
 import { usePreparedRun } from './usePreparedRun';
 import { useRunHistory } from './useRunHistory';
@@ -132,7 +132,11 @@ export function NewCheck({ initialPack }: { initialPack?: InitialRunPack } = {})
         void navigate(runQueuePath(accepted.run_id), { replace: true });
         return;
       }
-      const receipt = { id: accepted.run_id, documentCount: 1 + documents.length };
+      const receipt = {
+        id: accepted.run_id,
+        documentCount: 1 + documents.length,
+        reportName: uploadFileInfo(report[0]).name,
+      };
       setReceipts((previous) => [receipt, ...previous.filter(({ id }) => id !== receipt.id)].slice(0, 20));
       history.refresh();
       setAnnounceAccepted(true);
