@@ -21,7 +21,7 @@ export function Sidebar() {
     if (!expanded) return;
     function closeOnEscape(event: KeyboardEvent) {
       if (event.key !== 'Escape' || event.defaultPrevented ||
-        (event.target instanceof Element && event.target.closest('dialog[open], [aria-modal="true"]'))) return;
+        (event.target instanceof Element && event.target.closest('dialog:modal, [aria-modal="true"]'))) return;
       setChoice(false);
       if (sidebar.current?.contains(document.activeElement)) toggle.current?.focus();
     }

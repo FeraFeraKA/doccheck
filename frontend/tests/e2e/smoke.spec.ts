@@ -38,6 +38,21 @@ test('system status remains reachable with the compact sidebar', async ({ page }
   }
 });
 
+test('Escape dismisses hover navigation while the inline reconciliation search has focus', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/checks/synthetic-example');
+  const search = page.getByRole('searchbox', { name: 'Поиск показателя или документа' });
+  await search.focus();
+  const sidebar = page.getByRole('complementary', { name: 'Меню DocCheck' });
+  await sidebar.hover({ position: { x: 7, y: 43 } });
+  await expect(sidebar).toHaveAttribute('data-expanded', 'true');
+  await page.keyboard.press('Escape');
+  await expect(sidebar).toHaveAttribute('data-expanded', 'false');
+  await expect(search).toBeFocused();
+  await page.getByRole('link', { name: 'Все проверки', exact: true }).click();
+  await expect(page).toHaveURL(/\/checks$/);
+});
+
 test('synthetic API mock: queued → processing → completed', async ({ page }) => {
   await page.route('**/health', (route) => route.fulfill({ json: { status: 'ok', database: 'ok' } }));
   await page.route('**/api/synthetic-jobs', (route) => route.fulfill({ status: 201, json: syntheticJob('queued') }));
