@@ -173,9 +173,11 @@ def parse_scan_report(observations: tuple[Observation, ...]) -> ScanScope | None
         if label and (int(label[1].replace("з", "3")), int(label[2])) == (stage, last.year):
             matches.append(item)
     confirmed_rows = [item for item in matches if item in visible]
-    if len(confirmed_rows) != 1:
+    if not confirmed_rows:
         return None
     row = confirmed_rows[0]
+    if any(not _same_region(row, other) for other in confirmed_rows[1:]):
+        return None
     if any(
         _page(other) != _page(row) or abs(_center(other, 1) - _center(row, 1)) > 0.004
         for other in matches

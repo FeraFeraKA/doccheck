@@ -159,3 +159,15 @@ def test_repeated_date_must_use_same_source_geometry(tmp_path, monkeypatch):
         None,
     )
     assert result is None
+
+
+def test_duplicate_reading_of_exact_same_report_row_is_not_ambiguity(scanned_stage):
+    from dataclasses import replace
+
+    row = next(item for item in scanned_stage if item.raw_text == "7 этап, 2028 г.:")
+    confirmed = replace(
+        row,
+        locator=row.locator.model_copy(update={"fragment_id": "same-cell-reread"}),
+        repeated_read=True,
+    )
+    assert parse_scan_report((*scanned_stage, confirmed)) is not None
