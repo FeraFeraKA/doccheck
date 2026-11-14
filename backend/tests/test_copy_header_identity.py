@@ -234,10 +234,13 @@ def test_cli_three_matching_numbers_remain_review_candidates(tmp_path):
 
 
 def test_cli_all_compatible_pairs_are_checked_in_every_order(tmp_path):
+    alpha_inn, beta_inn = _synthetic_inn("012345678"), _synthetic_inn("098765432")
     records = [
-        _cli_document(tmp_path, "alpha1", "Акт № ACT-71", issuer="ООО Альфа"),
-        _cli_document(tmp_path, "beta", "Акт № ACT-71", issuer="ООО Бета"),
-        _cli_document(tmp_path, "alpha2", "Копия: акт № ACT-71", issuer="ООО Альфа"),
+        _cli_document(tmp_path, "alpha1", "Акт № ACT-71", issuer=f"ООО Альфа (ИНН {alpha_inn})"),
+        _cli_document(tmp_path, "beta", "Акт № ACT-71", issuer=f"ООО Бета (ИНН {beta_inn})"),
+        _cli_document(
+            tmp_path, "alpha2", "Копия: акт № ACT-71", issuer=f"ООО Альфа (ИНН {alpha_inn})"
+        ),
     ]
     for order in permutations(records):
         result = _reconcile_cli(list(order), "200.00")
@@ -286,7 +289,7 @@ def _synthetic_inn(prefix):
         ("ООО Альфа", "Общество с ограниченной ответственностью Альфа", False),
         ("ООО Альфа", "Общество с ограниченной ответственностью “Альфа”", False),
         ("ООО Альфа", "ООО Альфа Групп", False),
-        ("ООО Альфа", "ООО Бета", True),
+        ("ООО Альфа", "ООО Бета", False),
         (
             f"ООО Альфа, ИНН {_synthetic_inn('012345678')}",
             f"ООО Бета, ИНН {_synthetic_inn('098765432')}",
@@ -300,7 +303,7 @@ def _synthetic_inn(prefix):
         (
             f"ООО Альфа, ИНН {_synthetic_inn('012345678')}",
             f"ООО Альфа, ИНН {_synthetic_inn('098765432')}",
-            False,
+            True,
         ),
         (
             f"ООО Альфа, ИНН {_synthetic_inn('012345678')}",
@@ -337,14 +340,15 @@ def test_cli_issuer_names_and_inn_do_not_hide_a_collision(
 
 
 def test_cli_full_and_short_legal_forms_do_not_hide_pair(tmp_path):
+    alpha_inn, beta_inn = _synthetic_inn("012345678"), _synthetic_inn("098765432")
     records = [
-        _cli_document(tmp_path, "alpha1", "Акт № ACT-71", issuer="ООО Альфа"),
-        _cli_document(tmp_path, "beta", "Акт № ACT-71", issuer="ООО Бета"),
+        _cli_document(tmp_path, "alpha1", "Акт № ACT-71", issuer=f"ООО Альфа (ИНН {alpha_inn})"),
+        _cli_document(tmp_path, "beta", "Акт № ACT-71", issuer=f"ООО Бета (ИНН {beta_inn})"),
         _cli_document(
             tmp_path,
             "alpha2",
             "Копия акта № ACT-71",
-            issuer="Общество с ограниченной ответственностью Альфа",
+            issuer=f"Общество с ограниченной ответственностью Альфа (ИНН {alpha_inn})",
         ),
     ]
     for order in permutations(records):
@@ -389,28 +393,34 @@ def test_cli_unattributed_inn_cannot_establish_different_issuers(tmp_path):
 
 
 @pytest.mark.parametrize(
-    ("first_issuer", "second_issuer"),
+    ("first_issuer", "second_issuer", "independent"),
     [
         (
             f"ООО Альфа, ИНН {_synthetic_inn('012345678')}",
             f"ООО Бета, ИНН {_synthetic_inn('012345678')}",
+            False,
         ),
         (
             f"ООО Альфа, ИНН {_synthetic_inn('012345678')}",
             f"ООО Альфа, ИНН {_synthetic_inn('098765432')}",
+            True,
         ),
     ],
 )
 def test_cli_contradictory_issuers_do_not_disappear_on_type_difference(
-    tmp_path, first_issuer, second_issuer
+    tmp_path, first_issuer, second_issuer, independent
 ):
     first = _cli_document(tmp_path, "first", "Акт № ACT-71", issuer=first_issuer)
     second = _cli_document(tmp_path, "second", "УПД № ACT-71", issuer=second_issuer)
     for order in permutations((first, second)):
         result = _reconcile_cli(list(order), "200.00")
         assert result["duplicates"] == []
-        assert result["rows"][0]["status"] == "unverified"
-        assert result["rows"][0]["source_ids"] == []
+        if independent:
+            assert result["rows"][0]["status"] == "correct"
+            assert set(result["rows"][0]["source_ids"]) == {"first", "second"}
+        else:
+            assert result["rows"][0]["status"] == "unverified"
+            assert result["rows"][0]["source_ids"] == []
 
 
 @pytest.mark.parametrize("reverse", [False, True])
@@ -431,7 +441,7 @@ def test_cli_contradictory_issuers_do_not_disappear_on_type_difference(
         ({}, "Копия акта № ACT-72", 200, "two_included"),
         ({}, "Копия: акт № ACT-72", 200, "two_included"),
         ({}, "Акт № ACT-72 (копия)", 200, "two_included"),
-        ({"issuer": "ООО Другое"}, "Копия: акт № ACT-71", 200, "two_included"),
+        ({"issuer": "ООО Другое"}, "Копия: акт № ACT-71", 100, "collision"),
         ({"contract": "SYN-8"}, "Акт № ACT-71 (копия)", 100, "other_contract"),
         ({"period": "2026-01-15 — 2026-01-31"}, "Копия: акт № ACT-71", 200, "two_included"),
     ],

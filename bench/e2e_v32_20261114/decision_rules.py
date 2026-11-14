@@ -27,6 +27,7 @@ _ISSUER_FORMS = {
 _ISSUER_TAX_LABEL = re.compile(r"\bинн\b", re.I)
 _ISSUER_TAX_VALUE = re.compile(r"\bинн\b\s*(?:[:№]\s*)?([0-9]+)(?![\w-])", re.I)
 _ISSUER_REQUISITES = re.compile(r"\s*[,;(]?\s*(?:инн|кпп|огрн(?:ип)?)\s*(?:[:№]\s*)?[0-9].*$", re.I)
+_OTHER_PARTY = re.compile(r"\b(?:заказчик|покупатель|получатель|плательщик)\b", re.I)
 
 
 def _inn_checksum_valid(value):
@@ -49,7 +50,8 @@ def _issuer_comparison_key(value, native_text):
     Full and short legal forms follow the same normalization as the API.
     An INN elsewhere in the document cannot safely be attributed to this issuer.
     """
-    if not isinstance(value, str) or not isinstance(native_text, str) or "\ufffd" in value:
+    if (not isinstance(value, str) or not isinstance(native_text, str)
+            or "\ufffd" in value or _OTHER_PARTY.search(value)):
         return None
     value = unicodedata.normalize("NFC", value).casefold().translate(str.maketrans("", "", '«»“”„"'))
     value = re.sub(r"\s+", " ", value).strip()
@@ -72,17 +74,12 @@ def _issuer_comparison_key(value, native_text):
 
 
 def _distinct_issuers(left, right):
-    """Use compatible explicit forms and different names only as a collision veto."""
+    """Different source-attributed valid INNs can veto a possible collision."""
     if not left or not right:
         return False
-    left_form, left_name, left_inn = left
-    right_form, right_name, right_inn = right
-    # A shared INN and differing names is a conflict, not proof of separation.
-    if left_inn and right_inn and left_inn == right_inn:
-        return False
-    # An abbreviated or expanded name may describe the same organization.
-    return (left_form == right_form and left_name != right_name
-            and left_name not in right_name and right_name not in left_name)
+    _, _, left_inn = left
+    _, _, right_inn = right
+    return bool(left_inn and right_inn and left_inn != right_inn)
 
 
 def _contradictory_issuers(left, right):
@@ -90,10 +87,7 @@ def _contradictory_issuers(left, right):
         return False
     _, left_name, left_inn = left
     _, right_name, right_inn = right
-    return bool(left_inn and right_inn and (
-        (left_inn == right_inn and left_name != right_name)
-        or (left_inn != right_inn and left_name == right_name)
-    ))
+    return bool(left_inn and right_inn and left_inn == right_inn and left_name != right_name)
 
 
 def normalize_identifier(value):
@@ -310,7 +304,8 @@ def reconcile(documents, report_rows, contract_number, period_start, period_end,
                 "period_start": start.isoformat(), "period_end": end.isoformat(),
                 "document_kind": identity.get("document_kind"), "issuer_key": identity.get("issuer_key"),
                 "issuer_comparison": _issuer_comparison_key(identity.get("issuer_key"), document.get("source_native_text"))}
-        context = (contract, start, end, normalize_identifier(facts.get("counterparty")))
+        # A model-only counterparty spelling cannot prove separate operations.
+        context = (contract, start, end)
         if number:
             # A full literal native ID is not normalized across scripts, case,
             # punctuation or prefixes. Both sides of this map are verified.
@@ -326,8 +321,8 @@ def reconcile(documents, report_rows, contract_number, period_start, period_end,
                 if _distinct_issuers(item["issuer_comparison"], previous["issuer_comparison"]):
                     context_conflict.append("issuer_key")
                 if context_conflict:
-                    # Explicitly different kinds or issuers identify incompatible
-                    # candidates, not a collision to remove from either sum.
+                    # Different kinds or source-attributed INNs can identify
+                    # incompatible candidates; names alone cannot do that.
                     identity_warnings.append({"id": doc_id, "related_id": previous["id"],
                         "reason": "explicit_identity_context_conflict", "conflicting_fields": context_conflict})
                 else:

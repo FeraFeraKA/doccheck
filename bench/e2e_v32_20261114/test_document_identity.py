@@ -156,13 +156,13 @@ class IdentityMergeTests(unittest.TestCase):
         self.assertEqual(result["rows"][0]["source_ids"], ["first", "second"])
         self.assertTrue(any(w["reason"] == "explicit_identity_context_conflict" for w in result["identity_warnings"]))
 
-    def test_explicit_issuer_conflict_prevents_same_id_merge(self):
+    def test_different_issuer_names_alone_require_review(self):
         first = native("first", text='Акт № ОС-3817\nИсполнитель: ООО «Альфа»')
         second = native("second", text='Акт № ОС-3817\nИсполнитель: ООО «Бета»')
         result = compare([first, second], "200.00")
         self.assertEqual(result["duplicates"], [])
-        self.assertEqual(result["rows"][0]["status"], "correct")
-        self.assertEqual(result["rows"][0]["source_ids"], ["first", "second"])
+        self.assertEqual(result["rows"][0]["status"], "unverified")
+        self.assertEqual(result["rows"][0]["source_ids"], [])
 
     def test_absent_kind_or_issuer_does_not_become_a_new_veto(self):
         first = native("first", text='Акт № ОС-3817\nИсполнитель: ООО «Альфа»')
@@ -248,13 +248,21 @@ class IdentityMergeTests(unittest.TestCase):
         self.assertEqual(result["duplicates"], [])
         self.assertEqual(result["rows"][0]["status"], "unverified")
 
-    def test_collisions_require_matching_contract_period_and_counterparty(self):
-        for field, value in (("contract_number", "OTHER-71"), ("period_start", "2026-04-01"), ("counterparty", "Another company")):
+    def test_collisions_require_matching_contract_and_period(self):
+        for field, value in (("contract_number", "OTHER-71"), ("period_start", "2026-04-01")):
             uncertain = native("second", raw="ОС-3817", text="Сумма: 100")
             uncertain["prediction"][field] = value
             if field == "period_start": uncertain["prediction"]["period_end"] = "2026-04-30"
             result = compare([native("first"), uncertain], "200.00")
             self.assertFalse(any(x["reason"].endswith("collision") or x["reason"] == "suspected_bare_tail_identity" for x in result["identity_warnings"]))
+
+    def test_model_counterparty_spelling_cannot_hide_a_collision(self):
+        uncertain = native("second", raw="ОС-3817", text="Сумма: 100")
+        uncertain["prediction"]["counterparty"] = "Another company"
+        result = compare([native("first"), uncertain], "200.00")
+        self.assertEqual(result["duplicates"], [])
+        self.assertEqual(result["rows"][0]["status"], "unverified")
+        self.assertTrue(any(x["reason"] == "unresolved_document_identity_collision" for x in result["identity_warnings"]))
 
     def test_foreign_reference_raw_is_not_an_alias_of_current_operation(self):
         for amount in ("100.00", "101.00"):

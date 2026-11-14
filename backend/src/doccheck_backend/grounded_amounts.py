@@ -15,6 +15,7 @@ from doccheck_backend.native_observations import NativeDocument, NativeIssue, Ob
 from doccheck_backend.native_reader import _text_amount, read_native_document
 from doccheck_backend.normalization import normalize_contract_number, normalize_document_date
 from doccheck_backend.page_ocr import page_locator, recognize_lines, render_pages
+from doccheck_backend.requisite_validation import validate_observed_inn
 
 ARTICLES = {
     "payroll": ("0200", "Затраты на оплату труда"),
@@ -109,7 +110,9 @@ _OTHER_CURRENCY = re.compile(
 _WHOLE_RUBLES = Decimal("0.01")
 _PDF_OCR_ISSUES = {"clipped_pdf_text", "no_native_text"}
 _ISSUER_REQUISITES = re.compile(r"\s*[,;(]?\s*(?:инн|кпп|огрн(?:ип)?)\s*(?:[:№]\s*)?[0-9].*$")
-_ISSUER_TAX_ID = re.compile(r"\bинн\b\s*(?:[:№]\s*)?([0-9]{12}|[0-9]{10})(?![0-9])")
+_ISSUER_TAX_LABEL = re.compile(r"\bинн\b", re.I)
+_ISSUER_TAX_ID = re.compile(r"\bинн\b\s*(?:[:№]\s*)?([0-9]+)(?![\w-])", re.I)
+_OTHER_PARTY = re.compile(r"\b(?:заказчик|покупатель|получатель|плательщик)\b", re.I)
 _ISSUER_FORMS = {
     "общество с ограниченной ответственностью": "ооо",
     "публичное акционерное общество": "пао",
@@ -134,6 +137,7 @@ class GroundedDocument:
     issuer_key: str | None
     issuer_tax_id: str | None
     stage_uncertain: bool
+    issuer_locator: Locator | None = None
 
 
 def _norm(text: str) -> str:
@@ -141,6 +145,44 @@ def _norm(text: str) -> str:
     return normalized.removesuffix(" — синтетический документ").removesuffix(
         " - синтетический документ"
     )
+
+
+def _attributed_issuer_inn(
+    parsed: dict[str, object],
+    identity_text: str,
+    observations: tuple[Observation, ...],
+    method: str,
+) -> tuple[str | None, Locator | None]:
+    """Accept one valid INN directly printed in a native issuer-labelled observation."""
+    from bench.e2e_v32_20261114.document_identity import ISSUER_LABEL
+
+    candidates = parsed.get("issuer_evidence")
+    if method != "native" or not parsed.get("issuer_key") or not isinstance(candidates, list):
+        return None, None
+    if len(candidates) != 1 or not isinstance(candidates[0], dict):
+        return None, None
+    candidate = candidates[0]
+    start, end, value = candidate.get("start"), candidate.get("end"), candidate.get("text")
+    if (
+        not isinstance(start, int)
+        or not isinstance(end, int)
+        or not isinstance(value, str)
+        or not 0 <= start < end <= len(identity_text)
+        or identity_text[start:end] != value
+        or _OTHER_PARTY.search(value)
+    ):
+        return None, None
+    index = identity_text.count("\n", 0, start)
+    if index >= len(observations):
+        return None, None
+    observation = observations[index]
+    if not ISSUER_LABEL.match(observation.raw_text) or value not in observation.raw_text:
+        return None, None
+    tokens = _ISSUER_TAX_ID.findall(value)
+    if len(_ISSUER_TAX_LABEL.findall(value)) != 1 or len(tokens) != 1:
+        return None, None
+    result = validate_observed_inn(tokens[0], locator=observation.locator)
+    return (result.value, result.locator) if result.value is not None else (None, None)
 
 
 def _read_observations(
@@ -682,8 +724,9 @@ def ground_document(
         identity = None
 
     issuer = parsed["issuer_key"]
-    tax_ids = set(_ISSUER_TAX_ID.findall(issuer or ""))
-    issuer_tax_id = next(iter(tax_ids)) if len(tax_ids) == 1 else None
+    issuer_tax_id, issuer_locator = _attributed_issuer_inn(
+        parsed, identity_text, observations, method
+    )
     if issuer:
         issuer = _ISSUER_REQUISITES.sub("", issuer).strip(" .,:;«»\"'()")
         for name, short in _ISSUER_FORMS.items():
@@ -705,4 +748,5 @@ def ground_document(
         issuer or None,
         issuer_tax_id,
         stage_uncertain,
+        issuer_locator,
     )

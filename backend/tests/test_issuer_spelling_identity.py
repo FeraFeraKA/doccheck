@@ -17,6 +17,8 @@ ROOT = BACKEND.parent
 SPELLING_PAIRS = [
     ("ООО Альфа-Бета", "Общество с ограниченной ответственностью Альфа—Бета"),
     ("ООО Алёнка", "Общество с ограниченной ответственностью Аленка"),
+    ("ООО Альфа, г. Москва", "Общество с ограниченной ответственностью Альфа г. Москва"),
+    ("ООО Северо-Запад", "Общество с ограниченной ответственностью Северо Запад"),
 ]
 
 
@@ -78,10 +80,15 @@ def test_cli_spelling_variants_require_review_in_both_orders(tmp_path, first_iss
 def test_cli_spelling_variants_preserve_independent_third_in_every_order(
     tmp_path, first_issuer, second_issuer
 ):
+    alpha_inn, gamma_inn = _synthetic_inn("012345678"), _synthetic_inn("098765432")
     documents = [
-        _cli_document(tmp_path, "first", "Акт № ACT-71", issuer=first_issuer),
-        _cli_document(tmp_path, "second", "Акт № ACT-71", issuer=second_issuer),
-        _cli_document(tmp_path, "third", "Акт № ACT-71", issuer="ООО Гамма"),
+        _cli_document(
+            tmp_path, "first", "Акт № ACT-71", issuer=f"{first_issuer} (ИНН {alpha_inn})"
+        ),
+        _cli_document(
+            tmp_path, "second", "Акт № ACT-71", issuer=f"{second_issuer} (ИНН {alpha_inn})"
+        ),
+        _cli_document(tmp_path, "third", "Акт № ACT-71", issuer=f"ООО Гамма (ИНН {gamma_inn})"),
     ]
     assert len({document["source_hash"] for document in documents}) == 3
     for order in permutations(documents):
@@ -126,10 +133,11 @@ def test_real_api_worker_spelling_variants_require_review_in_both_orders(
 def test_real_api_worker_all_orders_keep_only_independent_third(
     database_url, tmp_path, first_issuer, second_issuer
 ):
+    alpha_inn, gamma_inn = _synthetic_inn("012345678"), _synthetic_inn("098765432")
     variants = [
-        ("first.docx", _act("Акт № ACT-71", issuer=first_issuer)),
-        ("second.docx", _act("Акт № ACT-71", issuer=second_issuer)),
-        ("third.docx", _act("Акт № ACT-71", issuer="ООО Гамма")),
+        ("first.docx", _act("Акт № ACT-71", issuer=f"{first_issuer} (ИНН {alpha_inn})")),
+        ("second.docx", _act("Акт № ACT-71", issuer=f"{second_issuer} (ИНН {alpha_inn})")),
+        ("third.docx", _act("Акт № ACT-71", issuer=f"ООО Гамма (ИНН {gamma_inn})")),
     ]
     assert len({sha256(content).digest() for _, content in variants}) == 3
     environment = _environment(database_url, tmp_path)
@@ -172,7 +180,7 @@ def test_real_api_worker_all_orders_keep_only_independent_third(
         (
             f"ООО Альфа-Бета, ИНН {_synthetic_inn('012345678')}",
             f"ООО Альфа—Бета, ИНН {_synthetic_inn('098765432')}",
-            False,
+            True,
         ),
         (
             f"ООО Альфа, ИНН {_synthetic_inn('012345678')}",

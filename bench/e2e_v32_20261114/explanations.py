@@ -13,6 +13,7 @@ from pathlib import Path
 import re
 
 from .decision_rules import parse_amount, money_string
+from .document_identity import validate_number_evidence
 
 VERSION = 'reconciliation-explanations-v1'
 ROOT = Path(__file__).resolve().parents[2]
@@ -184,6 +185,13 @@ def _document_evidence(document):
             item = _span(document,text,candidate.get('start'),candidate.get('end'),'own_number','doc_number')
             if item and item['text'] == candidate.get('value',candidate.get('text')):
                 found.append(item)
+        # The issuer role is revalidated against the original native text, not
+        # inferred from the model or from an arbitrary matching number.
+        if validate_number_evidence(document)['valid']:
+            for issuer in number.get('issuer_evidence', []):
+                item = _span(document,text,issuer.get('start'),issuer.get('end'),'issuer','issuer')
+                if item and item['text'] == issuer.get('text'):
+                    found.append(item)
     amount = parse_amount((document.get('prediction') or {}).get('amount'))
     amount_spans = []
     if amount is not None:
