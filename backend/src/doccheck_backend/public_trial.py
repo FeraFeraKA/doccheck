@@ -89,7 +89,7 @@ async def restrict_routes(request: Request, call_next):
         return JSONResponse({"code": "not_found"}, status_code=404)
     response = await call_next(request)
     if path == "/health" and response.status_code == 200:
-        return JSONResponse({"status": "ok", "public_trial": True})
+        return JSONResponse({"status": "ok", "database": "ok", "public_trial": True})
     return response
 
 
