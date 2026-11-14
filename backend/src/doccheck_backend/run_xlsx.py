@@ -85,6 +85,14 @@ def _source_ids(row: ResultRow) -> str | None:
     return "\n".join(dict.fromkeys(references)) or None
 
 
+def _compact_text(parts: list[str], detail_sheet: str) -> str | None:
+    unique = list(dict.fromkeys(filter(None, parts)))
+    text = "\n".join(unique)
+    if len(text.encode("utf-16-le")) // 2 <= 32_767:
+        return text or None
+    return f"Подробности на листе «{detail_sheet}»."
+
+
 def export_check_result(result: CheckResult) -> bytes:
     summary = result.summary
     if (
@@ -293,7 +301,13 @@ def export_check_result(result: CheckResult) -> bytes:
             messages.append(row.completeness.reason)
         if row.expected_value is None and row.observed_evidence_sum is not None:
             messages.append(f"По доступным документам: {row.observed_evidence_sum} {row.unit}")
-        label = f"{row.label} ({row.indicator_code})" if row.indicator_code else row.label
+        suffix = f" ({row.indicator_code})" if row.indicator_code else ""
+        suffix += f" · {row.unit}"
+        label = row.label + suffix
+        if len(label.encode("utf-16-le")) // 2 > 32_767:
+            available = 32_767 - len(("… " + suffix).encode("utf-16-le")) // 2
+            prefix = row.label.encode("utf-16-le")[: max(0, available) * 2]
+            label = prefix.decode("utf-16-le", errors="ignore") + "… " + suffix
         _append(
             report,
             label,
@@ -301,7 +315,7 @@ def export_check_result(result: CheckResult) -> bytes:
             row.expected_value,
             row.delta,
             _STATUS_LABELS[row.status],
-            "\n".join(dict.fromkeys(messages)) or None,
+            _compact_text(messages, "Сверка"),
         )
     _append(report)
     _append(report, "Дополнительные проверки")
@@ -318,19 +332,22 @@ def export_check_result(result: CheckResult) -> bytes:
             )
         else:
             messages.append("Источники решения приведены на листе «Основания решений».")
+        state = {
+            "exclude": "Исключён",
+            "needs_review": "Требует проверки",
+            "parse_error": "Ошибка чтения",
+            "include": "Прочитан частично"
+            if document.parse_status == "partial"
+            else "Ошибка чтения",
+        }.get(document.decision.state, document.decision.state)
         _append(
             report,
-            {
-                "exclude": "Исключён",
-                "needs_review": "Требует проверки",
-                "parse_error": "Ошибка чтения",
-                "include": "Ошибка чтения",
-            }.get(document.decision.state, document.decision.state),
+            state,
             document.name,
             None,
             None,
             None,
-            "\n".join(dict.fromkeys(filter(None, messages))) or None,
+            _compact_text(messages, "Документы"),
         )
     for issue in summary.primary_issues:
         _append(report, "Замечание", None, None, None, None, issue.message)
