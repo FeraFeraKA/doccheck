@@ -632,8 +632,8 @@ def test_native_xlsx_kfz_model_disagreement_keeps_native_scope(
     assert warning.code == "v32_report_model_unconfirmed"
 
 
-def _write_text_pdf(path, lines):
-    from test_native_pdf import _write_pdf
+def _write_text_pdf(path, lines, *, image_bounds=None):
+    from test_native_pdf import _stream, _write_pdf
 
     codes = {character: code for code, character in enumerate(sorted(set("".join(lines))), 32)}
     text = (
@@ -653,7 +653,16 @@ def _write_text_pdf(path, lines):
         f"{len(codes)} beginbfchar\n{mapping}\nendbfchar\n"
         "endcmap\nCMapName currentdict /CMap defineresource pop\nend\nend\n"
     ).encode()
-    _write_pdf(path, [text], cmap=cmap)
+    image = None
+    if image_bounds:
+        width, height, x, y = image_bounds
+        text += f" q {width} 0 0 {height} {x} {y} cm /FormA Do Q".encode()
+        image = _stream(
+            b"\xff\x00\x00",
+            b"/Type /XObject /Subtype /Image /Width 1 /Height 1 "
+            b"/ColorSpace /DeviceRGB /BitsPerComponent 8",
+        )
+    _write_pdf(path, [text], cmap=cmap, form=image)
 
 
 @pytest.mark.parametrize("duplicate", [False, True])
@@ -893,11 +902,69 @@ def test_report_request_preserves_small_raster_alongside_native_kfz_text(tmp_pat
         return {"message": {"content": "{}"}}
 
     monkeypatch.setattr(runtime, "api", request)
-    has_raster, prediction = read_report_with_model(report, runtime, "test", pdf=True)
+    reading = read_report_with_model(report, runtime, "test", pdf=True)
 
-    assert has_raster and prediction is None
+    assert reading.raster_pages == {1}
+    assert not reading.pixels_only and reading.prediction is None
     (message,) = requests[0]["messages"]
     assert "Страница 1: изображение № 1." in message["content"]
     assert caption in message["content"]
     (encoded_image,) = message["images"]
     assert encoded_image.startswith("iVBOR")
+
+
+@pytest.mark.parametrize(
+    ("image_bounds", "lines", "status", "issue_code"),
+    [
+        ((12, 12, 250, 15), ("contract", "period", "amount", "payroll"), "completed", None),
+        (
+            (180, 70, 0, 104),
+            ("contract", "period", "amount"),
+            "failed",
+            "v32_pdf_scan_scope_unconfirmed",
+        ),
+        ((150, 70, 0, 25), ("contract", "amount"), "failed", "v32_pdf_scope_ambiguous"),
+    ],
+)
+def test_composite_kfz_preserves_only_unobstructed_native_evidence(
+    uploaded_files, tmp_path, monkeypatch, image_bounds, lines, status, issue_code
+):
+    requests = []
+    _stub_ollama(monkeypatch, "1172.70", requests)
+    report = uploaded_files[0]
+    path = tmp_path / report["id"]
+    contents = {
+        "contract": "Договор № E2E-31.",
+        "period": "Период: 2027-02-01 — 2027-03-31.",
+        "amount": "Общехозяйственные расходы: 1 250,50 руб.",
+        "payroll": "Оплата труда: 300,12 руб.",
+    }
+    _write_text_pdf(path, [contents[key] for key in lines], image_bounds=image_bounds)
+    report.update(format="pdf", name="report.pdf", sha256=sha256(path.read_bytes()).hexdigest())
+
+    job = process(StoredRun(uuid4(), None, uploaded_files), tmp_path)
+
+    (request,) = requests
+    (message,) = request["messages"]
+    assert len(message["images"]) == 1
+    assert "E2E-31" in message["content"]
+    assert job.status == status
+    if issue_code is not None:
+        assert job.error.code == issue_code
+        assert job.result is None
+        return
+    assert job.result.scope.period_end == "2027-03-31"
+    assert {row.reported_value for row in job.result.rows} == {"1250.50", "300.12"}
+    assert all(row.status == "unverified" for row in job.result.rows)
+    assert all(
+        "report_raster_unconfirmed" in {reason.code for reason in row.reasons}
+        for row in job.result.rows
+    )
+    assert {issue.code for issue in job.result.summary.primary_issues} == {
+        "v32_report_raster_unconfirmed"
+    }
+    assert all(
+        item.method == "native_pdf" and item.locator.page == 1
+        for item in job.result.evidence
+        if item.document_id == report["id"]
+    )

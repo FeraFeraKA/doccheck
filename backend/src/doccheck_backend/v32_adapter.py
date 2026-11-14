@@ -38,7 +38,7 @@ from doccheck_backend.contracts.result import (
 from doccheck_backend.native_observations import Observation
 from doccheck_backend.native_reader import read_native_document
 from doccheck_backend.run_worker import StoredRun
-from doccheck_backend.v32_report_model import read_report_with_model
+from doccheck_backend.v32_report_model import read_report_with_model, uncovered_pdf_observations
 
 _MODEL_DIGEST = "d8b0f5e9760cd1682034f292d7ef72ec46f432149be0df7574bf2d6e92e38c04"
 _VERSION = "e2e-v32-20261114"
@@ -464,6 +464,7 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
             return _failure(run, "v32_report_unreadable", "Файл КФЗ не удалось прочитать.")
         report_path = Path(report_entry["path"])
         copyfile(source_path, report_path)
+        has_unconfirmed_raster = False
         if report.format == "xlsx":
             extracted_report = v32.extract_report(report_entry)
             if extracted_report.get("error"):
@@ -490,15 +491,14 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
             ):
                 return _failure(run, "v32_report_unreadable", "Не удалось прочитать PDF КФЗ.")
             try:
-                has_raster, model_report = read_report_with_model(
-                    report_path, v32.runtime, v32.MODEL, pdf=True
-                )
+                reading = read_report_with_model(report_path, v32.runtime, v32.MODEL, pdf=True)
                 v32.verify_source(report_entry)
             except (OSError, ValueError):
                 return _failure(
                     run, "v32_report_unreadable", "Не удалось подготовить страницы КФЗ."
                 )
-            if has_raster:
+            model_report = reading.prediction
+            if reading.pixels_only:
                 if model_report is None:
                     return _failure(
                         run,
@@ -525,14 +525,43 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
                     "Не удалось однозначно определить договор, период и суммы в PDF КФЗ.",
                 )
             inferred, report_evidence = parsed
+            if reading.raster_pages:
+                try:
+                    observations = uncovered_pdf_observations(
+                        report_path, native_report.observations, reading.raster_pages
+                    )
+                    unobstructed = observations == native_report.observations
+                except (OSError, ValueError):
+                    unobstructed = False
+                if not unobstructed:
+                    return _failure(
+                        run,
+                        "v32_pdf_scan_scope_unconfirmed",
+                        "Реквизиты и суммы скана КФЗ требуют подтверждения по оригиналу.",
+                    )
+                has_unconfirmed_raster = True
         if report.format == "xlsx":
             try:
-                _, model_report = read_report_with_model(
+                model_report = read_report_with_model(
                     report_path, v32.runtime, v32.MODEL, pdf=False
-                )
+                ).prediction
             except (OSError, KeyError, ValueError):
                 model_report = None
         report_warning = _report_model_warning(inferred, model_report)
+        report_warnings = [report_warning] if report_warning else []
+        if has_unconfirmed_raster:
+            report_warnings.append(
+                PrimaryIssue(
+                    id="report-raster-unconfirmed",
+                    code="v32_report_raster_unconfirmed",
+                    message=(
+                        "Часть КФЗ представлена изображением. "
+                        "Показаны только суммы из подтверждаемого текста, "
+                        "полнота отчёта не установлена."
+                    ),
+                    evidence_refs=[],
+                )
+            )
         scope = requested_scope or inferred
         if (scope.contract_number, scope.period_start, scope.period_end) != (
             inferred.contract_number,
@@ -684,6 +713,14 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
             reasons = [
                 Reason(code="completeness_unknown", message=completeness.reason, evidence_refs=[])
             ]
+            if has_unconfirmed_raster:
+                reasons.append(
+                    Reason(
+                        code="report_raster_unconfirmed",
+                        message="Растровая часть КФЗ требует проверки по оригиналу.",
+                        evidence_refs=[],
+                    )
+                )
             relevant_conflicts = any(
                 decision_rules.normalize_category(by_id[file_id]["prediction"].get("category"))
                 in (None, category)
@@ -774,7 +811,7 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
         rows=rows,
         summary=Summary(
             counts=StatusCounts(verified=0, discrepancy=0, unverified=len(rows)),
-            primary_issues=[report_warning] if report_warning else [],
+            primary_issues=report_warnings,
             conclusion="Полнота комплекта не установлена. Проверьте доступные подтверждения.",
         ),
     )
