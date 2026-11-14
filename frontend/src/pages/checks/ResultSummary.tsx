@@ -56,9 +56,7 @@ export function AdditionalChecks({ result, runPath, onOpenRow, onOpenDocument, o
 }) {
   const files = result.documents.filter(({ decision, errors }) => decision.state !== 'include' || errors.length > 0);
   const rowIssueIds = new Set(result.rows.map(({ root_issue_id }) => root_issue_id));
-  const fileErrorIds = new Set(files.flatMap(({ errors }) => errors.map(({ id }) => id)));
-  const issues = result.summary.primary_issues.filter((issue) =>
-    !rowIssueIds.has(issue.id) && !issue.file_error_refs?.some((id) => fileErrorIds.has(id)));
+  const issues = result.summary.primary_issues.filter(({ id }) => !rowIssueIds.has(id));
   const evidenceById = new Map(result.evidence.map((item) => [item.id, item]));
   const documentsById = new Map(result.documents.map((item) => [item.id, item.name]));
   function sourceLinks(refs: string[]) {

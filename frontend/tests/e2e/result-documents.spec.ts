@@ -139,3 +139,24 @@ test('diagnostics return keyboard focus and the documents route restores selecte
   await page.keyboard.press('Escape');
   await expect(page).toHaveURL(/\/documents$/);
 });
+
+test('a distinct primary issue remains visible beside the related file error', async ({ page }) => {
+  const id = 'diagnostic-issue';
+  const result = example.result;
+  const detail = 'Проверьте наличие читаемого скана в новом комплекте.';
+  await page.route(`**/api/v0/runs/${id}`, (route) => route.fulfill({ json: {
+    run_id: id, status: 'completed_with_issues', created_at: '2026-11-14T00:00:00Z', error: null, progress: { processed_documents: 4, total_documents: 4 },
+  } }));
+  await page.route(`**/api/v0/runs/${id}/findings`, (route) => route.fulfill({ json: {
+    ...result, run_id: id, summary: {
+      ...result.summary, primary_issues: [...result.summary.primary_issues, {
+        id: 'extra-scan-diagnostic', code: 'request_rescan', message: detail,
+        evidence_refs: [], file_error_refs: ['scan-read-error'],
+      }],
+    },
+  } }));
+  await page.goto('/checks/' + id);
+  const diagnostics = page.getByRole('region', { name: 'Дополнительные проверки' });
+  await expect(diagnostics.getByText(detail, { exact: true })).toBeVisible();
+  await expect(diagnostics.getByText('Ошибка чтения файла', { exact: true })).toBeVisible();
+});
