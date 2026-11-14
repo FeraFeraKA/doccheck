@@ -11,7 +11,9 @@ VERSION = "native-own-number-v2"
 TITLE = re.compile(r"^(?:сч[её]т[- ]акт|сч[её]т[- ]фактура|сч[её]т\s+на\s+оплату|акт|справка|расч[её]тная\s+ведомость|ведомость|расч[её]т\s+страховых\s+взносов|служебная\s+записка|универсальный\s+передаточный\s+документ|упд)\b", re.I)
 BARE_TITLE = re.compile(r"^(?:сч[её]т[- ]акт|акт|служебная\s+записка|универсальный\s+передаточный\s+документ|упд)\s+", re.I)
 OWN_HEADER = re.compile(r"(?:сч[её]т[- ]акт|сч[её]т[- ]фактура|сч[её]т\s+на\s+оплату|акт(?:\s+(?:оказанных\s+услуг|выполненных\s+работ|при[её]ма[- ]передачи))?|справка(?:\s+расч[её]т(?:\s+страховых\s+взносов)?)?|расч[её]тная\s+ведомость(?:\s+по\s+оплате\s+труда)?|ведомость|расч[её]т\s+страховых\s+взносов|служебная\s+записка|универсальный\s+передаточный\s+документ|упд)\s*", re.I)
-COPY_ACT_HEADER = re.compile(r"копия\s+акта(?:\s+(?:оказанных\s+услуг|выполненных\s+работ|при[её]ма[- ]передачи))?\s*", re.I)
+ACT_QUALIFIER = r"(?:\s+(?:оказанных\s+услуг|выполненных\s+работ|при[её]ма[- ]передачи))?"
+ACT_HEADER = re.compile(r"акт" + ACT_QUALIFIER + r"\s*", re.I)
+COPY_ACT_HEADER = re.compile(r"(?:копия\s+акта|копия\s*:\s*акт)" + ACT_QUALIFIER + r"\s*", re.I)
 OWN_LABEL = re.compile(r"^(?:(?:номер|№)\s+(?:настоящего\s+)?документа\b\s*[:№]?|документ\b\s*№|собственный\s+номер\s+документа\b\s*[:№]?)\s*", re.I)
 MARKER = re.compile(r"(?:№|\bномер\b)\s*[:]?\s*", re.I)
 REFERENCE = re.compile(r"\b(?:договор\w*|контракт\w*|основани\w*|согласно|приложени\w*|цитируем\w*|банк\w*|расч[её]тн\w*\s+сч[её]т|корреспондент\w*|сч[её]т\s+организации)\b|\b(?:к|по|из)\s+акту\b", re.I)
@@ -24,6 +26,7 @@ DATE_TOKEN = re.compile(r"(?:\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{4}[./-]\d{1,2}[.
 ABSENT = re.compile(r"^(?:б\s*/\s*н|без\s+номера|не\s+присвоен\w*|отсутствует|[-–—])\s*[.]?$", re.I)
 ABSENCE_MARKER = r"(?:б\s*[/\\-]\s*н|без\s+номера|не\s+присвоен(?:а|о)?|отсутствует|[_—–-]+)"
 DATE_TAIL = r"от\s+(?:\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{4}[./-]\d{1,2}[./-]\d{1,2})\s*(?:г\.)?"
+COPY_TAG = r"\(\s*копия\s*\)"
 ABSENCE_VALUE = re.compile(r"(?P<marker>" + ABSENCE_MARKER + r")\s*[.]?(?:\s+" + DATE_TAIL + r")?\s*", re.I)
 
 
@@ -98,7 +101,12 @@ def parse_value(cell, value_start, basis, label):
                  "line": cell["line"], "basis": basis, "label": label,
                  "context_start": cell["start"], "context_end": cell["end"], "context": cell["text"]}
     # A date after "от" is a separate requisite, never part of the ID.
-    if tail and not re.fullmatch(DATE_TAIL, tail, re.I):
+    marker = MARKER.search(label) if basis == "own_document_header" else None
+    marked_act = marker and ACT_HEADER.fullmatch(label[:marker.start()])
+    copy_tail = marked_act and re.fullmatch(
+        rf"(?:{COPY_TAG}(?:\s+{DATE_TAIL})?|{DATE_TAIL}\s+{COPY_TAG})", tail, re.I
+    )
+    if tail and not (re.fullmatch(DATE_TAIL, tail, re.I) or copy_tail):
         return [candidate], [{"reason": "multiple_or_unparsed_own_values", "line": cell["line"], "text": cell["text"]}], []
     return [candidate], [], []
 

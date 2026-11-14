@@ -5,6 +5,7 @@ import json
 import os
 from copy import deepcopy
 from hashlib import sha256
+from itertools import permutations
 from pathlib import Path
 from uuid import uuid4
 
@@ -33,6 +34,10 @@ ROOT = BACKEND.parent
         "Копия акта № ACT-71",
         "КОПИЯ АКТА оказанных услуг номер: ACT-71 от 31.01.2026",
         "Копия акта выполненных работ № ACT-71",
+        "Копия: акт № ACT-71",
+        "Акт № ACT-71 (копия)",
+        "Акт № ACT-71 от 31.01.2026 (копия)",
+        "Акт № ACT-71 (копия) от 31.01.2026",
     ],
 )
 def test_copy_header_has_literal_number_kind_and_address(header):
@@ -56,6 +61,11 @@ def test_copy_header_has_literal_number_kind_and_address(header):
         "Копия акта к договору № ACT-71",
         "Копия акта № ACT-71 и ACT-72",
         "Копия акта № ACT-71\nАкт № ACT-72",
+        "Копия: акт № ACT-71 и ACT-72",
+        "Акт № ACT-71 (копия) и ACT-72",
+        "Акт № ACT-71 (исправленный)",
+        "Акт № ACT-71 (копия другого документа)",
+        "Основание: копия: акт № ACT-71",
     ],
 )
 def test_reference_unmarked_or_ambiguous_copy_is_not_resolved(text):
@@ -101,9 +111,9 @@ def _act(header, *, amount="100,00", contract="SYN-7", issuer="ООО Синте
     return output.getvalue()
 
 
-def _cli_document(tmp_path, identifier, header, amount="100.00"):
+def _cli_document(tmp_path, identifier, header, amount="100.00", issuer="ООО Синтетика"):
     path = tmp_path / f"{identifier}.docx"
-    doc = Document(io.BytesIO(_act(header, amount=amount.replace(".", ","))))
+    doc = Document(io.BytesIO(_act(header, amount=amount.replace(".", ","), issuer=issuer)))
     doc.add_paragraph(f"Примечание: синтетический вариант {identifier}")
     doc.save(path)
     record = {
@@ -135,9 +145,15 @@ def _reconcile_cli(documents, reported="100.00"):
 
 @pytest.mark.parametrize("reverse", [False, True])
 @pytest.mark.parametrize("second_amount", ["100.00", "153.27"])
-def test_cli_copy_collision_is_reviewable_with_addressed_sources(tmp_path, reverse, second_amount):
+@pytest.mark.parametrize(
+    "copy_header",
+    ["Копия акта № ACT-71", "Копия: акт № ACT-71", "Акт № ACT-71 (копия)"],
+)
+def test_cli_copy_collision_is_reviewable_with_addressed_sources(
+    tmp_path, reverse, second_amount, copy_header
+):
     first = _cli_document(tmp_path, "first", "Акт № ACT-71")
-    second = _cli_document(tmp_path, "second", "Копия акта № ACT-71", second_amount)
+    second = _cli_document(tmp_path, "second", copy_header, second_amount)
     assert first["source_hash"] != second["source_hash"]
     documents = [first, second]
     if reverse:
@@ -213,23 +229,68 @@ def test_cli_three_matching_numbers_remain_review_candidates(tmp_path):
     }
 
 
+def test_cli_all_compatible_pairs_are_checked_in_every_order(tmp_path):
+    records = [
+        _cli_document(tmp_path, "alpha1", "Акт № ACT-71", issuer="ООО Альфа"),
+        _cli_document(tmp_path, "beta", "Акт № ACT-71", issuer="ООО Бета"),
+        _cli_document(tmp_path, "alpha2", "Копия: акт № ACT-71", issuer="ООО Альфа"),
+    ]
+    for order in permutations(records):
+        result = _reconcile_cli(list(order), "200.00")
+        row = result["rows"][0]
+        assert result["duplicates"] == []
+        assert row["status"] == "unverified"
+        assert row["expected_amount"] is None and row["delta"] is None
+        assert row["partial_amount"] == "100.00" and row["source_ids"] == ["beta"]
+        assert {r["id"] for r in row["reasons"] if "id" in r} == {"alpha1", "alpha2"}
+        decisions = {
+            item["document_id"]: item["disposition"]
+            for item in explain({"id": "report"}, list(order), result)["document_decisions"]
+        }
+        assert decisions == {
+            "alpha1": "requires_review",
+            "alpha2": "requires_review",
+            "beta": "included",
+        }
+
+
+def test_cli_missing_issuer_does_not_hide_any_compatible_pair(tmp_path):
+    records = [
+        _cli_document(tmp_path, "alpha", "Акт № ACT-71", issuer="ООО Альфа"),
+        _cli_document(tmp_path, "beta", "Акт № ACT-71", issuer="ООО Бета"),
+        _cli_document(tmp_path, "unknown", "Копия: акт № ACT-71", issuer=""),
+    ]
+    for order in permutations(records):
+        result = _reconcile_cli(list(order), "200.00")
+        row = result["rows"][0]
+        assert result["duplicates"] == []
+        assert row["status"] == "unverified"
+        assert row["source_ids"] == []
+        assert {r["id"] for r in row["reasons"] if "id" in r} == {"alpha", "beta", "unknown"}
+
+
 @pytest.mark.parametrize("reverse", [False, True])
 @pytest.mark.parametrize(
-    ("second_kwargs", "second_number", "reported", "expected_state"),
+    ("second_kwargs", "second_header", "reported", "expected_state"),
     [
-        ({}, "ACT-71", 100, "collision"),
-        ({"amount": "153,27"}, "ACT-71", 100, "collision"),
-        ({}, "ACT-72", 200, "two_included"),
-        ({"issuer": "ООО Другое"}, "ACT-71", 200, "two_included"),
-        ({"contract": "SYN-8"}, "ACT-71", 100, "other_contract"),
-        ({"period": "2026-01-15 — 2026-01-31"}, "ACT-71", 200, "two_included"),
+        ({}, "Копия акта № ACT-71", 100, "collision"),
+        ({"amount": "153,27"}, "Копия акта № ACT-71", 100, "collision"),
+        ({}, "Копия: акт № ACT-71", 100, "collision"),
+        ({}, "Акт № ACT-71 (копия)", 100, "collision"),
+        ({"amount": "153,27"}, "Акт № ACT-71 (копия)", 100, "collision"),
+        ({}, "Копия акта № ACT-72", 200, "two_included"),
+        ({}, "Копия: акт № ACT-72", 200, "two_included"),
+        ({}, "Акт № ACT-72 (копия)", 200, "two_included"),
+        ({"issuer": "ООО Другое"}, "Копия: акт № ACT-71", 200, "two_included"),
+        ({"contract": "SYN-8"}, "Акт № ACT-71 (копия)", 100, "other_contract"),
+        ({"period": "2026-01-15 — 2026-01-31"}, "Копия: акт № ACT-71", 200, "two_included"),
     ],
 )
 def test_real_api_worker_and_database_handle_copy_candidates(
-    database_url, tmp_path, reverse, second_kwargs, second_number, reported, expected_state
+    database_url, tmp_path, reverse, second_kwargs, second_header, reported, expected_state
 ):
     first = _act("Акт № ACT-71")
-    second = _act(f"Копия акта № {second_number}", **second_kwargs)
+    second = _act(second_header, **second_kwargs)
     assert sha256(first).digest() != sha256(second).digest()
     documents = [("documents", ("one.docx", first)), ("documents", ("two.docx", second))]
     if reverse:

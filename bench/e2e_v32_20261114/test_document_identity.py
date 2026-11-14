@@ -152,7 +152,8 @@ class IdentityMergeTests(unittest.TestCase):
         other_kind = native("second", text="УПД № ОС-3817")
         result = compare([native("first"), other_kind], "200.00")
         self.assertEqual(result["duplicates"], [])
-        self.assertEqual(result["rows"][0]["status"], "unverified")
+        self.assertEqual(result["rows"][0]["status"], "correct")
+        self.assertEqual(result["rows"][0]["source_ids"], ["first", "second"])
         self.assertTrue(any(w["reason"] == "explicit_identity_context_conflict" for w in result["identity_warnings"]))
 
     def test_explicit_issuer_conflict_prevents_same_id_merge(self):
@@ -160,7 +161,8 @@ class IdentityMergeTests(unittest.TestCase):
         second = native("second", text='Акт № ОС-3817\nИсполнитель: ООО «Бета»')
         result = compare([first, second], "200.00")
         self.assertEqual(result["duplicates"], [])
-        self.assertEqual(result["rows"][0]["status"], "unverified")
+        self.assertEqual(result["rows"][0]["status"], "correct")
+        self.assertEqual(result["rows"][0]["source_ids"], ["first", "second"])
 
     def test_absent_kind_or_issuer_does_not_become_a_new_veto(self):
         first = native("first", text='Акт № ОС-3817\nИсполнитель: ООО «Альфа»')

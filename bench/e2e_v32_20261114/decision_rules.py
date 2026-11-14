@@ -144,7 +144,7 @@ def reconcile(documents, report_rows, contract_number, period_start, period_end,
     uncertain = defaultdict(list)
     global_uncertain = []
     exclusions, duplicates = [], []
-    seen_sources, seen_business = {}, {}
+    seen_sources, seen_business = {}, defaultdict(list)
     identity_contexts = defaultdict(list)
     identity_warnings = []
     identity_review = set()
@@ -237,13 +237,14 @@ def reconcile(documents, report_rows, contract_number, period_start, period_end,
             # A full literal native ID is not normalized across scripts, case,
             # punctuation or prefixes. Both sides of this map are verified.
             key = (*context, number)
-            previous = seen_business.get(key)
-            if previous:
+            # Compare with every previously seen document. A later incompatible
+            # issuer must not hide an earlier matching candidate.
+            for previous in seen_business[key]:
                 context_conflict = [field for field in ("document_kind", "issuer_key")
                     if item[field] is not None and previous[field] is not None and item[field] != previous[field]]
                 if context_conflict:
-                    abstain(doc_id, category, "explicit_identity_context_conflict")
-                    abstain(previous["id"], previous["category"], "explicit_identity_context_conflict")
+                    # Explicitly different kinds or issuers identify incompatible
+                    # candidates, not a collision to remove from either sum.
                     identity_warnings.append({"id": doc_id, "related_id": previous["id"],
                         "reason": "explicit_identity_context_conflict", "conflicting_fields": context_conflict})
                 else:
@@ -279,7 +280,7 @@ def reconcile(documents, report_rows, contract_number, period_start, period_end,
                 identity_review.update((doc_id, previous["item"]["id"]))
                 identity_warnings.append({"id": doc_id, "related_id": previous["item"]["id"], "reason": reason})
         if number:
-            seen_business[key] = item
+            seen_business[key].append(item)
         identity_contexts[context].append({"item": item, "number": number, "possible_ids": possible_ids})
         known[category].append(item)
 
