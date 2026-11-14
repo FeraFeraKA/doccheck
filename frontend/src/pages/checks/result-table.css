@@ -1,0 +1,142 @@
+.result-reconciliation .result-table-pane {
+  padding-block-start: .25rem;
+}
+
+.result-reconciliation .result-table-pane .reconcile-left-header {
+  padding-block: .875rem .5rem;
+}
+
+.result-reconciliation .result-table-pane .reconcile-filters {
+  gap: .5rem;
+  margin-block: .5rem;
+}
+
+.result-reconciliation .result-table-pane .reconcile-filters button {
+  padding: .375rem .65rem;
+  border: 1px solid var(--result-line);
+}
+
+.result-reconciliation .result-table-pane .reconcile-filters button > span {
+  margin-inline-start: .25rem;
+  padding: .075rem .25rem;
+  background: var(--result-soft);
+  border-radius: .25rem;
+}
+
+.result-reconciliation .result-table-pane .reconcile-search input {
+  min-width: 0;
+}
+
+.result-reconciliation .result-table-pane .reconcile-table {
+  width: 100%;
+  min-width: 36.25rem;
+}
+
+.result-reconciliation .result-table-pane .reconcile-table tbody tr:not(.source-subrow) td:nth-child(n+2):nth-child(-n+5) {
+  white-space: nowrap;
+}
+
+.result-reconciliation .result-table-pane .reconcile-table th:first-child {
+  min-width: 10rem;
+}
+
+.result-reconciliation .result-table-pane .reconcile-table tbody tr:not(.source-subrow):hover td {
+  box-shadow: inset 0 0 0 1000px #16373507;
+}
+
+.result-reconciliation .result-table-pane .row-name-button {
+  align-items: flex-start;
+  gap: .5rem;
+  padding: .65rem .5rem .1rem;
+  font-weight: 600;
+}
+
+.result-reconciliation .indicator-chevron {
+  display: inline-block;
+  flex: 0 0 .6rem;
+  line-height: 1;
+  font-size: 1.125rem;
+}
+
+.result-reconciliation [aria-expanded="true"] > .indicator-chevron {
+  transform: rotate(90deg);
+}
+
+.result-reconciliation .indicator-meta {
+  display: block;
+  padding: .125rem .5rem .65rem 2.25rem;
+  font-size: .6875rem;
+  color: var(--result-secondary);
+}
+
+.result-reconciliation .result-table-pane .source-subrow > td {
+  padding: 0;
+  background: #fff;
+}
+
+.result-reconciliation .indicator-details {
+  display: grid;
+  gap: .65rem;
+  padding: 1rem;
+  overflow-wrap: anywhere;
+  text-align: start;
+}
+
+.result-reconciliation .indicator-details p {
+  margin: 0;
+}
+
+.result-reconciliation .indicator-documents {
+  display: grid;
+  gap: .5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.result-reconciliation .indicator-documents > li {
+  border: 1px solid var(--result-line);
+  border-radius: .5rem;
+  padding: .625rem;
+}
+
+.result-reconciliation .indicator-amount,
+.result-reconciliation .indicator-addresses button,
+.result-reconciliation .result-table-pane .reconcile-left-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5rem 1rem;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.result-reconciliation .indicator-addresses {
+  display: grid;
+  gap: .25rem;
+  margin: .5rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.result-reconciliation .indicator-addresses button {
+  width: 100%;
+  text-align: start;
+}
+
+.result-reconciliation .indicator-addresses button[aria-pressed="true"] {
+  background: var(--result-selected);
+}
+
+.result-reconciliation .result-table-pane .reconcile-empty {
+  display: grid;
+  justify-items: start;
+  gap: .5rem;
+  margin: .75rem 1rem;
+}
+
+@media (max-width: 38rem) {
+  .result-reconciliation .indicator-details {
+    width: min(calc(100vw - 2.75rem), 26rem);
+    padding: .75rem;
+  }
+}
