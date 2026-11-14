@@ -119,6 +119,8 @@ def detect_table_grid(image: Image, row: PageLocator) -> TableGrid | None:
 
 
 def _line_score(image: Image, x: int, top: int, bottom: int) -> float:
+    if bottom <= top:
+        return 0.0
     radius = max(2, image.width // 1500)
     crop = image.crop((x - radius, top, x + radius + 1, bottom))
     rows = crop.tobytes()
@@ -152,6 +154,13 @@ def _repeat_contains(
     texts = [_tokens(read(box, scale)) for scale in (2, 3, 4)]
     hits = 0
     for text in texts:
+        other_roles = [
+            rule[1][0]
+            for rule in (*_REPORT_CODES.values(), *_AGGREGATES.values())
+            if rule[0] != code
+        ]
+        if any(role in text for role in other_roles):
+            return False
         codes = set(_CODE.findall(text))
         if codes - {code}:
             return False
@@ -224,7 +233,7 @@ def _safe_row_cell(image: Image, grid: TableGrid, index: int) -> bool:
         region = image.crop((left + 5, local_edges[0][-1] + 1, right - 5, local_edges[1][0]))
         stripe = region.tobytes()
         if any(
-            sum(pixel <= 160 for pixel in stripe[i : i + span]) >= span * 0.68
+            sum(pixel <= 200 for pixel in stripe[i : i + span]) >= span * 0.68
             for i in range(0, len(stripe), span)
         ):
             return False
@@ -334,6 +343,12 @@ def _scoped_column_roles(
 
 
 def _money_read(items: tuple[Observation, ...]) -> Decimal | None:
+    if len(items) > 1:
+        regions = [item.locator.bbox for item in items if isinstance(item.locator, PageLocator)]
+        if len(regions) != len(items) or any(region is None for region in regions):
+            return None
+        if max(region[1] for region in regions) >= min(region[3] for region in regions):
+            return None
     text = " ".join(item.raw_text.strip() for item in items)
     text = re.sub(r"^([+−–-])\s+", r"\1", text)
     if match := _ACCOUNTING.fullmatch(text):
@@ -367,6 +382,31 @@ def read_table_amounts(
             continue
         amount = next(iter(confirmed))
         if values.count(amount) < 2:
+            continue
+        # A legible, repeated whole-frame reading in the same atomic cell
+        # is corroboration or contradiction, never an observation to discard.
+        x0, y0, x1, y1 = box
+        competing = False
+        for item in page_observations:
+            location = item.locator
+            if (
+                not (item.repeated_read or (item.confidence is not None and item.confidence >= 0.8))
+                or not isinstance(location, PageLocator)
+                or location.bbox is None
+                or location.page != row.page
+            ):
+                continue
+            left, top, right, bottom = location.bbox
+            if not (
+                x0 <= left * image.width < right * image.width <= x1
+                and y0 <= top * image.height < bottom * image.height <= y1
+            ):
+                continue
+            other = _money_read((item,))
+            if other is not None and other != amount:
+                competing = True
+                break
+        if competing:
             continue
         reading = " ".join(item.raw_text for item in readings[values.index(amount)])
         # Whole grid cell, rather than cropped subframe coordinates, anchors preview.
