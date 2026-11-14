@@ -34,6 +34,12 @@
 .result-reconciliation .issue-navigation button { display: grid; place-items: center; width: 2rem; height: 2rem; padding: 0; }
 .result-reconciliation .reconcile-panes { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); min-width: 0; }
 .result-reconciliation .reconcile-left { min-width: 0; border-right: 1px solid var(--result-line); }
+.result-reconciliation .reconcile-panes-stacked { grid-template-columns: minmax(0, 1fr); }
+.result-reconciliation .reconcile-panes-stacked .reconcile-left { border-right: 0; }
+.result-reconciliation .reconcile-panes-stacked .evidence-panel { border-top: 1px solid var(--result-line); }
+.result-reconciliation:has(.reconcile-panes-stacked) { border: 0; border-radius: 0; }
+.result-reconciliation:has(.reconcile-panes-stacked) .reconcile-commandbar { padding-inline: 0; border: 0; }
+.result-reconciliation .reconcile-title { margin: 0; font: 500 1.125rem/1.35 var(--font-sans); }
 .result-reconciliation .reconcile-left-header { display: flex; justify-content: space-between; align-items: flex-start; gap: .75rem; padding: 1rem 1.125rem .5rem; }
 .result-reconciliation .record-count { padding: .3rem .5rem; border-radius: .25rem; color: var(--result-secondary); background: var(--result-soft); font-size: .75rem; }
 .result-reconciliation .reconcile-left-header h2,
