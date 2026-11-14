@@ -739,6 +739,12 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
             )
 
     excluded = {item["id"]: item["reason"] for item in comparison["excluded_documents"]}
+    overlaps = {
+        reason["id"]
+        for row in comparison["rows"]
+        for reason in row["reasons"]
+        if reason["reason"] == "period_partially_overlaps_unallocatable_amount"
+    }
     for file_id, file in files.items():
         if file_id == report.id or file_id in documents:
             continue
@@ -749,6 +755,13 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
                 state="needs_review",
                 reason_code="source_identity_conflict",
                 message="Среди документов есть совпадающие реквизиты. Требуется проверка.",
+            )
+        elif file_id in overlaps:
+            documents[file_id] = _document(
+                file,
+                state="needs_review",
+                reason_code="period_partially_overlaps_unallocatable_amount",
+                message="Период документа частично вне сверки. Сумму за нужные даты нельзя выделить.",
             )
         elif exclusion == "different_contract":
             documents[file_id] = _document(
