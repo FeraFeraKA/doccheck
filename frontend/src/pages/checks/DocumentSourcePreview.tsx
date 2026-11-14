@@ -65,7 +65,7 @@ export function DocumentSourcePreview({ runId, document, evidenceId }: DocumentS
 
   if (document === null) return <p>Документ источника недоступен.</p>;
 
-  const key = JSON.stringify([runId, document.id, document.format, evidenceId, attempt]);
+  const key = JSON.stringify([runId, document.id, document.format, attempt]);
   return <SelectedDocumentSource
     key={key}
     runId={runId}
@@ -82,7 +82,12 @@ function SelectedDocumentSource({ runId, document, evidenceId, onRetry }: {
   onRetry: () => void;
 }) {
   const [original, setOriginal] = useState<RequestState<string>>({ status: 'loading' });
+  const [selection, setSelection] = useState(evidenceId);
   const [evidence, setEvidence] = useState<RequestState<SourceEvidence>>({ status: 'loading' });
+  if (selection !== evidenceId) {
+    setSelection(evidenceId);
+    setEvidence({ status: 'loading' });
+  }
   const { id: documentId, format } = document;
 
   useEffect(() => {
@@ -98,21 +103,24 @@ function SelectedDocumentSource({ runId, document, evidenceId, onRetry }: {
       }
     });
 
-    if (evidenceId !== null) {
-      void getSourceEvidence(runId, documentId, evidenceId, controller.signal).then((value) => {
-        if (!controller.signal.aborted) setEvidence({ status: 'ready', value });
-      }).catch((error: unknown) => {
-        if (!controller.signal.aborted) {
-          setEvidence({ status: 'error', message: sourceError(error, 'evidence') });
-        }
-      });
-    }
-
     return () => {
       controller.abort();
       if (url !== undefined) URL.revokeObjectURL(url);
     };
-  }, [runId, documentId, format, evidenceId]);
+  }, [runId, documentId, format]);
+
+  useEffect(() => {
+    if (evidenceId === null) return;
+    const controller = new AbortController();
+    void getSourceEvidence(runId, documentId, evidenceId, controller.signal).then((value) => {
+      if (!controller.signal.aborted) setEvidence({ status: 'ready', value });
+    }).catch((error: unknown) => {
+      if (!controller.signal.aborted) {
+        setEvidence({ status: 'error', message: sourceError(error, 'evidence') });
+      }
+    });
+    return () => controller.abort();
+  }, [runId, documentId, evidenceId]);
 
   const address = evidence.status === 'ready' && locatorMatchesDocument(evidence.value, format)
     ? evidence.value.locator : null;
