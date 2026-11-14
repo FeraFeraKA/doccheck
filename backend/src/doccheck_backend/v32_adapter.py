@@ -530,10 +530,18 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
                     observations = uncovered_pdf_observations(
                         report_path, native_report.observations, reading.raster_pages
                     )
-                    unobstructed = observations == native_report.observations
+                    unobstructed = _read_pdf_report(report, observations, decision_rules)
                 except (OSError, ValueError):
-                    unobstructed = False
-                if not unobstructed:
+                    unobstructed = None
+                if unobstructed is not None and unobstructed[0] == inferred:
+                    report_evidence = {
+                        category: item
+                        for category, item in report_evidence.items()
+                        if unobstructed[1].get(category) == item
+                    }
+                else:
+                    report_evidence = {}
+                if not report_evidence:
                     return _failure(
                         run,
                         "v32_pdf_scan_scope_unconfirmed",

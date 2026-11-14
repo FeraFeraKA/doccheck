@@ -914,20 +914,61 @@ def test_report_request_preserves_small_raster_alongside_native_kfz_text(tmp_pat
 
 
 @pytest.mark.parametrize(
-    ("image_bounds", "lines", "status", "issue_code"),
+    ("image_bounds", "lines", "expected_reported", "issue_code"),
     [
-        ((12, 12, 250, 15), ("contract", "period", "amount", "payroll"), "completed", None),
-        (
-            (180, 70, 0, 104),
-            ("contract", "period", "amount"),
-            "failed",
-            "v32_pdf_scan_scope_unconfirmed",
+        pytest.param(
+            (12, 12, 250, 15),
+            ("contract", "period", "amount", "payroll"),
+            {"1250.50", "300.12"},
+            None,
+            id="margin-logo",
         ),
-        ((150, 70, 0, 25), ("contract", "amount"), "failed", "v32_pdf_scope_ambiguous"),
+        pytest.param(
+            (150, 12, 0, 162),
+            ("contract", "period", "amount", "payroll"),
+            set(),
+            "v32_pdf_scan_scope_unconfirmed",
+            id="covered-period",
+        ),
+        pytest.param(
+            (120, 12, 0, 120),
+            ("contract", "period", "amount", "payroll", "footer"),
+            {"1250.50", "300.12"},
+            None,
+            id="covered-unrelated-footer",
+        ),
+        pytest.param(
+            (120, 12, 0, 134),
+            ("contract", "period", "amount", "payroll"),
+            {"1250.50"},
+            None,
+            id="covered-payroll-row",
+        ),
+        pytest.param(
+            (120, 12, 0, 148),
+            ("contract", "period", "amount"),
+            set(),
+            "v32_pdf_scan_scope_unconfirmed",
+            id="covered-only-amount",
+        ),
+        pytest.param(
+            (150, 70, 0, 25),
+            ("contract", "amount"),
+            set(),
+            "v32_pdf_scope_ambiguous",
+            id="missing-period",
+        ),
+        pytest.param(
+            (120, 12, 0, 134),
+            ("contract", "period", "amount", "another_amount"),
+            set(),
+            "v32_pdf_scope_ambiguous",
+            id="covered-competing-amount",
+        ),
     ],
 )
 def test_composite_kfz_preserves_only_unobstructed_native_evidence(
-    uploaded_files, tmp_path, monkeypatch, image_bounds, lines, status, issue_code
+    uploaded_files, tmp_path, monkeypatch, image_bounds, lines, expected_reported, issue_code
 ):
     requests = []
     _stub_ollama(monkeypatch, "1172.70", requests)
@@ -937,7 +978,9 @@ def test_composite_kfz_preserves_only_unobstructed_native_evidence(
         "contract": "Договор № E2E-31.",
         "period": "Период: 2027-02-01 — 2027-03-31.",
         "amount": "Общехозяйственные расходы: 1 250,50 руб.",
+        "another_amount": "Общехозяйственные расходы: 3 250,50 руб.",
         "payroll": "Оплата труда: 300,12 руб.",
+        "footer": "Дополнительные сведения о форме документа.",
     }
     _write_text_pdf(path, [contents[key] for key in lines], image_bounds=image_bounds)
     report.update(format="pdf", name="report.pdf", sha256=sha256(path.read_bytes()).hexdigest())
@@ -948,13 +991,14 @@ def test_composite_kfz_preserves_only_unobstructed_native_evidence(
     (message,) = request["messages"]
     assert len(message["images"]) == 1
     assert "E2E-31" in message["content"]
-    assert job.status == status
     if issue_code is not None:
+        assert job.status == "failed"
         assert job.error.code == issue_code
         assert job.result is None
         return
+    assert job.status == "completed"
     assert job.result.scope.period_end == "2027-03-31"
-    assert {row.reported_value for row in job.result.rows} == {"1250.50", "300.12"}
+    assert {row.reported_value for row in job.result.rows} == expected_reported
     assert all(row.status == "unverified" for row in job.result.rows)
     assert all(
         "report_raster_unconfirmed" in {reason.code for reason in row.reasons}
@@ -963,8 +1007,6 @@ def test_composite_kfz_preserves_only_unobstructed_native_evidence(
     assert {issue.code for issue in job.result.summary.primary_issues} == {
         "v32_report_raster_unconfirmed"
     }
-    assert all(
-        item.method == "native_pdf" and item.locator.page == 1
-        for item in job.result.evidence
-        if item.document_id == report["id"]
-    )
+    reported = [item for item in job.result.evidence if item.document_id == report["id"]]
+    assert {item.normalized_value for item in reported} == expected_reported
+    assert all(item.method == "native_pdf" and item.locator.page == 1 for item in reported)
