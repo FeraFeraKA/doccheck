@@ -119,11 +119,6 @@ export function ResultTable({
                   </span></td>
                   <td className="indicator-explanation">
                     <p>{rowExplanation(row)}</p>
-                    {(components.length > 0 || row.reasons.length > 1 || row.completeness.reason !== rowExplanation(row)) &&
-                      <button type="button" aria-expanded={isExpanded} aria-controls={isExpanded ? detailsId : undefined}
-                        onClick={() => onToggle(row.id)}>
-                        {components.length ? 'Как рассчитано' : 'Основание проверки'}
-                      </button>}
                   </td>
                 </tr>
                 {isExpanded && <tr className="source-subrow"><td colSpan={6}>
