@@ -23,18 +23,6 @@
   margin-top: 12px;
   line-height: 1.7;
 }
-.checks-overview .overview-primary,
-.checks-content .checks-overview a.overview-primary {
-  @apply inline-flex items-center justify-center whitespace-nowrap no-underline;
-  height: 42px;
-  border-radius: 6px;
-  padding: 0 16px;
-  background: var(--ui-primary);
-  color: white;
-  font-size: 14px;
-  font-weight: 500;
-}
-.checks-overview .overview-primary:hover { background: #26575a; }
 .checks-overview .overview-secondary {
   display: inline-flex;
   align-items: center;
@@ -78,20 +66,6 @@
   color: var(--ui-muted);
   margin-left: 8px;
 }
-.checks-overview .overview-legend {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 11px;
-  color: var(--ui-secondary);
-}
-.checks-overview .overview-legend span {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  background: none;
-}
-.checks-overview .overview-legend span::before,
 .checks-overview .overview-chip::before {
   width: 7px;
   height: 7px;
@@ -99,16 +73,8 @@
   background: currentColor;
   content: '';
 }
-.checks-overview .overview-legend .mint::before { background: #39876b; }
-.checks-overview .overview-legend .peach::before { background: #b46a3c; }
-.checks-overview .overview-legend .neutral::before { background: #9272b4; }
+.checks-overview .overview-filters button { border-color: transparent; }
 .checks-overview .overview-filters button[aria-pressed=true] { background: var(--ui-selected); }
-.checks-overview .overview-filters button,
-.checks-overview .overview-table th button,
-.checks-overview .overview-sort {
-  border-color: transparent;
-}
-.checks-overview .overview-table th button { padding: 0; }
 .checks-overview .overview-toolbar {
   display: flex;
   justify-content: space-between;
@@ -159,15 +125,6 @@
   background: var(--ui-soft);
   box-shadow: none;
   font-size: 13px;
-}
-.checks-overview .overview-sort {
-  display: grid;
-  place-items: center;
-  width: 42px;
-  height: 42px;
-  border-radius: 6px;
-  background: var(--ui-soft);
-  color: var(--ui-primary);
 }
 .checks-overview .overview-table-wrap {
   overflow-x: auto;
@@ -288,7 +245,6 @@
 }
 
 @media (max-width: 1000px) {
-  .checks-overview .overview-legend { display: none; }
   .checks-overview .overview-heading { flex-wrap: wrap; }
 }
 

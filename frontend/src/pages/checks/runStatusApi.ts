@@ -1,5 +1,5 @@
 import { requestJson } from '../../shared/api/requestJson';
-import type { RunStatus } from './checkData';
+import type { FindingFilter, FindingCounts, RunStatus } from './checkData';
 
 interface RunError {
   code: string;
@@ -23,13 +23,14 @@ export interface RunState extends RunSummary {
 }
 
 interface RunHistoryPage {
-  items: RunSummary[];
+  items: (RunSummary & { counts?: FindingCounts; report_number?: string; synthetic?: boolean })[];
   next_cursor: string | null;
 }
 
 interface RunHistoryQuery {
   cursor?: string;
   limit?: number;
+  finding?: FindingFilter;
 }
 
 export class InvalidRunResponseError extends Error {
@@ -120,11 +121,12 @@ export async function getRun(runId: string, signal: AbortSignal): Promise<RunSta
 
 export async function listRuns(
   signal: AbortSignal,
-  { cursor, limit }: RunHistoryQuery = {},
+  { cursor, limit, finding }: RunHistoryQuery = {},
 ): Promise<RunHistoryPage> {
   const params = new URLSearchParams();
   if (limit !== undefined) params.set('limit', String(limit));
   if (cursor !== undefined) params.set('cursor', cursor);
+  if (finding !== undefined) params.set('finding', finding);
   const query = params.toString();
   const value = await getRunJson(query ? `${runsPath}?${query}` : runsPath, signal);
   signal.throwIfAborted();
@@ -132,7 +134,33 @@ export async function listRuns(
     || !(value.next_cursor === null || typeof value.next_cursor === 'string')) {
     throw new InvalidRunResponseError();
   }
-  return { items: value.items.map(parseRunSummary), next_cursor: value.next_cursor };
+  return { items: value.items.map(parseHistoryRun), next_cursor: value.next_cursor };
+}
+
+function parseHistoryRun(value: unknown): RunHistoryPage['items'][number] {
+  const run = parseRunSummary(value);
+  if (!isRecord(value)) throw new InvalidRunResponseError();
+  const { counts, report_number: number, synthetic } = value;
+  if (number != null && typeof number !== 'string') throw new InvalidRunResponseError();
+  if (synthetic != null && typeof synthetic !== 'boolean') throw new InvalidRunResponseError();
+  return {
+    ...run,
+    ...(counts == null ? {} : { counts: parseCounts(counts) }),
+    ...(number == null ? {} : { report_number: number }),
+    ...(synthetic == null ? {} : { synthetic }),
+  };
+}
+
+function parseCounts(value: unknown): FindingCounts {
+  if (!isRecord(value)) throw new InvalidRunResponseError();
+  const { verified, discrepancy, unverified } = value;
+  function count(input: unknown): number {
+    if (typeof input !== 'number' || !Number.isSafeInteger(input) || input < 0) {
+      throw new InvalidRunResponseError();
+    }
+    return input;
+  }
+  return { verified: count(verified), discrepancy: count(discrepancy), unverified: count(unverified) };
 }
 
 function waitForNextPoll(signal: AbortSignal): Promise<void> {

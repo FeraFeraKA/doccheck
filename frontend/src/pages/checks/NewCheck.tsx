@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router';
+import { Link } from 'react-router';
 import { classes } from '../../shared/lib/classes';
 import { Button } from '../../shared/ui/Button';
 import { UploadFileList } from './UploadFiles';
 import { WorkspaceIcon } from './WorkspaceIcon';
 import { prepareRunUpload, RunUploadHttpError } from './createRun';
+import { runStatusLabels } from './checkData';
+import { runTitle } from './runTitle';
+import { useRunHistory } from './useRunHistory';
 import { demoRunPath } from './demoData';
 
 type FileGroup = 'report' | 'documents';
@@ -43,7 +46,8 @@ function uploadErrorMessage(error: unknown): string {
 const publicDemo = import.meta.env.VITE_DOCCHECK_PUBLIC_DEMO === '1';
 
 export function NewCheck() {
-  const navigate = useNavigate();
+  const history = useRunHistory({ enabled: !publicDemo });
+  const [receipts, setReceipts] = useState<string[]>([]);
   const nextFileId = useRef(0);
   const active = useRef<AbortController | null>(null);
   const attempt = useRef<ReturnType<typeof prepareRunUpload> | null>(null);
@@ -119,7 +123,12 @@ export function NewCheck() {
       }, newIdempotencyKey());
       const accepted = await attempt.current(controller.signal);
       if (controller.signal.aborted) return;
-      void navigate('/checks/' + encodeURIComponent(accepted.run_id));
+      setReceipts((previous) => [accepted.run_id, ...previous.filter((id) => id !== accepted.run_id)].slice(0, 20));
+      setReport([]);
+      setDocuments([]);
+      setErrors({ report: '', documents: '' });
+      attempt.current = null;
+      history.refresh();
     } catch (error) {
       if (!controller.signal.aborted) setSubmitError(uploadErrorMessage(error));
     } finally {
@@ -131,7 +140,7 @@ export function NewCheck() {
   return (
     <div className="upload-page">
       <h1>Новая проверка</h1>
-      <p className="upload-intro">Добавьте КФЗ и первичные документы.</p>
+      {!publicDemo && <p className="upload-intro">Добавьте КФЗ и первичные документы.</p>}
       {publicDemo ? (
         <section className="upload-card upload-public-notice mt-6">
           <h2>Загрузка доступна в локальной установке</h2>
@@ -153,7 +162,33 @@ export function NewCheck() {
         </Link>
       </div>
       {submitError && <p className="upload-validation" role="alert">{submitError}</p>}
-      {isSending && <p role="status">Отправляем пакет…</p>}
+      {isSending && <p role="status">Загрузка файлов…</p>}
+      {!publicDemo && <section className="upload-card mt-6" aria-label="Последние проверки">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-base font-medium">Последние проверки</h2>
+          <Link to="/checks" className="underline">Все проверки</Link>
+        </div>
+        {history.error && <p className="checks-caption" role="alert">Не удалось обновить историю.
+          {' '}<button type="button" onClick={history.refresh} className="underline">Повторить</button>
+        </p>}
+        {history.loading && <p className="checks-caption">Загрузка истории…</p>}
+        <ul className="space-y-2 mt-3">
+          {receipts.filter((id) => !history.page?.entries.some((entry) => entry.id === id)).map((id) => (
+            <li key={id}><Link className="underline break-all" to={'/checks/' + encodeURIComponent(id)}>
+              {runTitle(id)}</Link> · Сервер получил пакет</li>
+          ))}
+          {history.page?.entries.map((entry) => (
+            <li key={entry.id} className="flex flex-wrap gap-x-3">
+              <Link className="underline break-all" to={'/checks/' + encodeURIComponent(entry.id)}>{entry.title}</Link>
+              <span>{runStatusLabels[entry.status]}</span>
+              {entry.synthetic && <span>Синтетика</span>}
+              {entry.error && <span className="checks-caption">{entry.error}</span>}
+            </li>
+          ))}
+        </ul>
+        {!history.loading && !history.error && !receipts.length && !history.page?.entries.length
+          && <p className="checks-caption">Проверок пока нет.</p>}
+      </section>}
     </div>
   );
 }

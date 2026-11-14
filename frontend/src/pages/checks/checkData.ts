@@ -1,3 +1,4 @@
+import { runTitle } from './runTitle';
 import { HttpError } from '../../shared/api/requestJson';
 import { demoJob, demoTitle } from './demoData';
 import { readDocumentParseStatus } from './loadFindings';
@@ -7,12 +8,15 @@ import type { RunState } from './runStatusApi';
 
 export type RunStatus = 'queued' | 'processing' | 'completed' | 'completed_with_issues' | 'failed';
 
+export type FindingFilter = 'verified' | 'discrepancy' | 'unverified';
+export type FindingCounts = Record<FindingFilter, number>;
+
 export const runStatusLabels: Record<RunStatus, string> = {
   queued: 'В очереди',
-  processing: 'Обрабатывается',
-  completed: 'Завершена',
-  completed_with_issues: 'Завершена с замечаниями',
-  failed: 'Завершилась ошибкой',
+  processing: 'Обработка документов',
+  completed: 'Готово',
+  completed_with_issues: 'Готово с замечаниями',
+  failed: 'Ошибка обработки',
 };
 
 export interface HistoryEntry {
@@ -20,6 +24,9 @@ export interface HistoryEntry {
   title: string;
   status: RunStatus;
   createdAt: string;
+  counts?: FindingCounts;
+  synthetic?: boolean;
+  error?: string;
 }
 
 export interface CheckHistory {
@@ -42,14 +49,19 @@ function demoRunStatus(value: string): RunStatus {
   throw new Error('Ожидался завершённый синтетический запуск');
 }
 
-export async function loadRunHistory(signal: AbortSignal, cursor?: string): Promise<CheckHistory> {
-  const page = await listRuns(signal, { cursor });
+export async function loadRunHistory(
+  signal: AbortSignal, cursor?: string, finding?: FindingFilter,
+): Promise<CheckHistory> {
+  const page = await listRuns(signal, { cursor, finding });
   return {
     entries: page.items.map((run) => ({
       id: run.run_id,
-      title: `Проверка ${run.run_id}`,
+      title: runTitle(run.run_id, run.report_number),
       status: run.status,
       createdAt: run.created_at,
+      counts: run.counts,
+      synthetic: run.synthetic,
+      error: run.error?.message,
     })),
     nextCursor: page.next_cursor,
   };
@@ -69,7 +81,7 @@ export async function loadDemoRun(id: string): Promise<RunDetails | null> {
 
 function toRunDetails(run: RunState): RunDetails {
   return {
-    title: `Проверка ${run.run_id}`,
+    title: runTitle(run.run_id),
     status: run.status,
     progress: run.progress === null ? undefined : {
       processed: run.progress.processed_documents,
