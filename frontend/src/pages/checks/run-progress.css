@@ -1,0 +1,36 @@
+.run-progress-bar {
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--ui-soft);
+  outline: 1px solid transparent;
+}
+
+.run-progress-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--ui-primary);
+  transition: width 170ms linear;
+}
+
+.run-progress-bar[data-indeterminate="true"] > span {
+  width: 28%;
+  animation: run-progress-slide 1.25s ease-in-out infinite alternate;
+}
+
+.run-progress-bar[data-complete="true"] > span { background: var(--ui-lime); }
+
+@keyframes run-progress-slide {
+  from { transform: translateX(-60%); }
+  to { transform: translateX(320%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .run-progress-bar > span { animation: none; transition: none; }
+  .run-progress-bar[data-indeterminate="true"] > span { margin-inline: auto; }
+}
+
+@media (forced-colors: active) {
+  .run-progress-bar > span { background: Highlight; forced-color-adjust: none; }
+}

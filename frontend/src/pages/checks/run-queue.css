@@ -54,33 +54,7 @@ a.queue-job:hover { background: var(--ui-soft); }
 .queue-status-chip.peach { background: var(--ui-peach); }
 .queue-status-chip.neutral { background: #eee0ff; }
 
-.queue-progress {
-  height: 7px;
-  margin: 8px 0 28px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: var(--ui-soft);
-}
-.queue-progress > span {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: var(--ui-primary);
-  transition: width 170ms linear;
-}
-.queue-progress[data-indeterminate="true"] > span {
-  width: 28%;
-  animation: queue-progress 1.25s ease-in-out infinite alternate;
-}
-.queue-progress[data-complete="true"] > span { background: var(--ui-lime); }
-
-@keyframes queue-progress {
-  from { transform: translateX(-60%); }
-  to { transform: translateX(320%); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .queue-progress > span { animation: none; transition: none; }
-}
+.queue-job .run-progress-bar { margin: 8px 0 28px; }
 
 @media (max-width: 1000px) {
   .queue-card.upload-card h2 { font-size: 25px; }

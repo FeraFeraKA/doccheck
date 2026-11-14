@@ -5,6 +5,7 @@ import type { HistoryEntry, RunStatus } from './checkData';
 import { WorkspaceIcon } from './WorkspaceIcon';
 import { runTitle } from './runTitle';
 import { demoTitle, demoUploadFiles } from './demoData';
+import { RunProgressBar } from './RunProgressBar';
 import './run-queue.css';
 
 export interface QueueReceipt {
@@ -49,13 +50,11 @@ export function RunQueue({ entries = [], receipts, demoTransfer, loading, error,
       title: receipt.synthetic ? demoTitle : runTitle(receipt.id),
       label: 'Сервер получил пакет',
       tone: 'neutral',
-      progress: receipt.synthetic ? null : undefined,
+      progress: null,
     })),
     ...entries.map(({ id, title, createdAt, status, synthetic, documentCount, error }) => ({
       id, title, label: runStatusLabels[status], tone: tones[status], createdAt, synthetic, documentCount, error,
-      progress: synthetic && status !== 'failed'
-        ? status === 'completed' || status === 'completed_with_issues' ? 100 : status === 'queued' ? 0 : null
-        : undefined,
+      progress: queueProgress(status, synthetic),
     })),
   ];
   if (demoTransfer) {
@@ -89,6 +88,13 @@ export function RunQueue({ entries = [], receipts, demoTransfer, loading, error,
       {!loading && !error && items.length === 0 && <p className="queue-message">В очереди пока нет проверок.</p>}
     </section>
   );
+}
+
+function queueProgress(status: RunStatus, synthetic?: boolean) {
+  if (status === 'queued') return 0;
+  if (status === 'processing') return null;
+  if (synthetic && (status === 'completed' || status === 'completed_with_issues')) return 100;
+  return undefined;
 }
 
 interface RunQueueItemProps {
@@ -125,11 +131,8 @@ function RunQueueItem({
         {typeof progress === 'number' && <span className="tabular-nums">{progress}%</span>}
       </div>
     </div>
-    {progress !== undefined && <div className="queue-progress" role="progressbar"
-      aria-label={title} aria-valuenow={progress ?? undefined} aria-valuetext={label}
-      data-indeterminate={progress === null} data-complete={progress === 100 && !pendingUpload}>
-      <span style={progress === null ? undefined : { width: `${progress}%` }} />
-    </div>}
+    {progress !== undefined && <RunProgressBar
+      label={title} value={progress} valueText={label} complete={progress === 100 && !pendingUpload} />}
     {error && <p className="upload-validation" role={pendingUpload ? 'alert' : undefined}>{error}</p>}
   </>;
   return <li>{pendingUpload
