@@ -1,6 +1,6 @@
 import { Fragment } from 'react';
 import type { Ref } from 'react';
-import { formatDecimal, rowExplanation, statusLabels } from './reviewResult';
+import { formatMeasure, rowExplanation, statusLabels } from './reviewResult';
 import type { ReviewResult } from './reviewResult';
 import './result-table.css';
 
@@ -55,10 +55,10 @@ export function ResultTable({
         {query && <button type="button" aria-label="Очистить поиск" onClick={() => onQueryChange('')}>×</button>}
       </div>
       <div ref={tableScroll} className="reconcile-table-scroll" role="region" aria-label="Таблица показателей" tabIndex={0}>
-        <table className="reconcile-table" aria-label="Показатели КФЗ">
+        <table className="reconcile-table kfz-result-table" aria-label="Показатели КФЗ">
           <thead><tr>
-            <th scope="col">Показатель КФЗ</th><th scope="col">Ед. изм.</th><th scope="col">В КФЗ</th>
-            <th scope="col">Ожидаемо по документам</th><th scope="col">Разница Δ</th><th scope="col">Статус</th>
+            <th scope="col">Показатель КФЗ</th><th scope="col">В КФЗ</th>
+            <th scope="col">Ожидаемо</th><th scope="col">Разница Δ</th><th scope="col">Статус</th>
             <th scope="col">Пояснение</th>
           </tr></thead>
           <tbody>{rows.map((row) => {
@@ -83,29 +83,35 @@ export function ResultTable({
                       onClick={() => onToggle(row.id)}
                     >
                       <span className="indicator-chevron" aria-hidden="true">›</span>
-                      {row.label}
+                      <span>{row.label}{row.unit !== 'RUB' && <small className="ml-1">({row.unit})</small>}</span>
                     </button>
                     <span className="indicator-meta">
                       {sourceDocuments.size ? `${sourceDocuments.size} док.` : 'Нет источника суммы'}
                     </span>
                   </td>
-                  <td>{row.unit}</td>
-                  <td>{formatDecimal(row.reported_value)}</td>
+                  <td>{formatMeasure(row.reported_value, row.unit)}</td>
                   <td className="expected-cell">
-                    {formatDecimal(row.expected_value)}
+                    {formatMeasure(row.expected_value, row.unit)}
                     {row.expected_value === null && row.observed_evidence_sum !== null && (
-                      <p className="checks-caption">Частичная сумма: {formatDecimal(row.observed_evidence_sum)} {row.unit}</p>
+                      <small className="checks-caption">Частичная сумма: {formatMeasure(row.observed_evidence_sum, row.unit)}</small>
                     )}
                   </td>
-                  <td className="difference-cell">{formatDecimal(row.delta)}</td>
+                  <td className="difference-cell">{formatMeasure(row.delta, row.unit)}</td>
                   <td className="indicator-status-cell"><span className="row-status" data-status={row.status}
-                    tabIndex={0} title={statusLabels[row.status]}>
+                    role="img" aria-label={statusLabels[row.status]} tabIndex={0} title={statusLabels[row.status]}>
                     <span aria-hidden="true">{row.status === 'verified' ? '✓' : row.status === 'discrepancy' ? '⚠' : '?'}</span>
-                    <span className="indicator-status-label" role="tooltip">{statusLabels[row.status]}</span>
+                    <span className="indicator-status-label" aria-hidden="true">{statusLabels[row.status]}</span>
                   </span></td>
-                  <td className="indicator-explanation"><span>{rowExplanation(row)}</span></td>
+                  <td className="indicator-explanation">
+                    <p>{rowExplanation(row)}</p>
+                    {(components.length > 0 || row.reasons.length > 1 || row.completeness.reason !== rowExplanation(row)) &&
+                      <button type="button" aria-expanded={isExpanded} aria-controls={isExpanded ? detailsId : undefined}
+                        onClick={() => onToggle(row.id)}>
+                        {components.length ? 'Как рассчитано' : 'Основание проверки'}
+                      </button>}
+                  </td>
                 </tr>
-                {isExpanded && <tr className="source-subrow"><td colSpan={7}>
+                {isExpanded && <tr className="source-subrow"><td colSpan={6}>
                   <div id={detailsId} role="region" aria-label={`Подробности: ${row.label}`} className="indicator-details">
                     {row.calculation?.formula && <p>{row.calculation.formula}</p>}
                     <p><strong>{statusLabels[row.status]}.</strong>{' '}
@@ -117,7 +123,7 @@ export function ResultTable({
                         {components.map((component) => <li key={component.amount_refs[0]}>
                           <div className="indicator-amount">
                             <span>{component.relation_reason}</span>
-                            <strong>{formatDecimal(component.amount)} {row.unit}</strong>
+                            <strong>{formatMeasure(component.amount, row.unit)}</strong>
                           </div>
                           <ul className="indicator-addresses">
                             {evidenceFields.flatMap(([field, role]) => (component[field] ?? []).map((id) => {

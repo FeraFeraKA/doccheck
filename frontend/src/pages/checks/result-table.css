@@ -7,21 +7,20 @@
 }
 
 .result-reconciliation .result-table-pane .reconcile-filters {
-  gap: .5rem;
-  margin-block: .5rem;
+  gap: .25rem;
+  margin: .5rem 0;
 }
 
 .result-reconciliation .result-table-pane .reconcile-filters button {
-  padding: .375rem .65rem;
-  border: 1px solid var(--result-line);
+  padding: .3rem .5rem;
+  border: 1px solid transparent;
 }
 
 .result-reconciliation .result-table-pane .reconcile-filters button > span {
   margin-inline-start: .25rem;
-  padding: .075rem .25rem;
-  background: var(--result-soft);
-  border-radius: .25rem;
 }
+
+.result-reconciliation .result-table-pane .reconcile-search { margin-inline: 0; }
 
 .result-reconciliation .result-table-pane .reconcile-search input {
   min-width: 0;
@@ -29,16 +28,26 @@
 
 .result-reconciliation .result-table-pane .reconcile-table {
   width: 100%;
-  min-width: 36.25rem;
+  min-width: 660px;
 }
 
-.result-reconciliation .result-table-pane .reconcile-table tbody tr:not(.source-subrow) td:nth-child(n+2):nth-child(-n+5) {
+.result-reconciliation .result-table-pane .reconcile-table tbody tr:not(.source-subrow) td:nth-child(n+2):nth-child(-n+4) {
   white-space: nowrap;
 }
 
 .result-reconciliation .result-table-pane .reconcile-table th:first-child {
+  width: 25%;
   min-width: 10rem;
 }
+
+.result-reconciliation .kfz-result-table th:nth-child(n+2):nth-child(-n+4) { width: 13%; }
+.result-reconciliation .kfz-result-table th:nth-child(5) { width: 65px; text-align: center; }
+.result-reconciliation .kfz-result-table th:last-child { text-align: left; }
+.result-reconciliation .kfz-result-table .expected-cell small { display: block; white-space: normal; }
+.result-reconciliation .result-table-pane .kfz-result-table tbody td:nth-child(2) { background: #f1f6f4; }
+.result-reconciliation .result-table-pane .kfz-result-table tbody td:nth-child(3) { background: #e3f3ec; }
+.result-reconciliation .result-table-pane .kfz-result-table [data-selected='true'] td:nth-child(2) { background: #e8f1ed; }
+.result-reconciliation .result-table-pane .kfz-result-table [data-selected='true'] td:nth-child(3) { background: #d6ebe1; }
 
 .result-reconciliation .result-table-pane .reconcile-table tbody tr:not(.source-subrow):hover td {
   box-shadow: inset 0 0 0 1000px #16373507;
@@ -48,7 +57,7 @@
   align-items: flex-start;
   gap: .5rem;
   padding: .65rem .5rem .1rem;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .result-reconciliation .indicator-chevron {
@@ -169,13 +178,15 @@
 .row-status:focus .indicator-status-label { opacity: 1; }
 
 .result-reconciliation .reconcile-table .indicator-explanation {
-  min-width: 11rem;
+  min-width: 10rem;
   text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
-.indicator-explanation > span {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+.indicator-explanation button {
+  color: var(--result-primary);
+  text-align: start;
+  margin-top: .25rem;
 }
+.indicator-explanation button:hover { text-decoration: underline; }

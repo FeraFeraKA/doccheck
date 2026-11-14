@@ -6,9 +6,13 @@ test('the result opens with a compact summary and retains legacy document routes
   const tabs = page.getByRole('navigation', { name: 'Разделы проверки' });
   await expect(tabs.getByRole('link')).toHaveCount(2);
   await expect(tabs.getByRole('link', { name: 'Результат' })).toHaveAttribute('aria-current', 'page');
-  const summary = page.getByRole('region', { name: 'Результаты проверки' });
   const conclusion = page.getByRole('region', { name: 'Заключение по проверке' });
-  await expect(summary).toBeVisible();
+  await expect(conclusion.getByRole('list', { name: 'Счётчики показателей' })).toBeVisible();
+  const table = page.getByRole('table', { name: 'Показатели КФЗ' });
+  await expect(table.getByRole('columnheader')).toHaveText(
+    ['Показатель КФЗ', 'В КФЗ', 'Ожидаемо', 'Разница Δ', 'Статус', 'Пояснение'],
+  );
+  expect((await conclusion.boundingBox())?.y).toBeLessThan((await table.boundingBox())?.y ?? 0);
   await expect(conclusion.getByRole('heading', { name: 'Есть расхождения' })).toBeVisible();
   await expect(conclusion.getByText(/По статье A обнаружено расхождение/)).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Найденные проблемы' })).toHaveCount(0);

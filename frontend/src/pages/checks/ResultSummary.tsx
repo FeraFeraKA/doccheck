@@ -1,8 +1,10 @@
 import { Link } from 'react-router';
 import type { ReviewResult } from './reviewResult';
-import { formatDecimal, formatLocation, rowExplanation } from './reviewResult';
+import { formatDecimal, formatLocation, formatMeasure, rowExplanation } from './reviewResult';
 import { documentDecisionLabels } from './ResultDocuments';
 import { XlsxDownload } from './XlsxDownload';
+
+const indicatorList = new Intl.ListFormat('ru');
 
 const statuses = [
   ['verified', 'Подтверждено'],
@@ -21,32 +23,6 @@ export function resultTone({ verified, discrepancy, unverified }: ReviewResult['
   if (discrepancy > 0) return 'discrepancy';
   if (unverified > 0) return 'unverified';
   return verified === 0 ? 'empty' : 'verified';
-}
-
-export function ResultSummary({ result }: { result: ReviewResult }) {
-  const { counts, rubCoverage } = result.summary;
-  return <section className="result-summary-card mt-6 rounded-lg border p-4" aria-label="Результаты проверки">
-    <h2 className="text-[15px] font-medium">Результаты проверки</h2>
-    {rubCoverage ? <p className="my-2 text-sm">
-      Сумма известных денежных показателей КФЗ: <strong>{formatDecimal(rubCoverage.total)} ₽</strong>
-    </p> : <p className="my-2 text-sm result-summary-muted">Сводка по сумме недоступна.</p>}
-    {rubCoverage?.shares && <div aria-hidden="true" className="result-summary-coverage mb-3 flex h-2 overflow-hidden rounded-full">
-      {statuses.map(([status]) => <div key={status} data-tone={status}
-        style={{ width: `${rubCoverage.shares?.[status] ?? '0'}%` }} />)}
-    </div>}
-    <dl className="grid gap-2 text-[13px] sm:grid-cols-3">
-      {statuses.map(([status, label]) => {
-        const amount = rubCoverage?.[status];
-        const share = rubCoverage?.shares?.[status];
-        return <div key={status}>
-          <dt className="result-summary-count font-medium" data-tone={status}>{label}</dt>
-          <dd>{counts[status]} стр.{amount != null && ` · ${formatDecimal(amount)} ₽`}
-            {share !== undefined && ` · ${formatDecimal(share)}%`}</dd>
-        </div>;
-      })}
-    </dl>
-    {rubCoverage && <p className="result-summary-muted mt-3 text-xs">Счётчики учитывают все строки. Суммы и доли рассчитаны по известным денежным статьям КФЗ без итогов.</p>}
-  </section>;
 }
 
 export function UnverifiedIndicators({ rows, onOpenRow }: {
@@ -127,12 +103,40 @@ const decisionTypes: Record<string, string> = {
 };
 
 export function ResultConclusion({ result, exportRunId }: { result: ReviewResult; exportRunId?: string }) {
-  const { counts, conclusion } = result.summary;
+  const { counts, conclusion, rubCoverage } = result.summary;
   const tone = resultTone(counts);
-  return <section aria-label="Заключение по проверке" className="result-summary mt-6 space-y-2">
-    <h2 className="text-[15px] font-medium">Заключение</h2>
-    <h3 className="result-summary-title" data-tone={tone}>{resultHeadline[tone]}</h3>
-    <p className="max-w-[820px] text-[15px]">{conclusion}</p>
-    {exportRunId && <XlsxDownload key={exportRunId} runId={exportRunId} />}
+  const discrepancies = result.rows.filter((row) => row.status === 'discrepancy');
+  const unverified = result.rows.filter((row) => row.status === 'unverified');
+  return <section aria-label="Заключение по проверке" className="result-summary mt-4">
+    <p className="result-summary-muted mb-1 text-[13px]">Вывод по проверке</p>
+    <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+      <h2 className="result-summary-title" data-tone={tone}>{resultHeadline[tone]}</h2>
+      <ul aria-label="Счётчики показателей" className="flex flex-wrap gap-x-5 gap-y-1 text-[13px] tabular-nums">
+        {statuses.map(([status, label]) => <li key={status} className="flex items-center gap-1.5">
+          <span aria-hidden="true" className="result-summary-marker" data-tone={status} />
+          <span>{label} — <strong className="font-semibold">{counts[status]}</strong></span>
+        </li>)}
+      </ul>
+    </div>
+    <div className="mt-2 max-w-[930px] space-y-1 text-sm leading-relaxed tabular-nums">
+      <p>{conclusion}</p>
+      {discrepancies.length > 0 && <ul className="list-disc space-y-1 pl-5">
+        {discrepancies.map((row) => <li key={row.id}>{row.label}: в КФЗ {formatMeasure(row.reported_value, row.unit)},
+          по документам {formatMeasure(row.expected_value, row.unit)}. Разница {formatMeasure(row.delta, row.unit)}.</li>)}
+      </ul>}
+      {unverified.length > 0 && <p>Не удалось проверить: {indicatorList.format(unverified.map(({ label }) => label))}.</p>}
+      {rubCoverage ? <p>Известные денежные статьи КФЗ: <strong className="font-medium">{formatMeasure(rubCoverage.total, 'RUB')}</strong>.</p>
+        : <p className="result-summary-muted">Сводка по сумме недоступна.</p>}
+      {rubCoverage && <details className="text-[13px]">
+        <summary className="cursor-pointer">Покрытие по сумме</summary>
+        <ul className="mt-1 flex flex-wrap gap-x-5 gap-y-1">
+          {statuses.map(([status, label]) => <li key={status}>
+            {label}: {formatMeasure(rubCoverage[status], 'RUB')}
+            {rubCoverage.shares?.[status] !== undefined && ` · ${formatDecimal(rubCoverage.shares[status])}%`}
+          </li>)}
+        </ul>
+      </details>}
+    </div>
+    {exportRunId && <div className="mt-3"><XlsxDownload key={exportRunId} runId={exportRunId} /></div>}
   </section>;
 }

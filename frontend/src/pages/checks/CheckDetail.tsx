@@ -9,7 +9,7 @@ import { SourceContext } from './SourceContext';
 import { FindingsHttpError, loadFindings } from './loadFindings';
 import { ResultHeader } from './ResultHeader';
 import type { CheckView } from './ResultHeader';
-import { AdditionalChecks, ResultConclusion, ResultSummary } from './ResultSummary';
+import { AdditionalChecks, ResultConclusion } from './ResultSummary';
 import { documentDecisionLabels, ResultDocuments } from './ResultDocuments';
 import { ResultTable } from './ResultTable';
 import { formatDecimal, formatLocation, statusLabels } from './reviewResult';
@@ -148,17 +148,16 @@ function ResultContent({ id, view, result, run, synthetic, stored }: ResultConte
       <ResultHeader title={result.reportNumber ? runTitle(id, result.reportNumber) : run.title} runPath={runPath} view={view} scope={scope}
         syntheticLabel={syntheticLabel} />
       {stored && <div className="stored-run-status mt-3 text-[13px]"><RunState run={run} /></div>}
-      {view === 'table' && <ResultSummary result={result} />}
-      {view === 'conclusion' && <ResultConclusion result={result} exportRunId={exportRunId} />}
+      {(view === 'table' || view === 'conclusion') && <ResultConclusion result={result}
+        exportRunId={view === 'conclusion' ? exportRunId : undefined} />}
       {view === 'table' && <>
-        <div className="mt-6">
+        <div className="mt-4">
           {result.rows.length > 0
             ? <Reconciliation result={result} storedRunId={stored ? id : undefined} rowJump={rowJump?.locationKey === location.key ? rowJump : linkedRowJump} />
             : <section className="checks-card"><h2>Показатели</h2><p>Показатели отсутствуют.</p></section>}
         </div>
         <AdditionalChecks result={result} runPath={runPath}
           onOpenRow={(rowId) => setRowJump({ id: rowId, locationKey: location.key })} />
-        <ResultConclusion result={result} />
       </>}
       {(view === 'documents' || view === 'exceptions') && <ResultDocuments
         key={view} result={result} runPath={runPath} storedRunId={stored ? id : undefined}

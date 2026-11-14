@@ -22,17 +22,17 @@ test('the accountant opens the synthetic reconciliation and sees discrepancies a
 
   const discrepancy = page.getByRole('row').filter({ hasText: 'Синтетическая статья A' });
   await expect(discrepancy.getByRole('cell', { name: 'Расхождение', exact: true })).toBeVisible();
-  await expect(discrepancy.getByRole('cell', { name: '30,00', exact: true })).toBeVisible();
+  await expect(discrepancy.getByRole('cell', { name: '30,00 ₽', exact: true })).toBeVisible();
   const unverified = page.getByRole('region', { name: 'Недостаточно подтверждений' });
   await expect(unverified).toContainText('Синтетическая статья B');
   await expect(unverified).not.toContainText('Синтетическая статья A');
 
   const row = page.getByRole('row').filter({ hasText: 'Синтетическая статья B' });
-  await expect(row.getByRole('cell', { name: '0,00', exact: true })).toBeVisible();
+  await expect(row.getByRole('cell', { name: '0,00 ₽', exact: true })).toBeVisible();
   await expect(row.getByRole('cell', { name: '—', exact: true })).toHaveCount(2);
   await page.getByLabel('Доказательство').selectOption('amount-1');
   await expect(page.getByText('Лист «Синтетика», C6', { exact: true })).toBeVisible();
-  await row.getByRole('button').click();
+  await row.getByRole('button', { name: 'Синтетическая статья B', exact: true }).click();
   await expect(page.getByText('Страница 1, строка 4, столбец 2', { exact: true })).toBeVisible();
 
   await page.getByRole('link', { name: 'Исключения' }).click();
@@ -52,8 +52,8 @@ for (const width of [320, 390]) {
     await page.goto('/checks');
     await page.getByRole('link', { name: 'Синтетическая сверка', exact: true }).click();
 
-    const summary = page.getByRole('region', { name: 'Результаты проверки' });
-    await expect(summary.getByText(/^1 стр\..*150,50 ₽/)).toBeInViewport({ ratio: 1 });
+    const summary = page.getByRole('region', { name: 'Заключение по проверке' });
+    await expect(summary.getByText('Расхождения — 1', { exact: true })).toBeInViewport({ ratio: 1 });
     await expect(page.getByRole('heading', { name: 'Показатели отчёта' })).toBeVisible();
     await expect(page.getByRole('link', { name: 'Исключения' })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
@@ -261,7 +261,7 @@ test('the finished check loads stored findings and can retry without repeating s
 
   await expect(page.getByText('Синтетика · сохранённая проверка')).toBeVisible();
   const partial = page.getByRole('row').filter({ hasText: 'Синтетическая статья A' });
-  await expect(partial.getByText('Частичная сумма: 60,25 RUB')).toBeVisible();
+  await expect(partial.getByText('Частичная сумма: 60,25 ₽')).toBeVisible();
   await expect(page.getByRole('region', { name: 'Недостаточно подтверждений' }))
     .toContainText('Частичная сумма: 60,25 RUB');
   await expect(partial.getByRole('cell', { name: '—', exact: true })).toBeVisible();
@@ -272,8 +272,8 @@ test('the finished check loads stored findings and can retry without repeating s
   await expect(page.getByText(/Операция в строке 6 совпала по договору/)).toBeVisible();
 
   const zero = page.getByRole('row').filter({ hasText: 'Синтетическая статья B' });
-  await expect(zero.getByRole('cell', { name: '0,00', exact: true })).toBeVisible();
-  await zero.getByRole('button').click();
+  await expect(zero.getByRole('cell', { name: '0,00 ₽', exact: true })).toBeVisible();
+  await zero.getByRole('button', { name: 'Синтетическая статья B', exact: true }).click();
   const reconciliation = page.getByRole('region', { name: 'Рабочее место сверки' });
   await expect(reconciliation.getByText('Источник статьи B не прочитан')).toBeVisible();
   await expect(reconciliation.getByText(/Ошибка чтения файла/)).toBeVisible();
@@ -356,11 +356,11 @@ test('mixed units stay visible even when all values in a row are unknown', async
 
   await page.goto('/checks/mixed-units');
   const rub = page.getByRole('row').filter({ hasText: money.label });
-  for (const value of ['RUB', '150,50', '120,50', '30,00']) {
+  for (const value of ['150,50 ₽', '120,50 ₽', '30,00 ₽']) {
     await expect(rub.getByRole('cell', { name: value, exact: true })).toBeVisible();
   }
   const hours = page.getByRole('row').filter({ hasText: quantity.label });
-  await expect(hours.getByRole('cell', { name: 'ч', exact: true })).toBeVisible();
+  await expect(hours.getByRole('button', { name: /Синтетическая статья B\s*\(ч\)/ })).toBeVisible();
   await expect(hours.getByRole('cell', { name: 'Не проверен', exact: true })).toBeVisible();
   await expect(hours.getByRole('cell', { name: '—', exact: true })).toHaveCount(3);
   await expect(hours.getByText(/Частичная сумма/)).toHaveCount(0);

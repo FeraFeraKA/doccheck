@@ -125,6 +125,10 @@ export function formatDecimal(value: string | null) {
   return decimals === undefined ? grouped : `${grouped},${decimals}`;
 }
 
+export function formatMeasure(value: string | null, unit: string) {
+  return value === null ? '—' : `${formatDecimal(value)} ${unit === 'RUB' ? '₽' : unit}`;
+}
+
 export function formatLocation(locator: SourceAddress) {
   if ('sheet' in locator) return `Лист «${locator.sheet}», ${locator.range}`;
   if ('paragraph' in locator) return `Абзац ${locator.paragraph}`;
