@@ -13,7 +13,7 @@ from decimal import Decimal, InvalidOperation
 import hashlib
 import re
 import unicodedata
-from .document_identity import ISSUER_LABEL, literal_id, normalize_issuer_spelling, validate_number_evidence
+from .document_identity import ISSUER_LABEL, explicit_issuer_inn, literal_id, normalize_issuer_spelling, validate_number_evidence
 
 
 CATEGORIES = {"production_overhead", "general_admin", "payroll", "insurance", "other"}
@@ -24,10 +24,7 @@ _ISSUER_FORMS = {
     "акционерное общество": "ао",
     "индивидуальный предприниматель": "ип",
 }
-_ISSUER_TAX_LABEL = re.compile(r"\bинн\b", re.I)
-_ISSUER_TAX_VALUE = re.compile(r"\bинн\b\s*(?:[:№]\s*)?([0-9]+)(?![\w-])", re.I)
 _ISSUER_REQUISITES = re.compile(r"\s*[,;(]?\s*(?:инн|кпп|огрн(?:ип)?)\s*(?:[:№]\s*)?[0-9].*$", re.I)
-_OTHER_PARTY = re.compile(r"\b(?:заказчик|покупатель|получатель|плательщик)\b", re.I)
 
 
 def _inn_checksum_valid(value):
@@ -50,8 +47,7 @@ def _issuer_comparison_key(value, native_text, issuer_evidence):
     The issuer field must be directly labelled in native text. An INN in a
     separate party field cannot be used as the issuer's number.
     """
-    if (not isinstance(value, str) or not isinstance(native_text, str)
-            or "\ufffd" in value or _OTHER_PARTY.search(value)):
+    if not isinstance(value, str) or not isinstance(native_text, str) or "\ufffd" in value:
         return None
     if not isinstance(issuer_evidence, list) or len(issuer_evidence) != 1:
         return None
@@ -68,12 +64,11 @@ def _issuer_comparison_key(value, native_text, issuer_evidence):
     prefix = re.sub(r"^\s*(?:[A-Z]+\d+:\s*)?", "", native_text[cell_start:start], flags=re.I)
     if not ISSUER_LABEL.fullmatch(prefix):
         return None
+    tax_id = explicit_issuer_inn(raw)
+    if tax_id is None or not _inn_checksum_valid(tax_id):
+        return None
     value = unicodedata.normalize("NFC", value).casefold().translate(str.maketrans("", "", '«»“”„"'))
     value = re.sub(r"\s+", " ", value).strip()
-    labels = _ISSUER_TAX_LABEL.findall(value)
-    tax_ids = _ISSUER_TAX_VALUE.findall(value)
-    if len(labels) != 1 or len(tax_ids) != 1 or not _inn_checksum_valid(tax_ids[0]):
-        return None
     issuer = _ISSUER_REQUISITES.sub("", value).strip(" .,:;«»\"'()")
     for full, short in _ISSUER_FORMS.items():
         if issuer.startswith(full + " "):
@@ -84,7 +79,7 @@ def _issuer_comparison_key(value, native_text, issuer_evidence):
         return None
     form, raw_name = (match.group(1), match.group(2)) if match else (None, issuer)
     name = normalize_issuer_spelling(raw_name)
-    return (form, name, tax_ids[0]) if name else None
+    return (form, name, tax_id) if name else None
 
 
 def _distinct_issuers(left, right):

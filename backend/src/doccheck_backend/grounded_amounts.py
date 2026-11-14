@@ -110,9 +110,6 @@ _OTHER_CURRENCY = re.compile(
 _WHOLE_RUBLES = Decimal("0.01")
 _PDF_OCR_ISSUES = {"clipped_pdf_text", "no_native_text"}
 _ISSUER_REQUISITES = re.compile(r"\s*[,;(]?\s*(?:инн|кпп|огрн(?:ип)?)\s*(?:[:№]\s*)?[0-9].*$")
-_ISSUER_TAX_LABEL = re.compile(r"\bинн\b", re.I)
-_ISSUER_TAX_ID = re.compile(r"\bинн\b\s*(?:[:№]\s*)?([0-9]+)(?![\w-])", re.I)
-_OTHER_PARTY = re.compile(r"\b(?:заказчик|покупатель|получатель|плательщик)\b", re.I)
 _ISSUER_FORMS = {
     "общество с ограниченной ответственностью": "ооо",
     "публичное акционерное общество": "пао",
@@ -154,7 +151,7 @@ def _attributed_issuer_inn(
     method: str,
 ) -> tuple[str | None, Locator | None]:
     """Accept one valid INN directly printed in a native issuer-labelled observation."""
-    from bench.e2e_v32_20261114.document_identity import ISSUER_LABEL
+    from bench.e2e_v32_20261114.document_identity import ISSUER_LABEL, explicit_issuer_inn
 
     candidates = parsed.get("issuer_evidence")
     if method != "native" or not parsed.get("issuer_key") or not isinstance(candidates, list):
@@ -169,7 +166,6 @@ def _attributed_issuer_inn(
         or not isinstance(value, str)
         or not 0 <= start < end <= len(identity_text)
         or identity_text[start:end] != value
-        or _OTHER_PARTY.search(value)
     ):
         return None, None
     index = identity_text.count("\n", 0, start)
@@ -178,10 +174,10 @@ def _attributed_issuer_inn(
     observation = observations[index]
     if not ISSUER_LABEL.match(observation.raw_text) or value not in observation.raw_text:
         return None, None
-    tokens = _ISSUER_TAX_ID.findall(value)
-    if len(_ISSUER_TAX_LABEL.findall(value)) != 1 or len(tokens) != 1:
+    token = explicit_issuer_inn(value)
+    if token is None:
         return None, None
-    result = validate_observed_inn(tokens[0], locator=observation.locator)
+    result = validate_observed_inn(token, locator=observation.locator)
     return (result.value, result.locator) if result.value is not None else (None, None)
 
 
