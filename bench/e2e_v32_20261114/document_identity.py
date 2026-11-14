@@ -34,7 +34,8 @@ _ISSUER_INN_TOKEN = re.compile(r"\bинн\b\s*(?:[:№]\s*)?([0-9]+)(?![\w-])", 
 _OTHER_ROLE = re.compile(
     r"\b(?:заказчик|заказчиц|покупател|получател|плательщик|клиент|контрагент|"
     r"грузополучател|грузоотправител|поставщик|исполнител|продавец|продавц|подрядчик|"
-    r"доверител|представител|арендатор|арендодател|собственник|владелец|владельц)[а-яё]*\b",
+    r"доверител|представител|арендатор|арендодател|собственник|владелец|владельц|"
+    r"субподрядчик|учредител|руководител|директор|банк)[а-яё]*\b",
     re.I,
 )
 _AMBIGUOUS_FIELD = re.compile(
@@ -90,6 +91,19 @@ def explicit_issuer_inn(value: object) -> str | None:
     prefix = value[:tokens[0].start()]
     outside_prefix = outside[:tokens[0].start()]
     if not prefix.strip(" \t.,«»\"'()") or re.search(r"[:;|\r\n]", outside_prefix):
+        return None
+    # A parenthesized INN must start immediately after the opening bracket and
+    # end before its closing bracket. Other bracketed text cannot establish role.
+    suffix = outside[tokens[0].end():]
+    if re.search(r"[\[\]{}]", outside):
+        return None
+    if "(" in outside_prefix or ")" in outside_prefix:
+        if not re.fullmatch(r"[^()]*\(\s*", outside_prefix):
+            return None
+        closing = suffix.find(")")
+        if closing < 0 or suffix[:closing].strip() or re.search(r"[()]", suffix[closing + 1:]):
+            return None
+    elif re.search(r"[()]", suffix):
         return None
     if _AMBIGUOUS_FIELD.search(outside_prefix):
         return None
