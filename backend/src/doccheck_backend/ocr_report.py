@@ -9,7 +9,7 @@ from doccheck_backend.contracts.locators import PageLocator
 from doccheck_backend.native_observations import Observation
 
 _CONTRACT = re.compile(r"\b(?:контракт|договор)\s*(?:№\s*)?([\w./-]*\d[\w./-]*)", re.IGNORECASE)
-_CONTRACT_TOKEN = re.compile(r"^(?=[\w./-]*\d)(?=[\w./-]*[/-])[\w./-]+$")
+_CONTRACT_TOKEN = re.compile(r"^(?=[\w./-]*\d)[\w./-]+$")
 _STAGE_DATE = re.compile(
     r'\b(начало|окончание)\s+([\dз]+)\s+этапа\s*:?\s*[«"“”]?\s*'
     r'(\d{1,2})\s*[»"”“]?\s+([а-яё]+)\s+(\d{4})\s*г?[.,]?',
@@ -76,6 +76,14 @@ def _reading_source(parts: list[Observation], family: str) -> Observation:
     if len(parts) == 1:
         return parts[0]
     boxes = [_box(part) for part in parts]
+    text_boxes = []
+    offset = 0
+    for part in parts:
+        text_boxes.extend(
+            (offset + start, offset + end, locator)
+            for start, end, locator in (part.text_boxes or ((0, len(part.raw_text), part.locator),))
+        )
+        offset += len(part.raw_text) + 1
     return Observation(
         " ".join(part.raw_text for part in parts),
         PageLocator(
@@ -89,6 +97,33 @@ def _reading_source(parts: list[Observation], family: str) -> Observation:
             ),
             fragment_id=f"ocr-{family}",
         ),
+        text_boxes=tuple(text_boxes),
+    )
+
+
+def _contract_value_source(match: re.Match[str], source: Observation) -> Observation | None:
+    start, end = match.span(1)
+    boxes = [
+        locator for lower, upper, locator in source.text_boxes if lower < end and start < upper
+    ]
+    if not boxes:
+        return source
+    parts = [Observation(match[1], locator) for locator in boxes]
+    return _reading_source(parts, "contract-number")
+
+
+_TRAILING_CONTRACT_DATE = re.compile(
+    r"\bот\s+(\d{4}-\d{2}-\d{2}|\d{2}\.\d{2}\.\d{4})[.,;]?\s*$",
+    re.I,
+)
+
+
+def _matches_trailing_date(candidate: Observation, source: Observation) -> bool:
+    date = _TRAILING_CONTRACT_DATE.search(source.raw_text)
+    return bool(
+        date
+        and date[1] == candidate.raw_text.strip()
+        and _center(candidate, 0) > _center(source, 0)
     )
 
 
@@ -189,8 +224,12 @@ def parse_scan_report(observations: tuple[Observation, ...]) -> ScanScope | None
         if item.repeated_read or (item.confidence is not None and item.confidence >= _MIN_SCORE)
     )
     contracts = {}
+    contract_value_locations = {}
     for reading, source in _row_readings(visible, _CONTRACT, "contract", context=positioned):
         contracts.setdefault(reading[1], source)
+        value_location = _contract_value_source(reading, source)
+        if value_location is not None:
+            contract_value_locations.setdefault(reading[1], []).append(value_location)
     if len(contracts) != 1:
         return None
     contract, contract_source = next(iter(contracts.items()))
@@ -240,7 +279,10 @@ def parse_scan_report(observations: tuple[Observation, ...]) -> ScanScope | None
     if any(
         _CONTRACT_TOKEN.fullmatch(item.raw_text.strip())
         and item.raw_text.strip() != contract
-        and _same_region(contract_source, item)
+        and not _matches_trailing_date(item, contract_source)
+        and any(
+            _same_region(location, item) for location in contract_value_locations.get(contract, ())
+        )
         for item in positioned
     ):
         return None
