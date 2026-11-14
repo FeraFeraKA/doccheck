@@ -61,17 +61,21 @@ export function ResultDocuments({
     result, storedRunId,
     initialDocumentId: params.get('document') ?? undefined,
     initialEvidenceId: params.get('evidence') ?? undefined,
-    onSelectionChange(documentId, evidenceId) {
+    initialScopeOnly: params.get('anchor') === 'report-row',
+    onSelectionChange(documentId, evidenceId, scopeOnly) {
       const next = new URLSearchParams(params);
       next.set('document', documentId);
       if (evidenceId) next.set('evidence', evidenceId);
       else next.delete('evidence');
+      if (scopeOnly) next.set('anchor', 'report-row');
+      else next.delete('anchor');
       updateSourceQuery(next);
     },
     onClose() {
       const next = new URLSearchParams(params);
       next.delete('document');
       next.delete('evidence');
+      next.delete('anchor');
       updateSourceQuery(next);
     },
   });

@@ -25,15 +25,17 @@ interface Selection {
 }
 
 export function useSourceWorkspace({
-  result, storedRunId, initialDocumentId, initialEvidenceId, onClose, onEvidenceChange, onSelectionChange,
+  result, storedRunId, initialDocumentId, initialEvidenceId, initialScopeOnly,
+  onClose, onEvidenceChange, onSelectionChange,
 }: {
   result: ReviewResult;
   storedRunId?: string;
   initialDocumentId?: string;
   initialEvidenceId?: string;
+  initialScopeOnly?: boolean;
   onClose?: () => void;
   onEvidenceChange?: (id: string | undefined) => void;
-  onSelectionChange?: (documentId: string, evidenceId?: string) => void;
+  onSelectionChange?: (documentId: string, evidenceId?: string, scopeOnly?: boolean) => void;
 }) {
   const { documents, evidence } = result;
   const report = documents.find(({ id }) => id === result.scope.report_document_id)
@@ -65,7 +67,9 @@ export function useSourceWorkspace({
   const [initialSelection] = useState(() => {
     if (initialDocumentId === undefined || !documents.some(({ id }) => id === initialDocumentId)) return;
     const evidenceId = evidenceByDocument.get(initialDocumentId)?.find(({ id }) => id === initialEvidenceId)?.id;
-    return { documentId: initialDocumentId, evidenceId, rowEvidenceIds: [] };
+    const scopeOnly = !evidenceId && initialScopeOnly && initialDocumentId === report?.id
+      && result.scope.report_row_locator != null && 'page' in result.scope.report_row_locator;
+    return { documentId: initialDocumentId, evidenceId, scopeOnly, rowEvidenceIds: [] };
   });
   const [open, setOpen] = useState(Boolean(initialSelection));
   const [selection, setSelection] = useState<Selection | undefined>(initialSelection);
@@ -119,7 +123,7 @@ export function useSourceWorkspace({
       if (!documentId) return;
       const scopeOnly = evidenceId === scopeAddressId && Boolean(reportPage);
       onEvidenceChange?.(undefined);
-      onSelectionChange?.(documentId);
+      onSelectionChange?.(documentId, undefined, scopeOnly);
       setSelection((previous) => ({ ...previous, documentId, evidenceId: undefined, scopeOnly,
         rowEvidenceIds: previous?.rowEvidenceIds ?? [] }));
       return;

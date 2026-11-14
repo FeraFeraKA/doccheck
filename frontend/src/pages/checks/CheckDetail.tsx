@@ -14,7 +14,7 @@ import { ResultTable } from './ResultTable';
 import { formatLocation } from './reviewResult';
 import type { ReviewResult } from './reviewResult';
 import { useCheckData } from './useCheckData';
-import { runTitle } from './runTitle';
+import { runQueuePath, runTitle } from './runTitle';
 import { isRunId } from './runStatusApi';
 import { RunArchiveAction } from './RunArchiveAction';
 import './result-workspace.css';
@@ -66,7 +66,7 @@ export function CheckDetail({ view, loadRun = loadCheckRun }: {
 function RunContent({ id, view, run }: { id: string; view: CheckView; run: RunDetails }) {
   const { result, status } = run;
   const hasStoredResult = status === 'completed' || status === 'completed_with_issues';
-  if (status === 'queued' || status === 'processing') return <Navigate to="/checks/new#queue" replace />;
+  if (status === 'queued' || status === 'processing') return <Navigate to={runQueuePath(id)} replace />;
   if (result) return <ResultContent id={id} view={view} result={result} run={run} synthetic stored={false} />;
   if (hasStoredResult) return <StoredFindings id={id} view={view} run={run} />;
   return <PendingRun run={run} />;
@@ -405,7 +405,7 @@ function Reconciliation({ result, storedRunId, runPath, rowJump, onOpenRow }: {
           selectedId={row?.id} activeSourceRowId={sourceWorkspace.rowId}
           selectedEvidenceId={sourceWorkspace.evidenceId} expanded={expanded}
           tableScroll={tableScroll} selectedRow={selectedRow} evidenceFields={componentEvidenceFields}
-          evidenceById={allEvidenceById} documentsById={documentsById}
+          evidenceById={allEvidenceById} documentsById={documentsById} issuesById={issuesById}
           formatAddress={formatSourceChoice}
           onFilterChange={(value) => { setFilter(value); selectRow(); }}
           onQueryChange={(value) => { setQuery(value); selectRow(); }}

@@ -164,6 +164,36 @@ test('diagnostics return keyboard focus and the documents route restores selecte
   await expect(page).toHaveURL(/\/documents$/);
 });
 
+test('a selected report row survives a reload and keeps its page', async ({ page }) => {
+  const id = 'report-scope';
+  const [report, ...others] = example.result.documents;
+  const result = {
+    ...example.result, run_id: id, documents: [report, ...others],
+    scope: { ...example.result.scope, report_row_locator: { kind: 'page', page: 2, line: 4 } },
+  };
+  await page.route(`**/api/v0/runs/${id}`, (route) => route.fulfill({ json: {
+    run_id: id, status: 'completed', created_at: '2026-11-14T00:00:00Z', error: null,
+    progress: { processed_documents: 4, total_documents: 4 },
+  } }));
+  await page.route(`**/api/v0/runs/${id}/findings`, (route) => route.fulfill({ json: result }));
+  await page.route(`**/api/v0/runs/${id}/documents/${report.id}`, (route) => route.fulfill({
+    body: '%PDF-1.4 synthetic original', contentType: 'application/octet-stream',
+  }));
+  await page.route(`**/api/v0/runs/${id}/documents/${report.id}/page-preview?*`, (route) =>
+    route.fulfill({ status: 404, json: { code: 'page_not_found' } }));
+
+  await page.goto(`/checks/${id}/documents#exceptions`);
+  await page.getByRole('button', { name: 'Открыть просмотр документов' }).click();
+  const picker = page.getByRole('combobox', { name: 'Адрес доказательства' });
+  await picker.selectOption({ label: 'Строка КФЗ · Страница 2, строка 4' });
+  await expect(page).toHaveURL(/document=report&anchor=report-row#exceptions$/);
+  await page.reload();
+  await expect(picker.locator('option:checked')).toHaveText('Строка КФЗ · Страница 2, строка 4');
+  await expect(page.getByRole('link', { name: 'Открыть страницу 2 PDF (в новой вкладке)' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page).toHaveURL(/\/documents#exceptions$/);
+});
+
 test('a distinct primary issue remains visible beside the related file error', async ({ page }) => {
   const id = 'diagnostic-issue';
   const result = example.result;
@@ -173,13 +203,22 @@ test('a distinct primary issue remains visible beside the related file error', a
   } }));
   await page.route(`**/api/v0/runs/${id}/findings`, (route) => route.fulfill({ json: {
     ...result, run_id: id, summary: {
-      ...result.summary, primary_issues: [...result.summary.primary_issues, {
+      ...result.summary, primary_issues: [
+        ...result.summary.primary_issues.map((issue) => issue.id === 'issue-a' ? {
+          ...issue, message: 'Сверьте договор в сопроводительном файле.',
+          evidence_refs: [...issue.evidence_refs, 'report-b'],
+        } : issue), {
         id: 'extra-scan-diagnostic', code: 'request_rescan', message: detail,
         evidence_refs: [], file_error_refs: ['scan-read-error'],
       }],
     },
   } }));
   await page.goto('/checks/' + id);
+  await page.getByRole('button', { name: 'Синтетическая статья A', exact: true }).click();
+  const indicator = page.getByRole('region', { name: 'Подробности: Синтетическая статья A' });
+  await expect(indicator.getByText('Сверьте договор в сопроводительном файле.', { exact: true })).toBeVisible();
+  await expect(indicator.getByRole('list', { name: 'Источники замечания' })
+    .getByRole('button', { name: /synthetic-report\.pdf/ })).toBeVisible();
   const diagnostics = page.getByRole('region', { name: 'Дополнительные проверки' });
   await expect(diagnostics.getByText(detail, { exact: true })).toBeVisible();
   await diagnostics.getByRole('link', { name: 'Исключения', exact: true }).click();

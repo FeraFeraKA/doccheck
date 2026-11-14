@@ -28,8 +28,36 @@ export interface HistoryEntry {
   counts?: FindingCounts;
   synthetic?: boolean;
   documentCount?: number;
+  progress?: { processed: number; total: number };
   contractNumber?: string;
   error?: string;
+}
+
+export async function loadFollowedRun(
+  id: string,
+  signal: AbortSignal,
+  onUpdate: (entry: HistoryEntry | null) => void,
+): Promise<HistoryEntry | null> {
+  function toEntry(run: RunState): HistoryEntry {
+    return {
+      id: run.run_id,
+      title: runTitle(run.run_id),
+      status: run.status,
+      createdAt: run.created_at,
+      documentCount: run.progress?.total_documents,
+      progress: run.progress ? {
+        processed: run.progress.processed_documents,
+        total: run.progress.total_documents,
+      } : undefined,
+      error: run.error?.message,
+    };
+  }
+  try {
+    return toEntry(await pollRun(id, signal, (run) => onUpdate(toEntry(run))));
+  } catch (error) {
+    if (error instanceof HttpError && error.status === 404) return null;
+    throw error;
+  }
 }
 
 export interface CheckHistory {

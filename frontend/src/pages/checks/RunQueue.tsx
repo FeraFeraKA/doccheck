@@ -1,11 +1,13 @@
 import { useEffect, useRef } from 'react';
 import { Link, useLocation } from 'react-router';
 import { classes } from '../../shared/lib/classes';
-import { runStatusLabels } from './checkData';
+import { loadFollowedRun, runStatusLabels } from './checkData';
 import type { HistoryEntry, RunStatus } from './checkData';
 import { WorkspaceIcon } from './WorkspaceIcon';
 import { runTitle } from './runTitle';
 import { RunProgressBar } from './RunProgressBar';
+import { useCheckData } from './useCheckData';
+import { isRunId } from './runStatusApi';
 import './run-queue.css';
 
 export interface QueueReceipt {
@@ -34,6 +36,8 @@ const dateFormat = new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short', timeSt
 export function RunQueue({ entries = [], receipts, loading, error, onRetry }: RunQueueProps) {
   const location = useLocation();
   const queue = useRef<HTMLElement>(null);
+  const selectedId = new URLSearchParams(location.search).get('run');
+  const followedId = isRunId(selectedId) ? selectedId : undefined;
 
   useEffect(() => {
     if (location.hash !== '#queue') return;
@@ -43,18 +47,14 @@ export function RunQueue({ entries = [], receipts, loading, error, onRetry }: Ru
   const listedIds = new Set(entries.map(({ id }) => id));
   const pendingReceipts = receipts.filter(({ id }) => !listedIds.has(id));
   const items: RunQueueItemProps[] = [
-    ...pendingReceipts.map((receipt): RunQueueItemProps => ({
+    ...pendingReceipts.filter(({ id }) => id !== followedId).map((receipt): RunQueueItemProps => ({
       ...receipt,
       title: runTitle(receipt.id),
       label: 'В очереди',
       tone: 'neutral',
       progress: null,
     })),
-    ...entries.map(({ id, title, createdAt, status, synthetic, documentCount, error }) => ({
-      id, title, label: runStatusLabels[status], tone: tones[status], createdAt, synthetic, documentCount, error,
-      progress: queueProgress(status),
-      openResult: status === 'completed' || status === 'completed_with_issues',
-    })),
+    ...entries.filter(({ id }) => id !== followedId).map(toQueueItem),
   ];
   return (
     <section ref={queue} id="queue" className="upload-card queue-card" aria-label="Последние проверки" aria-busy={loading}>
@@ -65,12 +65,46 @@ export function RunQueue({ entries = [], receipts, loading, error, onRetry }: Ru
         {' '}<button type="button" onClick={onRetry} className="underline">Повторить</button>
       </p>}
       {loading && <p className="queue-message">Загрузка истории…</p>}
-      {items.length > 0 && <ul className="queue-list">
+      {(items.length > 0 || followedId) && <ul className="queue-list">
+        {followedId && <FollowedRun key={followedId} id={followedId}
+          listed={entries.find(({ id }) => id === followedId)} />}
         {items.map((item) => <RunQueueItem key={item.id} {...item} />)}
       </ul>}
-      {!loading && !error && items.length === 0 && <p className="queue-message">В очереди пока нет проверок.</p>}
+      {!loading && !error && !followedId && items.length === 0 &&
+        <p className="queue-message">В очереди пока нет проверок.</p>}
     </section>
   );
+}
+
+function FollowedRun({ id, listed }: { id: string; listed?: HistoryEntry }) {
+  const { state, retry } = useCheckData(id, loadFollowedRun);
+  if (state.phase === 'loading') {
+    return listed ? <RunQueueItem {...toQueueItem(listed)} />
+      : <li className="queue-message" role="status">Загрузка состояния проверки…</li>;
+  }
+  if (state.phase === 'failed') {
+    return <li className="queue-message" role="alert">Не удалось обновить состояние проверки.
+      {' '}<button type="button" onClick={retry} className="underline">Повторить</button>
+    </li>;
+  }
+  if (!state.data) return <li className="queue-message">Проверка не найдена.</li>;
+  const entry = {
+    ...listed, ...state.data, title: listed?.title ?? state.data.title,
+    documentCount: state.data.documentCount ?? listed?.documentCount,
+  };
+  return <RunQueueItem {...toQueueItem(entry)} />;
+}
+
+function toQueueItem(entry: HistoryEntry): RunQueueItemProps {
+  const { id, title, createdAt, status, synthetic, documentCount, error, progress } = entry;
+  const percent = status === 'processing' && progress && progress.total > 0
+    ? Math.floor(progress.processed * 100 / progress.total)
+    : queueProgress(status);
+  return {
+    id, title, label: runStatusLabels[status], tone: tones[status], createdAt, synthetic,
+    documentCount, error, progress: percent,
+    openResult: status === 'completed' || status === 'completed_with_issues',
+  };
 }
 
 function queueProgress(status: RunStatus) {

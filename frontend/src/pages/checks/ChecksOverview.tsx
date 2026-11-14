@@ -5,6 +5,7 @@ import { classes } from '../../shared/lib/classes';
 import { loadRunHistory, runStatusLabels } from './checkData';
 import type { CheckHistory, FindingCounts, FindingFilter, HistoryEntry, RunStatus } from './checkData';
 import { OverviewIcon } from './OverviewIcon';
+import { runQueuePath } from './runTitle';
 import { useRunHistory } from './useRunHistory';
 import './checks-overview.css';
 
@@ -206,7 +207,7 @@ function HistoryTable({ entries, archive, sort, filtered, reset }: {
         <tbody>{entries.map((entry) => {
           const { id, title, counts, status, synthetic, createdAt } = entry;
           const active = status === 'queued' || status === 'processing';
-          const to = active ? '/checks/new#queue' : '/checks/' + encodeURIComponent(id);
+          const to = active ? runQueuePath(id) : '/checks/' + encodeURIComponent(id);
           const tone = counts ? findingLabel(counts).tone : tones[status];
           const total = counts ? counts.verified + counts.discrepancy + counts.unverified : 0;
           return <tr key={id} className="overview-check-row" onClick={(event) => openRow(event, to)}>

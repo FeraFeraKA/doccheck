@@ -129,7 +129,8 @@ test('the accountant distinguishes missing files, invalid selection and unknown 
   await page.goto('/checks/unknown/conclusion');
   await expect(page.getByRole('heading', { name: 'Проверка не найдена' })).toBeVisible();
   await page.getByRole('link', { name: 'Все проверки' }).click();
-  await expect(page.getByRole('link', { name: 'Проверка КФЗ №saved-run' })).toHaveAttribute('href', '/checks/new#queue');
+  await expect(page.getByRole('link', { name: 'Проверка КФЗ №saved-run' }))
+    .toHaveAttribute('href', '/checks/new?run=saved-run#queue');
   await page.getByRole('searchbox', { name: 'Поиск на странице' }).fill('нет совпадений');
   await expect(page.getByText('Проверки не найдены.')).toBeVisible();
 });
@@ -173,6 +174,37 @@ test('saved run and history cursor are recovered from the URL', async ({ page })
   await page.reload();
   await expect(page.getByRole('heading', { name: 'Проверка КФЗ №saved-run' })).toBeVisible();
   await expect(page.getByText('Результат проверки недоступен.')).toBeVisible();
+});
+
+test('an older active check stays observable in the queue until its result is ready', async ({ page }) => {
+  const id = 'older-active-run';
+  let finished = false;
+  const created = '2026-11-14T12:00:00Z';
+  await page.route('**/api/v0/runs', (route) => route.fulfill({ json: {
+    items: [{ run_id: 'newer-run', status: 'queued', created_at: created, error: null }],
+    next_cursor: 'another-page',
+  } }));
+  await page.route(`**/api/v0/runs/${id}`, (route) => route.fulfill({ json: {
+    run_id: id, status: finished ? 'completed' : 'processing', error: null, created_at: created,
+    progress: finished ? { processed_documents: 2, total_documents: 2 } : null,
+  } }));
+  await page.route(`**/api/v0/runs/${id}/findings`, (route) => route.fulfill({
+    json: { ...example.result, run_id: id, synthetic: true },
+  }));
+
+  await page.goto(`/checks/${id}`);
+  await expect(page).toHaveURL(/\/checks\/new\?run=older-active-run#queue$/);
+  const queue = page.getByRole('region', { name: 'Последние проверки' });
+  const bar = queue.getByRole('progressbar', { name: `Проверка КФЗ №${id}` });
+  await expect(bar).toHaveAttribute('aria-valuetext', 'Обработка документов');
+  await expect(bar).not.toHaveAttribute('aria-valuenow');
+  await page.reload();
+  await expect(bar).toBeVisible();
+
+  finished = true;
+  await queue.getByRole('link', { name: `Проверка КФЗ №${id}` }).click();
+  await expect(page).toHaveURL(`/checks/${id}`);
+  await expect(page.getByRole('table', { name: 'Показатели КФЗ' })).toBeVisible();
 });
 
 test('the synthetic result and its document routes have no XLSX action', async ({ page }) => {

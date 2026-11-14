@@ -34,7 +34,7 @@ it('applies server filters before pagination while sorting the current page loca
   expect(within(firstResult).getByText('1 из 6 показателей')).toBeVisible();
   expect(within(firstResult).getByLabelText('Покрытие по сумме недоступно')).toHaveTextContent('—');
   expect(within(firstResult).getByLabelText('Количество документов недоступно')).toHaveTextContent('—');
-  expect(within(history).getByRole('link', { name: 'Очередь' })).toHaveAttribute('href', '/checks/new#queue');
+  expect(within(history).getByRole('link', { name: 'Очередь' })).toHaveAttribute('href', '/checks/new?run=q#queue');
   expect(within(history).getByRole('link', { name: 'Альфа' })).toHaveAttribute('href', '/checks/a');
   expect(within(history).getByRole('link', { name: 'Более ранние проверки' }))
     .toHaveAttribute('href', '/checks?cursor=older+%2B+opaque');
