@@ -50,6 +50,8 @@ Frontend: React, TypeScript, Vite, React Router, Zustand, Tailwind CSS и соб
 
 ## Запуск каркаса через Docker Compose
 
+Для документной сверки с локальной моделью используйте [запуск с NVIDIA GPU](docs/docker.md).
+
 Нужны запущенный Docker Engine с Linux-контейнерами и Docker Compose с
 поддержкой `up --wait`. Скопируйте `.env.example` в `.env`, если файла ещё
 нет, и задайте `DOCCHECK_DB_PASSWORD` случайной строкой из букв и цифр,

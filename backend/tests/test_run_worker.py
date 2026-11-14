@@ -171,6 +171,7 @@ def test_accepts_inferred_scope_and_serves_saved_result(engine, queue, tmp_path)
             "v32_pdf_scan_scope_unconfirmed",
             "Реквизиты и суммы требуют подтверждения",
         ),
+        ("v32_model_unavailable", "v32_model_unavailable", "локальная модель v3.2 недоступна"),
         ("unknown_processor_error", "processing_failed", "Не удалось обработать пакет."),
     ],
 )

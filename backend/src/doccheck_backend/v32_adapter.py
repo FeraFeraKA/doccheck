@@ -40,7 +40,6 @@ from doccheck_backend.native_reader import read_native_document
 from doccheck_backend.run_worker import StoredRun
 from doccheck_backend.v32_report_model import read_report_with_model, uncovered_pdf_observations
 
-_MODEL_DIGEST = "d8b0f5e9760cd1682034f292d7ef72ec46f432149be0df7574bf2d6e92e38c04"
 _VERSION = "e2e-v32-20261114"
 _ARTICLES = {
     "payroll": ("0200", "Оплата труда"),
@@ -436,8 +435,18 @@ def _report_model_warning(
 
 def process(run: StoredRun, upload_folder: Path) -> CheckJob:
     """Process an addressed report and anchor v3.2 findings to saved originals."""
+    from bench.e2e_v32_20261114.runtime import ModelUnavailableError
+
+    try:
+        return _process(run, upload_folder)
+    except ModelUnavailableError:
+        return _failure(run, "v32_model_unavailable", "Закреплённая модель v3.2 недоступна.")
+
+
+def _process(run: StoredRun, upload_folder: Path) -> CheckJob:
     from bench.e2e_v32_20261114 import decision_rules, document_identity
     from bench.e2e_v32_20261114 import run as v32
+    from bench.e2e_v32_20261114.runtime import MODEL_DIGEST, require_pinned_model
 
     files = {item.id: item for item in map(InputFile.from_manifest, run.documents)}
     report = files[run.report_document_id]
@@ -450,11 +459,7 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
         tags = v32.runtime.api("/api/tags", timeout=10)
     except (OSError, URLError, ValueError):
         return _failure(run, "v32_model_unavailable", "Локальная Ollama недоступна.")
-    digests = [
-        item.get("digest") for item in tags.get("models", ()) if item.get("name") == v32.MODEL
-    ]
-    if digests != [_MODEL_DIGEST]:
-        return _failure(run, "v32_model_unavailable", "Закреплённая модель v3.2 недоступна.")
+    require_pinned_model(tags)
 
     with TemporaryDirectory(prefix="doccheck-v32-") as temp:
         folder = Path(temp)
@@ -812,7 +817,7 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
             rules_version=_VERSION,
             ml_module_version=_VERSION,
             ml_policy_version=None,
-            model_revision=_MODEL_DIGEST,
+            model_revision=MODEL_DIGEST,
         ),
         documents=[documents[file_id] for file_id in files],
         evidence=evidence,

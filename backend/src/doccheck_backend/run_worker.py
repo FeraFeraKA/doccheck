@@ -44,8 +44,13 @@ _PDF_SCAN_SCOPE_UNCONFIRMED = Issue(
         "подтверждения по оригиналу."
     ),
 )
+_MODEL_UNAVAILABLE = Issue(
+    code="v32_model_unavailable",
+    message="Закреплённая локальная модель v3.2 недоступна. Проверьте сервис модели.",
+)
 _PUBLIC_RUN_FAILURES = {
-    error.code: error for error in (_PDF_SCAN_UNREADABLE, _PDF_SCAN_SCOPE_UNCONFIRMED)
+    error.code: error
+    for error in (_PDF_SCAN_UNREADABLE, _PDF_SCAN_SCOPE_UNCONFIRMED, _MODEL_UNAVAILABLE)
 }
 
 

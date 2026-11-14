@@ -1,0 +1,107 @@
+x-ollama: &ollama
+  platform: linux/amd64
+  image: ollama/ollama:0.40.16@sha256:a372a1c0d1e15b68e9521189785c3ca17795c26c2356f8b1b10122cfb59ed0d7
+  environment: &ollama-env
+    OLLAMA_NO_CLOUD: "1"
+    OLLAMA_MODELS: /models
+
+x-document-runtime: &document-runtime
+  image: doccheck-document-worker:local
+  build:
+    context: .
+    dockerfile: backend/Dockerfile
+    target: document-runtime
+
+services:
+  worker:
+    profiles: [synthetic]
+
+  model-prepare:
+    <<: *ollama
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        export OLLAMA_HOST=127.0.0.1:11434
+        ollama serve &
+        pid=$$!
+        trap 'kill "$$pid" 2>/dev/null || true; wait "$$pid" || true' EXIT
+        for attempt in $$(seq 1 30); do
+          if ollama list >/dev/null 2>&1; then
+            ollama show qwen3.5:4b-q4_K_M >/dev/null 2>&1 ||
+              ollama pull qwen3.5:4b-q4_K_M
+            exit 0
+          fi
+          kill -0 "$$pid"
+          sleep 1
+        done
+        echo 'Ollama did not start for model preparation' >&2
+        exit 1
+    volumes:
+      - ollama-models:/models
+    networks: [model-download]
+
+  # Serve only the prepared volume on a network with no external route.
+  model:
+    <<: *ollama
+    environment:
+      <<: *ollama-env
+      OLLAMA_HOST: 0.0.0.0:11434
+      OLLAMA_NOPRUNE: "1"
+      OLLAMA_NUM_PARALLEL: "1"
+      OLLAMA_MAX_LOADED_MODELS: "1"
+    command: ["serve"]
+    gpus:
+      - driver: nvidia
+        count: 1
+    volumes:
+      - ollama-models:/models:ro
+    depends_on:
+      model-prepare:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    networks: [inference]
+
+  model-ready:
+    <<: *document-runtime
+    environment:
+      DOCCHECK_V32_COMPOSE_MODEL: "1"
+    command: ["python", "-m", "doccheck_backend.v32_model_ready"]
+    depends_on:
+      model:
+        condition: service_healthy
+    networks: [inference]
+
+  document-worker:
+    <<: *document-runtime
+    profiles: !reset []
+    environment:
+      DOCCHECK_V32_COMPOSE_MODEL: "1"
+    command: ["python", "-m", "doccheck_backend.run_worker", "--processor", "doccheck_backend.v32_adapter:process"]
+    depends_on:
+      model-ready:
+        condition: service_completed_successfully
+    networks: [backend, inference]
+
+  api:
+    depends_on:
+      document-worker:
+        condition: service_started
+
+  frontend:
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/health"]
+      interval: 2s
+      timeout: 4s
+      retries: 20
+
+networks:
+  model-download:
+  inference:
+    internal: true
+
+volumes:
+  ollama-models:
