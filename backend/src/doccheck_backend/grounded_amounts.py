@@ -90,7 +90,7 @@ _OTHER_CURRENCY = re.compile(
     r"\b(?:USD|EUR|CNY|GBP|JPY|KZT|BYN|доллар\w*|евро|юан\w*)\b|[€$¥£]", re.I
 )
 _WHOLE_RUBLES = Decimal("0.01")
-_PDF_OCR_ISSUES = {"clipped_pdf_text", "no_native_text", "raster_pdf_content"}
+_PDF_OCR_ISSUES = {"clipped_pdf_text", "no_native_text"}
 
 
 @dataclass(frozen=True)
@@ -118,11 +118,11 @@ def _norm(text: str) -> str:
 
 def _read_observations(path: Path, format_: FileFormat) -> tuple[NativeDocument, str]:
     native = read_native_document(path, format_)
-    # Use full-page OCR when the native reader detects clipped text or a scan.
+    # Use full-page OCR when images or clipped text may hide part of the document.
     # Unsupported PDF visibility is left to review instead of mixing layers.
     render = format_ == "png" or (
         format_ == "pdf"
-        and native.issues
+        and (native.has_raster_content or native.issues)
         and all(issue.code in _PDF_OCR_ISSUES for issue in native.issues)
     )
     if not render:

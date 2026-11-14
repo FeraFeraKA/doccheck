@@ -290,7 +290,8 @@ def test_pdf_with_visible_image_uses_visual_reading_even_with_native_text(monkey
         image=raster,
     )
     native = read_native_document(pdf, "pdf")
-    assert [issue.code for issue in native.issues] == ["raster_pdf_content"]
+    assert native.has_raster_content
+    assert not native.issues
     assert len(native.observations) == 1
 
     monkeypatch.setattr(
