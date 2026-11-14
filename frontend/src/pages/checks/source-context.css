@@ -1,0 +1,59 @@
+.source-context,
+.source-context-preview {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.source-context-preview[hidden],
+.source-context-rule[hidden] { display: none; }
+
+.source-context-header {
+  flex-shrink: 0;
+  padding: .5rem 1rem;
+  overflow-wrap: anywhere;
+}
+
+.source-context-header > div { display: flex; flex-wrap: wrap; align-items: center; gap: .25rem .75rem; }
+.source-context-header h3 { margin: 0; font-size: .875rem; font-weight: 600; }
+.source-context-header > dl { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .375rem; margin-top: .375rem; }
+.source-context-header > dl > div { padding: .25rem .5rem; border-radius: .375rem; background: #edf5f4; }
+.source-context-header dt,
+.source-context-header p { font-size: .75rem; }
+.source-context-header dd { font-size: .875rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+.source-context-tabs {
+  display: flex;
+  gap: .375rem;
+  flex-shrink: 0;
+  padding: 0 1rem;
+  border-bottom: 1px solid #dce7e5;
+}
+
+.source-context-tabs [role="tab"] { padding: .25rem .5rem; border-color: transparent; font-size: .8125rem; }
+.source-context-tabs [aria-selected="true"] { border-bottom-color: #1c4649; background: #edf5f4; font-weight: 600; }
+.source-context-preview .document-picker { flex-shrink: 0; margin: .375rem 1rem 0; }
+.source-context-preview .source-viewer > .source-viewer-heading { padding-top: .25rem; }
+.result-reconciliation .source-context-preview .document-picker { padding: .25rem .375rem; }
+.result-reconciliation .source-context-preview .document-picker label { display: contents; }
+.source-context-preview .document-picker label > .source-picker-caption {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.result-reconciliation .source-context-preview .document-picker :is(button, select) { padding-block: .25rem; }
+.source-context-rule { flex: 1; padding: .75rem 1rem; overflow: auto; overflow-wrap: anywhere; }
+.source-context-rule h3 { font-size: .875rem; font-weight: 600; }
+.source-context-rule dt { margin-top: .5rem; font-size: .75rem; color: #4d6465; }
+.source-context-rule dd,
+.source-context-rule li { font-size: .8125rem; }
+.source-context-rule ul { margin-top: .5rem; }
+
+@media (max-height: 650px) {
+  .source-context:not(.source-context-show-rule) .source-context-header dl { display: none; }
+}
