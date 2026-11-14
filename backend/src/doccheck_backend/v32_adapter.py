@@ -580,7 +580,7 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
                         )
                         if file.format in {"png", "pdf"} and not native.observations:
                             ocr = read_scan(Path(entry["path"]), file.format)
-                            if not ocr.issues:
+                            if all(issue.code == "ocr_no_text" for issue in ocr.issues):
                                 addressed_scans[file.id] = ocr.observations
                         extracted = v32.extract_primary(entry, previous)
                         if not extracted.get("error"):
