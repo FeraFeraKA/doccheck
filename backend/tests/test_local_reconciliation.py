@@ -190,7 +190,11 @@ def test_broken_pdf_is_reported_on_its_source_without_failing_the_run(database_u
         result = findings.json()
         damaged = next(doc for doc in result["documents"] if doc["name"] == "truncated.pdf")
         assert damaged["decision"]["state"] == "parse_error"
-        assert any(issue["code"] == "source_unreadable" for issue in damaged["errors"])
+        assert damaged["parse_status"] == "error"
+        assert any(
+            issue["code"] == "pdf_unreadable" and "PDF" in issue["message"]
+            for issue in damaged["errors"]
+        )
         assert any(doc["decision"]["state"] == "include" for doc in result["documents"])
         row = next(row for row in result["rows"] if row["id"] == "payroll")
         assert row["reported_value"] == row["observed_evidence_sum"] == "1070.45"
