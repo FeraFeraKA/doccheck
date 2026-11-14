@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router';
+import { Link, useNavigate, useSearchParams } from 'react-router';
 import { classes } from '../../shared/lib/classes';
 import { Button } from '../../shared/ui/Button';
 import type { CheckHistory } from './checkData';
 import { prepareRunTransfer, RunUploadHttpError, startPreparedRun } from './createRun';
+import type { ScanScope } from './createRun';
 import { RunProgressBar } from './RunProgressBar';
 import { RunQueue } from './RunQueue';
 import type { QueueReceipt } from './RunQueue';
-import { UploadFileList, UploadSpinner } from './UploadFiles';
+import { uploadFileInfo, UploadFileList, UploadSpinner } from './UploadFiles';
 import type { UploadFile } from './UploadFiles';
 import { usePreparedRun } from './usePreparedRun';
 import { useRunHistory } from './useRunHistory';
@@ -18,6 +19,20 @@ import { WorkspaceIcon } from './WorkspaceIcon';
 export type { RetainedDocument } from './createRun';
 export type { InitialRunPack } from './useRunUploadFiles';
 
+const initialScanScope: ScanScope = {
+  contractNumber: '', periodStart: '', periodEnd: '', page: NaN, stage: NaN,
+};
+
+function validScanScope(scope: ScanScope) {
+  return scope.contractNumber.trim().length > 0
+    && /^\d{4}-\d{2}-\d{2}$/.test(scope.periodStart)
+    && /^\d{4}-\d{2}-\d{2}$/.test(scope.periodEnd)
+    && scope.periodStart <= scope.periodEnd
+    && scope.periodStart.slice(0, 4) === scope.periodEnd.slice(0, 4)
+    && Number.isInteger(scope.page) && scope.page >= 1 && scope.page <= 12
+    && Number.isSafeInteger(scope.stage) && scope.stage >= 1;
+}
+
 function uploadErrorMessage(error: unknown, fallback: string): string {
   if (error instanceof RunUploadHttpError) {
     if (error.status === 413) return 'Пакет превышает предел загрузки.';
@@ -27,19 +42,21 @@ function uploadErrorMessage(error: unknown, fallback: string): string {
 }
 
 function readyPacket(
-  report: UploadFile[], documents: UploadFile[], sourceRunId?: string,
+  report: UploadFile[], documents: UploadFile[], sourceRunId?: string, scanScope?: ScanScope,
 ): Parameters<typeof prepareRunTransfer>[0] | null {
   if (report.length !== 1 || documents.length === 0) return null;
   const items = [...report, ...documents];
   if (items.some((item) => 'file' in item && item.state !== 'ready')) return null;
   const reportFile = 'file' in report[0] ? report[0].file : undefined;
   const documentFiles = documents.flatMap((item) => 'file' in item ? [item.file] : []);
-  if (!sourceRunId) return reportFile ? { report: reportFile, documents: documentFiles } : null;
+  const scope = scanScope ? { scanScope: { ...scanScope, contractNumber: scanScope.contractNumber.trim() } } : {};
+  if (!sourceRunId) return reportFile ? { report: reportFile, documents: documentFiles, ...scope } : null;
   return {
     report: reportFile,
     documents: documentFiles,
     sourceRunId,
     retainedDocumentIds: items.flatMap((item) => 'retained' in item ? [item.retained.id] : []),
+    ...scope,
   };
 }
 
@@ -54,6 +71,8 @@ const publicDemo = import.meta.env.VITE_DOCCHECK_PUBLIC_DEMO === '1';
 
 export function NewCheck({ initialPack }: { initialPack?: InitialRunPack } = {}) {
   const navigate = useNavigate();
+  const [params] = useSearchParams();
+  const manualScope = params.get('scope') === 'manual';
   const submitButton = useRef<HTMLButtonElement>(null);
   const chooseReport = useRef<HTMLButtonElement>(null);
   const restoreUploadFocus = useRef(false);
@@ -68,11 +87,13 @@ export function NewCheck({ initialPack }: { initialPack?: InitialRunPack } = {})
   const { report, documents, errors, withinLimits, takeFiles, removeFile, clearFiles } = useRunUploadFiles(initialPack);
   const [submitError, setSubmitError] = useState('');
   const [starting, setStarting] = useState(false);
+  const [scanScope, setScanScope] = useState(initialScanScope);
+  const requireScanScope = manualScope && report.length === 1 && /\.(pdf|png)$/i.test(uploadFileInfo(report[0]).name);
   const sourceRunId = initialPack?.runId;
-  const packet = useMemo(
-    () => !publicDemo && withinLimits ? readyPacket(report, documents, sourceRunId) : null,
-    [report, documents, sourceRunId, withinLimits],
-  );
+  const packet = useMemo(() => {
+    if (publicDemo || !withinLimits || (requireScanScope && !validScanScope(scanScope))) return null;
+    return readyPacket(report, documents, sourceRunId, requireScanScope ? scanScope : undefined);
+  }, [report, documents, sourceRunId, withinLimits, requireScanScope, scanScope]);
   const prepared = usePreparedRun(packet);
   const transfer = prepared.state?.phase === 'uploading' ? prepared.state : null;
   const ready = prepared.state?.phase === 'ready';
@@ -83,20 +104,26 @@ export function NewCheck({ initialPack }: { initialPack?: InitialRunPack } = {})
 
   useEffect(() => () => active.current?.abort(), []);
 
-  function selectionChanged() {
+  function selectionChanged(group: FileGroup) {
+    if (group === 'report') setScanScope(initialScanScope);
     setAnnounceAccepted(false);
     setSubmitError('');
   }
 
+  function updateScope(values: Partial<ScanScope>) {
+    setSubmitError('');
+    setScanScope((previous) => ({ ...previous, ...values }));
+  }
+
   function chooseFiles(incoming: FileList, group: FileGroup) {
     if (active.current) return;
-    if (takeFiles(incoming, group)) selectionChanged();
+    if (takeFiles(incoming, group)) selectionChanged(group);
   }
 
   function removeSelectedFile(group: FileGroup, id: string) {
     if (active.current) return;
     removeFile(group, id);
-    selectionChanged();
+    selectionChanged(group);
   }
 
   useEffect(() => {
@@ -128,6 +155,10 @@ export function NewCheck({ initialPack }: { initialPack?: InitialRunPack } = {})
       setAnnounceAccepted(true);
       restoreUploadFocus.current = submitHadFocus;
       clearFiles();
+      if (manualScope) {
+        setScanScope(initialScanScope);
+        void navigate('/checks/new#queue', { replace: true });
+      }
     } catch (error) {
       if (controller.signal.aborted) return;
       if (error instanceof RunUploadHttpError && (error.status === 404 || error.status === 410)) {
@@ -158,6 +189,32 @@ export function NewCheck({ initialPack }: { initialPack?: InitialRunPack } = {})
             <UploadBlock group="documents" files={documents} error={errors.documents} disabled={starting}
               transferring={Boolean(transfer)} onFiles={chooseFiles} onRemove={(id) => removeSelectedFile('documents', id)} />
           </div>
+          {requireScanScope && <fieldset className="upload-card mt-6" disabled={starting}>
+            <legend className="px-2">Строка КФЗ</legend>
+            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+              <label className="grid gap-1">Номер договора
+                <input className="rounded border p-2" value={scanScope.contractNumber}
+                  onChange={(event) => updateScope({ contractNumber: event.currentTarget.value })} />
+              </label>
+              <label className="grid gap-1">Начало периода
+                <input className="rounded border p-2" type="date" value={scanScope.periodStart}
+                  onChange={(event) => updateScope({ periodStart: event.currentTarget.value })} />
+              </label>
+              <label className="grid gap-1">Конец периода
+                <input className="rounded border p-2" type="date" value={scanScope.periodEnd}
+                  onChange={(event) => updateScope({ periodEnd: event.currentTarget.value })} />
+              </label>
+              <label className="grid gap-1">Этап
+                <input className="rounded border p-2" type="number" min={1} value={scanScope.stage || ''}
+                  onChange={(event) => updateScope({ stage: event.currentTarget.valueAsNumber })} />
+              </label>
+              <label className="grid gap-1">Страница
+                <input className="rounded border p-2" type="number" min={1} max={12}
+                  value={scanScope.page || ''}
+                  onChange={(event) => updateScope({ page: event.currentTarget.valueAsNumber })} />
+              </label>
+            </div>
+          </fieldset>}
           <div className="upload-navigation mt-5 flex flex-wrap items-center gap-3">
             <Button ref={submitButton} disabled={starting || !ready} onClick={() => { void submit(); }}>
               Запустить проверку <WorkspaceIcon name="arrow" size={17} />

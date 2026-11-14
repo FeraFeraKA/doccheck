@@ -28,3 +28,4 @@ class NativeIssue:
 class NativeDocument:
     observations: tuple[Observation, ...] = ()
     issues: tuple[NativeIssue, ...] = ()
+    has_raster_content: bool = False

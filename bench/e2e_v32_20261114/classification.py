@@ -81,15 +81,36 @@ REPORTED_COMPLETION = re.compile(
     r"^исполнитель\s+(?:указал|зафиксировал|отразил)\s+в\s+(?:настоящем\s+)?акте\s+"
     r"(?:заверш[её]нн\w*|выполненн\w*|оказанн\w*)\s+", re.I)
 CELL_PREFIX = re.compile(r"^\s*(?:[A-Z]+\d+:\s*)?", re.I)
-TEMPORARY_EQUIPMENT = re.compile(
-    r"^(?:(?:предмет|операция|содержание|назначение)\s*:\s*)?"
+EQUIPMENT_PURPOSE_PREFIX = (
+    rf"^(?:(?:предмет|операция|содержание|назначение)\s*:\s*|(?:{PURPOSE_LABEL.pattern})\s*)?"
     r"(?:(?:по\s+настоящему\s+(?:акту|документу)|фактически)\s+)?"
-    r"(?:предоставлени[ея]|предоставлен[аоы]?|передач[аи]|передан[аоы]?|аренд[аы])\s+"
+)
+EQUIPMENT_KIND = r"(?:оборудовани\w*|прибор\w*|стенд\w*|установк\w*)"
+MEASUREMENT_EQUIPMENT_TRANSFER = (
+    EQUIPMENT_PURPOSE_PREFIX
+    + r"(?:предоставлени[ея]|предоставлен[аоы]?|передач[аи]|передан[аоы]?|аренд[аы])\s+"
     r"(?:(?:специализированн\w*|контрольн\w*|измерительн\w*|испытательн\w*|метрологическ\w*)\s+){0,3}"
-    r"(?P<equipment>(?:измерительн\w*|испытательн\w*|метрологическ\w*)\s+"
-    r"(?:оборудовани\w*|прибор\w*|стенд\w*|установк\w*))\s+"
-    r"(?:во\s+временн\w*\s+пользовани\w*|в\s+аренду)\b", re.I)
-STAGE_WORK = re.compile(r"[\s,]+для\s+выполнения\s+работ\s+(?:по\s+)?этап[ау](?:\s+№?\s*\d+)?\b", re.I)
+    rf"(?P<equipment>(?:измерительн\w*|испытательн\w*|метрологическ\w*)\s+{EQUIPMENT_KIND})\s+"
+)
+TEMPORARY_EQUIPMENT = re.compile(
+    MEASUREMENT_EQUIPMENT_TRANSFER + r"(?:во\s+временн\w*\s+пользовани\w*|в\s+аренду)\b",
+    re.I,
+)
+CLIPPED_TEMPORARY_EQUIPMENT = re.compile(
+    MEASUREMENT_EQUIPMENT_TRANSFER + r"во\s+временн\w*\s+пользова(?:н(?:и)?)?(?=\n|$)",
+    re.I,
+)
+DIRECT_EQUIPMENT_RENTAL = re.compile(
+    EQUIPMENT_PURPOSE_PREFIX + r"(?:аренд[аы]|услуг[аи]\s+по\s+аренде)\s+"
+    rf"(?P<equipment>(?:(?:специализированн|измерительн|испытательн|метрологическ)\w*\s+){{1,3}}"
+    rf"{EQUIPMENT_KIND})\b",
+    re.I,
+)
+STAGE_WORK = re.compile(
+    r"[\s,]+для\s+выполнения\s+работ\s+(?:по\s+)?(?:этап[ау]|проект[ау])"
+    r"(?:\s+№?\s*\d+)?\b",
+    re.I,
+)
 OTHER_ALLOCATION = re.compile(
     r"\b(?:заработн\w*\s+плат\w*|оплат\w*\s+труд\w*|страхов\w*\s+взнос\w*|материальн\w*\s+затрат\w*)\b", re.I)
 EXTERNAL_EQUIPMENT_CONTEXT = re.compile(
@@ -304,7 +325,7 @@ def allocation_polarity(text):
     return roles, guarded
 
 
-def purpose_excerpts(text, analysis_text=None):
+def purpose_excerpts(text, analysis_text=None, *, clipped_lines=frozenset()):
     """Return small literal windows around work descriptions, with line locators.
 
     A continuation is retained for PDF line wrapping. Requisites and signatories
@@ -318,7 +339,11 @@ def purpose_excerpts(text, analysis_text=None):
     for index, line in enumerate(analyzed):
         # A header-like first sentence need not make the remaining prose on
         # the physical line metadata. Assertion parsing still checks each span.
-        if not any(is_purpose_line(part) for part in re.split(r'(?<=[.!?])\s+', line)):
+        clipped_equipment = index + 1 in clipped_lines and CLIPPED_TEMPORARY_EQUIPMENT.match(
+            content_text(line)
+        )
+        if not clipped_equipment and not any(
+                is_purpose_line(part) for part in re.split(r'(?<=[.!?])\s+', line)):
             continue
         block = [lines[index]]
         analysis_block = [line]
@@ -471,19 +496,23 @@ def cancelled_request_scopes(statements, text):
     return scopes
 
 
-def assertion(statement):
+def assertion(statement, *, clipped=False):
     """Parse evidence without granting authority to an unparsed role mention."""
     value = statement["text"]
     roles, unsupported = allocation_polarity(value)
     content = content_text(value)
-    equipment = TEMPORARY_EQUIPMENT.match(content)
+    transfer = TEMPORARY_EQUIPMENT.match(content)
+    if transfer is None and clipped:
+        transfer = CLIPPED_TEMPORARY_EQUIPMENT.match(content)
+    rental = DIRECT_EQUIPMENT_RENTAL.match(content) if transfer is None else None
+    equipment = transfer or rental
     equipment_external = equipment is not None and EXTERNAL_EQUIPMENT_CONTEXT.search(value)
     equipment_is_own = (equipment is not None and not equipment_external
                         and not in_external_quote(statement)
                         and not OTHER_ALLOCATION.search(value))
-    equipment_with_stage = (equipment_is_own and not ADMIN.search(value)
-                            and STAGE_WORK.match(content, equipment.end()))
-    if (equipment_with_stage and not NEGATION.search(value) and not unsupported
+    equipment_with_stage = equipment_is_own and STAGE_WORK.match(content, equipment.end())
+    conflicting_use = equipment_with_stage and ADMIN.search(value)
+    if (equipment_with_stage and not conflicting_use and not NEGATION.search(value) and not unsupported
             and not any(role["category"] == "production_overhead" for role in roles)):
         trim = len(value) - len(content)
         start, end = (pos + trim for pos in equipment.span('equipment'))
@@ -518,10 +547,12 @@ def assertion(statement):
         result.update(state="unknown", reason="unresolved_request_cancellation")
     elif unsupported or UNPARSED_NEGATIVE.search(value):
         result.update(state="unknown", reason="unsupported_allocation_syntax")
-    elif equipment_with_stage and not NEGATION.search(value):
+    elif conflicting_use and not NEGATION.search(value):
+        result.update(state="nonexclusive", reason="mixed_stage_equipment_purpose")
+    elif equipment_with_stage and not conflicting_use and not NEGATION.search(value):
         result.update(state="asserted", reason="temporary_measurement_equipment_for_stage_work",
                       positive_categories=["production_overhead"])
-    elif equipment_is_own and not NEGATION.search(value):
+    elif equipment_is_own and (transfer or not roles) and not NEGATION.search(value):
         # The expense is for temporary equipment use, but no allocation
         # between the two overhead articles is supported by this statement.
         result.update(state="unknown", reason="temporary_equipment_allocation_unknown",
@@ -535,9 +566,9 @@ def assertion(statement):
     return result
 
 
-def classify_source(text):
+def classify_source(text, *, clipped_lines=frozenset()):
     metadata = own_requisite_spans(text)
-    excerpts = purpose_excerpts(text, mask_requisites(text,metadata))
+    excerpts = purpose_excerpts(text, mask_requisites(text,metadata), clipped_lines=clipped_lines)
     # Overlapping PDF windows can emit a complete sentence and its wrapped
     # suffix. Treat them as one assertion to avoid a second, orphaned denial.
     spans = sorted(source_statements(excerpts, text, metadata),
@@ -546,7 +577,7 @@ def classify_source(text):
     end = -1
     for item in spans:
         if item['source_char_end'] > end:
-            statements.append(assertion(item))
+            statements.append(assertion(item, clipped=item['line_start'] in clipped_lines))
             end = item['source_char_end']
     cancellation_scopes = cancelled_request_scopes(statements, text)
     positive = {category for item in statements for category in item["positive_categories"]}

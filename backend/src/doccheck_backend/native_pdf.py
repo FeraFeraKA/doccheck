@@ -171,9 +171,16 @@ def _read_page(page: _TextPage) -> NativeDocument:
         )
         observations.append(Observation(text, locator))
 
+    has_raster_content = any(
+        image["x0"] < right
+        and left < image["x1"]
+        and image["top"] < bottom
+        and top < image["bottom"]
+        for image in page.images
+    )
     if not observations and not issues:
         issues.append(NativeIssue("no_native_text", page=page.page_number))
-    return NativeDocument(tuple(observations), tuple(issues))
+    return NativeDocument(tuple(observations), tuple(issues), has_raster_content)
 
 
 _PDF_ERRORS = (
@@ -193,6 +200,7 @@ _PDF_ERRORS = (
 def read_pdf(path: Path | BinaryIO, *, page_number: int | None = None) -> NativeDocument:
     observations = []
     issues = []
+    has_raster_content = False
     try:
         with pdfplumber.open(
             path, pages=None if page_number is None else [page_number]
@@ -212,6 +220,7 @@ def read_pdf(path: Path | BinaryIO, *, page_number: int | None = None) -> Native
                 else:
                     observations.extend(result.observations)
                     issues.extend(result.issues)
+                    has_raster_content |= result.has_raster_content
                 finally:
                     page.close()
     except PdfminerException as error:
@@ -226,4 +235,4 @@ def read_pdf(path: Path | BinaryIO, *, page_number: int | None = None) -> Native
         issues.append(NativeIssue("native_read_error"))
     if not observations and not issues:
         issues.append(NativeIssue("no_native_text"))
-    return NativeDocument(tuple(observations), tuple(issues))
+    return NativeDocument(tuple(observations), tuple(issues), has_raster_content)
