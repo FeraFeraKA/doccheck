@@ -118,3 +118,44 @@ def test_cannot_join_report_scope_across_pages(scanned_stage):
     wrong_page = replace(contract, locator=contract.locator.model_copy(update={"page": 2}))
 
     assert parse_scan_report((wrong_page, *others)) is None
+
+
+def test_conflicting_contract_in_single_observation_is_ambiguous(scanned_stage):
+    from dataclasses import replace
+
+    contract, *others = scanned_stage
+    conflicting = replace(contract, raw_text=contract.raw_text + "; договор № E2E-99")
+    assert parse_scan_report((conflicting, *others)) is None
+
+
+def test_repeated_date_must_use_same_source_geometry(tmp_path, monkeypatch):
+    from PIL import Image
+
+    from doccheck_backend.local_ocr import _date_windows_crop
+    from doccheck_backend.native_observations import Observation
+
+    trigger = Observation(
+        "Окончание 3 этапа",
+        PageLocator(kind="page", page=1, bbox=(0.1, 0.2, 0.3, 0.24)),
+    )
+    x_values = iter([0.15, 0.55, 0.20, 0.60])
+
+    def nonoverlapping(*_):
+        x = next(x_values)
+        return (
+            Observation(
+                "30 мая 2026 г.",
+                PageLocator(kind="page", page=1, bbox=(x, 0.2, x + 0.06, 0.6)),
+            ),
+        )
+
+    monkeypatch.setattr("doccheck_backend.local_ocr._windows_frame", nonoverlapping)
+    result = _date_windows_crop(
+        Image.new("RGB", (1000, 800)),
+        trigger,
+        tmp_path / "crop.png",
+        1,
+        None,
+        None,
+    )
+    assert result is None

@@ -47,6 +47,15 @@ def _page(item: Observation) -> int:
     return locator.page
 
 
+def _same_region(left: Observation, right: Observation) -> bool:
+    if _page(left) != _page(right):
+        return False
+    ax, ay, bx, by = _box(left)
+    cx, cy, dx, dy = _box(right)
+    intersection = max(0, min(bx, dx) - max(ax, cx)) * max(0, min(by, dy) - max(ay, cy))
+    return intersection >= 0.55 * min((bx - ax) * (by - ay), (dx - cx) * (dy - cy))
+
+
 def _row_neighbors(item: Observation, observations: tuple[Observation, ...]) -> list[Observation]:
     _, top, _, bottom = _box(item)
     center = (top + bottom) / 2
@@ -84,9 +93,8 @@ def _reading_source(parts: list[Observation], family: str) -> Observation:
 def _row_readings(positioned: tuple[Observation, ...], pattern: re.Pattern[str], family: str):
     """Yield a match and truthful location, preferring the uncombined fragment."""
     for item in positioned:
-        if match := pattern.search(
-            item.raw_text.casefold() if family == "stage" else item.raw_text
-        ):
+        text = item.raw_text.casefold() if family == "stage" else item.raw_text
+        for match in pattern.finditer(text):
             yield match, item
     for item in positioned:
         pieces = _row_neighbors(item, positioned)
@@ -102,7 +110,7 @@ def _row_readings(positioned: tuple[Observation, ...], pattern: re.Pattern[str],
         else:
             raw = " ".join(part.raw_text for part in pieces)
             text = raw.casefold() if family == "stage" else raw
-            if match := pattern.search(text):
+            for match in pattern.finditer(text):
                 offset = 0
                 relevant = []
                 for part in pieces:
@@ -178,5 +186,15 @@ def parse_scan_report(observations: tuple[Observation, ...]) -> ScanScope | None
     start_source = starts[first]
     if _page(start_source) != _page(row):
         return None
+    # Confidence is a promotion gate, not a reason to discard a competing
+    # well-formed date in the same source region.
+    all_dates = _dated_stages(positioned)
+    for name, selected, source in (
+        ("начало", first, start_source),
+        ("окончание", last, cutoff_source),
+    ):
+        for alternative, location in all_dates.get(stage, {}).get(name, {}).items():
+            if alternative != selected and _same_region(source, location):
+                return None
     assert isinstance(row.locator, PageLocator)
     return ScanScope(contract, start, last, row.locator, contract_source, cutoff_source)

@@ -251,6 +251,29 @@ _CONTEXT_CROP = re.compile(
 _DATE_TRIGGER = re.compile(r"^(?:начало|окончание)\s+[\dз]", re.I)
 
 
+def _lift_crop(
+    fragments: list[Observation] | tuple[Observation, ...],
+    image_size: tuple[int, int],
+    bounds: tuple[int, int, int, int],
+    page: int,
+    fragment_id: str,
+) -> PageLocator:
+    left, top, right, bottom = bounds
+    width, height = image_size
+    boxes = [item.locator.bbox for item in fragments]
+    return PageLocator(
+        kind="page",
+        page=page,
+        bbox=(
+            (left + min(box[0] for box in boxes) * (right - left)) / width,
+            (top + min(box[1] for box in boxes) * (bottom - top)) / height,
+            (left + max(box[2] for box in boxes) * (right - left)) / width,
+            (top + max(box[3] for box in boxes) * (bottom - top)) / height,
+        ),
+        fragment_id=fragment_id,
+    )
+
+
 def _date_windows_crop(image, item: Observation, target, page, helper, executable):
     from PIL import Image, ImageOps
 
@@ -280,24 +303,20 @@ def _date_windows_crop(image, item: Observation, target, page, helper, executabl
         match = date_pattern.fullmatch(text)
         if match and match[2].casefold() in months and 1 <= int(match[1]) <= 31:
             key = tuple(part.casefold() for part in match.groups())
-            reads.setdefault(key, []).append((crop, fragments))
-    if len(reads) != 1 or len(next(iter(reads.values()))) < 2:
+            location = _lift_crop(
+                fragments,
+                image.size,
+                (left, top, right, bottom),
+                page,
+                f"winocr-date-{item.locator.fragment_id}",
+            )
+            reads.setdefault(key, []).append((text, location))
+    if len(reads) != 1 or len(values := next(iter(reads.values()))) < 2:
         return None
-    crop, fragments = next(iter(reads.values()))[0]
-    x0 = (left + min(part.locator.bbox[0] for part in fragments) * crop.width) / image.width
-    y0 = (top + min(part.locator.bbox[1] for part in fragments) * crop.height) / image.height
-    x1 = (left + max(part.locator.bbox[2] for part in fragments) * crop.width) / image.width
-    y1 = (top + max(part.locator.bbox[3] for part in fragments) * crop.height) / image.height
-    return Observation(
-        " ".join(part.raw_text for part in fragments),
-        PageLocator(
-            kind="page",
-            page=page,
-            bbox=(x0, y0, x1, y1),
-            fragment_id=f"winocr-date-{item.locator.fragment_id}",
-        ),
-        repeated_read=True,
-    )
+    text, location = values[0]
+    if any(_overlap(location, alternative) < 0.55 for _, alternative in values[1:]):
+        return None
+    return Observation(text, location, repeated_read=True)
 
 
 def _context_windows_crops(
@@ -368,31 +387,19 @@ def _context_windows_crops(
         texts = [" ".join(part.raw_text for part in fragments) for fragments in reads]
         if len(Counter(_position_text(text) for text in texts)) != 1:
             continue
-        fragments = reads[0]
-        xx0 = (
-            left + min(part.locator.bbox[0] for part in fragments) * local.width
-        ) / page_image.width
-        yy0 = (
-            top + min(part.locator.bbox[1] for part in fragments) * local.height
-        ) / page_image.height
-        xx1 = (
-            left + max(part.locator.bbox[2] for part in fragments) * local.width
-        ) / page_image.width
-        yy1 = (
-            top + max(part.locator.bbox[3] for part in fragments) * local.height
-        ) / page_image.height
-        result.append(
-            Observation(
-                texts[0],
-                PageLocator(
-                    kind="page",
-                    page=page,
-                    bbox=(xx0, yy0, xx1, yy1),
-                    fragment_id=f"winocr-context-{index}",
-                ),
-                repeated_read=True,
+        locations = [
+            _lift_crop(
+                fragments,
+                page_image.size,
+                (left, top, right, bottom),
+                page,
+                f"winocr-context-{index}",
             )
-        )
+            for fragments in reads
+        ]
+        if _overlap(*locations) < 0.55:
+            continue
+        result.append(Observation(texts[0], locations[0], repeated_read=True))
     return tuple(result)
 
 
