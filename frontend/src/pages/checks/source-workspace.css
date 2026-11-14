@@ -107,6 +107,14 @@
 .compact-source .source-viewer-heading { padding: 4px 8px; }
 .compact-source .source-viewer-toolbar { padding: 2px 6px; font-size: 11px; }
 .compact-source .source-viewer-toolbar :is(a, button) { padding: 3px 4px; }
+.compact-source .source-viewer-controls { gap: 2px 5px; }
+.compact-source .source-viewer-zoom { gap: 2px; }
+.compact-source .source-viewer-toolbar .source-viewer-image-download {
+  display: grid;
+  place-items: center;
+  min-width: 28px;
+  min-height: 28px;
+}
 .compact-source .source-viewer-viewport {
   flex: 1;
   min-height: 8rem;

@@ -146,11 +146,20 @@ function SelectedDocumentSource({ runId, document, evidenceId, active, compact, 
   const pdfUrl = original.status === 'ready'
     ? page ? `${original.value}#page=${page.page}` : original.value
     : null;
+  const compactImage = compact && format === 'png';
   const embeddedPdf = compact && format === 'pdf' && navigator.pdfViewerEnabled
     && original.status === 'ready' && (evidenceId === null || evidence.status !== 'loading')
     ? `${original.value}#page=${page?.page ?? 1}&view=FitH&toolbar=0` : null;
   const download = original.status === 'ready'
-    ? <a href={original.value} download={document.name}>Скачать оригинал</a> : null;
+    ? <a href={original.value} download={document.name}
+        className={compactImage ? 'source-viewer-image-download' : undefined}
+        title={compactImage ? 'Скачать оригинал' : undefined}>
+      {compactImage && <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+        strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M12 3v12m-5-5 5 5 5-5M5 16v4h14v-4" />
+      </svg>}
+      <span className={compactImage ? 'sr-only' : undefined}>Скачать оригинал</span>
+    </a> : null;
   const fragment = evidence.status === 'ready'
     ? <div><small>Выбранный фрагмент</small><strong>{evidence.value.raw_value}</strong></div>
     : null;
@@ -158,7 +167,8 @@ function SelectedDocumentSource({ runId, document, evidenceId, active, compact, 
     ? <button type="button" onClick={onRetry}>Повторить загрузку источника</button> : null;
 
   return <section aria-label="Просмотр источника" className="source-viewer">
-    <div className="source-viewer-heading"><strong className="source-viewer-name" title={document.name}>{document.name}</strong>
+    <div className="source-viewer-heading">
+      {!compact && <strong className="source-viewer-name" title={document.name}>{document.name}</strong>}
       {evidenceId === null && <p>Адрес фрагмента отсутствует.</p>}
       {evidenceId !== null && evidence.status === 'loading' && <p role="status">Загрузка адреса…</p>}
       {evidence.status === 'error' && <p role="alert">{evidence.message}</p>}
