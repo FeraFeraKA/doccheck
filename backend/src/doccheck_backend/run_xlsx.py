@@ -264,6 +264,89 @@ def export_check_result(result: CheckResult) -> bytes:
             _append(decision_sources, f"D{number}", source_keys[ref])
     _finish(decision_sources, 1, (30, 30))
 
+    report = workbook.create_sheet("Отчёт", 0)
+    report.sheet_view.showGridLines = False
+    report.sheet_properties.pageSetUpPr.fitToPage = True
+    report.page_setup.fitToWidth = 1
+    report.page_setup.fitToHeight = 0
+    report.page_setup.orientation = "landscape"
+    _append(report, "ОТЧЁТ ПО ПРОВЕРКЕ")
+    report.merge_cells("A1:F1")
+    report["A1"].font = Font(bold=True, size=13)
+    if result.synthetic:
+        _append(report, "Тестовые данные")
+    _append(
+        report,
+        "Показатель КФЗ",
+        "Значение в КФЗ",
+        "Ожидаемо по документам",
+        "Расхождение",
+        "Статус",
+        "Пояснение",
+    )
+    header = report.max_row
+    for cell in report[header]:
+        cell.font = Font(bold=True)
+    for row in result.rows:
+        messages = [reason.message for reason in row.reasons if reason.message]
+        if row.status == "unverified" and row.completeness.reason not in messages:
+            messages.append(row.completeness.reason)
+        if row.expected_value is None and row.observed_evidence_sum is not None:
+            messages.append(f"По доступным документам: {row.observed_evidence_sum} {row.unit}")
+        label = f"{row.label} ({row.indicator_code})" if row.indicator_code else row.label
+        _append(
+            report,
+            label,
+            row.reported_value,
+            row.expected_value,
+            row.delta,
+            _STATUS_LABELS[row.status],
+            "\n".join(dict.fromkeys(messages)) or None,
+        )
+    _append(report)
+    _append(report, "Дополнительные проверки")
+    report.cell(report.max_row, 1).font = Font(bold=True)
+    for document in result.documents:
+        if document.decision.state == "include" and not document.errors:
+            continue
+        messages = [document.decision.message, *(error.message for error in document.errors)]
+        if len(document.decision.evidence_refs) <= 20:
+            messages.extend(
+                f"{documents[source.document_id].name} · {_location(source.locator)}"
+                for ref in document.decision.evidence_refs
+                if (source := next((item for item in result.evidence if item.id == ref), None))
+            )
+        else:
+            messages.append("Источники решения приведены на листе «Основания решений».")
+        _append(
+            report,
+            {
+                "exclude": "Исключён",
+                "needs_review": "Требует проверки",
+                "parse_error": "Ошибка чтения",
+                "include": "Ошибка чтения",
+            }.get(document.decision.state, document.decision.state),
+            document.name,
+            None,
+            None,
+            None,
+            "\n".join(dict.fromkeys(filter(None, messages))) or None,
+        )
+    for issue in summary.primary_issues:
+        _append(report, "Замечание", None, None, None, None, issue.message)
+    for column, width in enumerate((43, 24, 29, 22, 20, 70), 1):
+        report.column_dimensions[get_column_letter(column)].width = width
+    for row in report.iter_rows(min_row=header + 1):
+        text = row[5].value
+        if isinstance(text, str):
+            lines = sum(max(1, (len(part) + 66) // 67) for part in text.splitlines())
+            report.row_dimensions[row[0].row].height = min(409, max(18, lines * 15))
+    report.freeze_panes = f"A{header + 1}"
+    report.print_title_rows = f"1:{header}"
+    workbook.active = 0
+    for detail in workbook.worksheets[1:]:
+        detail.sheet_state = "hidden"
+
     with BytesIO() as output:
         workbook.save(output)
         return output.getvalue()

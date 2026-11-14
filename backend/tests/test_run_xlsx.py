@@ -214,6 +214,31 @@ def test_document_decisions_preserve_only_their_saved_sources():
     assert_document_decision_links(workbook)
 
 
+def test_compact_report_preserves_values_and_document_decisions():
+    result = CheckResult.model_validate(decision_result())
+    workbook = load_workbook(BytesIO(export_check_result(result)))
+    assert workbook.active.title == "Отчёт"
+    assert all(sheet.sheet_state == "hidden" for sheet in workbook.worksheets[1:])
+    rows = list(workbook.active.values)
+    header = next(row for row in rows if row[0] == "Показатель КФЗ")
+    assert header == (
+        "Показатель КФЗ",
+        "Значение в КФЗ",
+        "Ожидаемо по документам",
+        "Расхождение",
+        "Статус",
+        "Пояснение",
+    )
+    first = next(row for row in rows if row[0].startswith("Синтетическая статья A"))
+    assert first[1:5] == ("150.50", "120.50", "30.00", "Расхождение")
+    second = next(row for row in rows if row[0].startswith("Синтетическая статья B"))
+    assert second[1:5] == ("0.00", None, None, "Не проверен")
+    excluded = next(row for row in rows if row[1] == "synthetic-other-period.pdf")
+    assert "Документ вне периода" in excluded[5]
+    assert "Страница 1; строка 3" in excluded[5]
+    assert all(cell.data_type != "f" for row in workbook.active for cell in row)
+
+
 def test_document_decision_code_is_literal_and_not_truncated():
     payload = decision_result()
     code = '=HYPERLINK("https://example.test/")'
@@ -254,6 +279,7 @@ def test_workbook_preserves_amounts_and_keeps_all_untrusted_cells_literal():
 
     workbook = load_workbook(BytesIO(export_check_result(job.result)))
     assert workbook.sheetnames == [
+        "Отчёт",
         "Сверка",
         "Слагаемые",
         "Источники",
