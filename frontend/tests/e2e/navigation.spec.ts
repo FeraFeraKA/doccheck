@@ -7,6 +7,31 @@ const viewports = [
   { width: 1650, rail: 240 },
 ];
 
+test('Tab scrolls the fixed sidebar to system status in a short window', async ({ page }) => {
+  await page.setViewportSize({ width: 768, height: 200 });
+  await page.route('**/health', (route) => route.fulfill({ json: { status: 'ok', database: 'ok' } }));
+  await page.goto('/');
+
+  const sidebar = page.getByRole('complementary', { name: 'Меню DocCheck' });
+  const status = sidebar.getByRole('link', { name: 'Проверка системы', exact: true });
+  const scroll = () => sidebar.evaluate((element) => element.scrollTop);
+  expect(await scroll()).toBe(0);
+  await expect(status).not.toBeInViewport();
+  for (const name of ['DocCheck', 'Новая проверка', 'Проверки', 'Проверка системы']) {
+    await page.keyboard.press('Tab');
+    await expect(sidebar.getByRole('link', { name, exact: true })).toBeFocused();
+  }
+  await expect(status).toBeInViewport({ ratio: 1 });
+  expect(await scroll()).toBeGreaterThan(0);
+  expect(await page.evaluate(() => window.scrollY)).toBe(0);
+
+  const bounds = await status.boundingBox();
+  if (!bounds) throw new Error('Ссылка проверки системы недоступна');
+  await page.mouse.click(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+  await expect(page).toHaveURL(/\/system-status$/);
+  await expect(page.getByText('API и PostgreSQL доступны.')).toBeVisible();
+});
+
 for (const { width, rail } of viewports) {
   test(`persistent navigation and system status are reachable at ${width}px`, async ({ page }) => {
     await page.route('**/health', (route) => route.fulfill({ json: { status: 'ok', database: 'ok' } }));
