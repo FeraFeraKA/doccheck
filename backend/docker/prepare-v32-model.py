@@ -22,38 +22,46 @@ FILES = (
     "video_preprocessor_config.json",
     "vocab.json",
 )
-MODEL_DIR = Path("/models/qwen")
 
 
-def verify_weights() -> None:
-    with (MODEL_DIR / "model.safetensors").open("rb") as file:
+def verify_weights(weights: Path) -> None:
+    with weights.open("rb") as file:
         if file_digest(file, "sha256").hexdigest() != WEIGHTS_SHA256:
             raise SystemExit("Qwen MLX model.safetensors failed its SHA-256 check")
 
 
 def main() -> None:
-    marker = MODEL_DIR / ".doccheck-model-revision"
+    model_dir = Path("/models/qwen")
+    marker = model_dir / ".doccheck-model-revision"
+    weights = model_dir / "model.safetensors"
     if not (
         marker.is_file()
         and marker.read_text(encoding="utf-8").strip() == REVISION
-        and all((MODEL_DIR / name).is_file() for name in FILES)
+        and all((model_dir / name).is_file() for name in FILES)
     ):
         source = Path(environ["DOCCHECK_QWEN_SNAPSHOT_DIR"]) / REVISION
-        if source.is_dir():
-            if not all((source / name).is_file() for name in FILES):
-                raise SystemExit("The supplied Qwen MLX snapshot is incomplete")
-            for name in FILES:
-                copyfile(source / name, MODEL_DIR / name)
-        else:
+        for name in FILES:
+            destination = model_dir / name
+            if (source / name).is_file() and not destination.is_file():
+                partial = destination.with_suffix(destination.suffix + ".importing")
+                copyfile(source / name, partial)
+                if name == weights.name:
+                    verify_weights(partial)
+                partial.replace(destination)
+        missing = [name for name in FILES if not (model_dir / name).is_file()]
+        if weights.is_file():
+            verify_weights(weights)
+        if missing:
             snapshot_download(
-                REPOSITORY, revision=REVISION, allow_patterns=FILES, local_dir=MODEL_DIR
+                REPOSITORY, revision=REVISION, allow_patterns=missing, local_dir=model_dir
             )
-        if not all((MODEL_DIR / name).is_file() for name in FILES):
+        if not all((model_dir / name).is_file() for name in FILES):
             raise SystemExit("The pinned Qwen MLX snapshot is incomplete")
-        verify_weights()
+        if weights.name in missing:
+            verify_weights(weights)
         marker.write_text(f"{REVISION}\n", encoding="utf-8")
     else:
-        verify_weights()
+        verify_weights(weights)
     print(f"Prepared {REPOSITORY} @ {REVISION}", flush=True)
 
 

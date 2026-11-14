@@ -43,6 +43,10 @@ COPY backend/ml_module/pyproject.toml backend/ml_module/README.md ./ml_module/
 COPY backend/ml_module/src ./ml_module/src
 RUN uv pip install --python /opt/doccheck-v32/bin/python --no-deps . ./ml_module \
     && uv pip check --python /opt/doccheck-v32/bin/python
+# MLX compiles CUDA kernels with NVRTC. The CUDA wheels split these headers across packages.
+RUN uv pip install --python /opt/doccheck-v32/bin/python --no-deps --only-binary :all: \
+       nvidia-cuda-runtime-cu12==12.9.79 nvidia-cuda-nvcc-cu12==12.9.86 \
+    && /opt/doccheck-v32/bin/python -c "from pathlib import Path; from sysconfig import get_path; root = Path(get_path('purelib')) / 'nvidia'; (root / 'cuda_runtime/include/crt').symlink_to('../../cuda_nvcc/include/crt', target_is_directory=True); assert (root / 'cuda_runtime/include/crt/host_config.h').is_file()"
 
 FROM runtime AS document-runtime
 USER root
