@@ -13,7 +13,7 @@ from decimal import Decimal, InvalidOperation
 import hashlib
 import re
 import unicodedata
-from .document_identity import literal_id, validate_number_evidence
+from .document_identity import literal_id, normalize_issuer_spelling, validate_number_evidence
 
 
 CATEGORIES = {"production_overhead", "general_admin", "payroll", "insurance", "other"}
@@ -67,7 +67,8 @@ def _issuer_comparison_key(value, native_text):
     match = re.fullmatch(r"(ооо|пао|ао|ип)\s+(.+)", issuer)
     if not match:
         return None
-    return match.group(1), match.group(2).strip(), tax_ids[0] if tax_ids else None
+    name = normalize_issuer_spelling(match.group(2))
+    return (match.group(1), name, tax_ids[0] if tax_ids else None) if name else None
 
 
 def _distinct_issuers(left, right):

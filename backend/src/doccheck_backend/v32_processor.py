@@ -499,6 +499,8 @@ def _reported_cells(native, scanned):
 
 
 def _identity_collisions(grounds: dict[str, GroundedDocument]) -> set[str]:
+    from bench.e2e_v32_20261114.document_identity import normalize_issuer_spelling
+
     identities = {}
     for document_id, source in grounds.items():
         if source.identity:
@@ -519,10 +521,14 @@ def _identity_collisions(grounds: dict[str, GroundedDocument]) -> set[str]:
                 and left.document_kind != right.document_kind
             ):
                 continue
+            left_issuer = normalize_issuer_spelling(left.issuer_key)
+            right_issuer = normalize_issuer_spelling(right.issuer_key)
             if left.issuer_tax_id and right.issuer_tax_id:
-                if left.issuer_tax_id != right.issuer_tax_id:
+                if left.issuer_tax_id != right.issuer_tax_id and not (
+                    left_issuer and right_issuer and left_issuer == right_issuer
+                ):
                     continue
-            elif left.issuer_key and right.issuer_key and left.issuer_key != right.issuer_key:
+            elif left_issuer and right_issuer and left_issuer != right_issuer:
                 continue
             collisions.update((left_id, right_id))
     return collisions

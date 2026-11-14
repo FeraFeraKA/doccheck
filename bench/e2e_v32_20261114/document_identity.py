@@ -6,6 +6,7 @@ no category/filename inference, tail matching, transliteration or OCR repair.
 from copy import deepcopy
 import hashlib
 import re
+import unicodedata
 
 VERSION = "native-own-number-v2"
 TITLE = re.compile(r"^(?:сч[её]т[- ]акт|сч[её]т[- ]фактура|сч[её]т\s+на\s+оплату|акт|справка|расч[её]тная\s+ведомость|ведомость|расч[её]т\s+страховых\s+взносов|служебная\s+записка|универсальный\s+передаточный\s+документ|упд)\b", re.I)
@@ -28,6 +29,17 @@ ABSENCE_MARKER = r"(?:б\s*[/\\-]\s*н|без\s+номера|не\s+присво
 DATE_TAIL = r"от\s+(?:\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{4}[./-]\d{1,2}[./-]\d{1,2})\s*(?:г\.)?"
 COPY_TAG = r"\(\s*копия\s*\)"
 ABSENCE_VALUE = re.compile(r"(?P<marker>" + ABSENCE_MARKER + r")\s*[.]?(?:\s+" + DATE_TAIL + r")?\s*", re.I)
+
+
+def normalize_issuer_spelling(value: object) -> str | None:
+    """Normalize typography only for a possible collision, never for deduplication."""
+    if not isinstance(value, str) or "\ufffd" in value:
+        return None
+    text = unicodedata.normalize("NFC", value).casefold().replace("ё", "е")
+    text = text.translate(str.maketrans({"–": "-", "—": "-", "−": "-", "‑": "-", "‐": "-", "‒": "-"}))
+    text = text.translate(str.maketrans("", "", '«»“”„"'))
+    text = re.sub(r"\s*-\s*", "-", text)
+    return re.sub(r"\s+", " ", text).strip() or None
 
 
 def absence_proof(cell, start, end, basis, label, reason):
