@@ -147,6 +147,18 @@ def test_unattributed_inn_does_not_establish_issuer_identity(tmp_path):
     assert result.issuer_tax_id is None and result.issuer_locator is None
 
 
+def test_native_issuer_inn_is_not_replaced_by_the_buyers_inn(tmp_path):
+    path = tmp_path / "source.docx"
+    doc = Document(io.BytesIO(_act("Акт № ACT-71", issuer=f"ООО Альфа (ИНН {ALPHA_INN})")))
+    doc.add_paragraph(f"Заказчик: ООО Покупатель (ИНН {BETA_INN})")
+    doc.save(path)
+    result = ground_document(
+        uuid4(), uuid4().hex, path, "docx", sha256(path.read_bytes()).hexdigest()
+    )
+    assert result.issuer_tax_id == ALPHA_INN
+    assert result.issuer_locator == ParagraphLocator(kind="paragraph", paragraph=2)
+
+
 @pytest.mark.parametrize(
     "issuer",
     [
@@ -185,6 +197,17 @@ def test_unbound_source_hash_cannot_prove_distinct_issuers(tmp_path):
     assert _identity_collisions(grounds, bound.evidence) == set(grounds)
 
 
+def test_cli_invalid_source_gate_cannot_establish_distinct_issuer(tmp_path):
+    first = _cli_document(tmp_path, "first", "Акт № ACT-71", issuer=f"ООО Альфа (ИНН {ALPHA_INN})")
+    second = _cli_document(tmp_path, "second", "Акт № ACT-71", issuer=f"ООО Альфа (ИНН {BETA_INN})")
+    second["number_evidence"]["native_text_sha256"] = "0" * 64
+    for order in permutations((first, second)):
+        result = _reconcile_cli(list(order), "200.00")
+        assert result["rows"][0]["status"] == "unverified"
+        assert result["rows"][0]["expected_amount"] is None
+        assert "second" not in result["rows"][0]["source_ids"]
+
+
 def test_cli_distinct_attributed_inns_keep_same_named_issuers_separate(tmp_path):
     records = [
         _cli_document(tmp_path, "first", "Акт № ACT-71", issuer=f"ООО Альфа (ИНН {ALPHA_INN})"),
@@ -212,6 +235,48 @@ def test_cli_distinct_attributed_inns_keep_same_named_issuers_separate(tmp_path)
                 ]
                 == issuer[0]["text"]
             )
+
+
+@pytest.mark.parametrize("other_party_inn", [False, True])
+def test_cli_attributed_issuer_inns_do_not_require_a_known_legal_form(tmp_path, other_party_inn):
+    records = [
+        _cli_document(
+            tmp_path,
+            "first",
+            "Акт № ACT-71",
+            issuer=f"Организация Альфа (ИНН {ALPHA_INN})",
+            extra=f"Заказчик: ООО Клиент (ИНН {BETA_INN})" if other_party_inn else None,
+        ),
+        _cli_document(
+            tmp_path,
+            "second",
+            "Акт № ACT-71",
+            issuer=f"Организация Гамма (ИНН {BETA_INN})",
+        ),
+    ]
+    for order in permutations(records):
+        result = _reconcile_cli(list(order), "200.00")
+        assert result["duplicates"] == []
+        assert result["rows"][0]["status"] == "correct"
+        assert set(result["rows"][0]["source_ids"]) == {"first", "second"}
+
+
+def test_distinct_attributed_person_inns_are_read_in_cli_and_native_source(tmp_path):
+    records = []
+    for identifier, inn in (("first", "014234567800"), ("second", "012345678943")):
+        record = _cli_document(tmp_path, identifier, "Акт № ACT-71", issuer=f"ИП Альфа (ИНН {inn})")
+        path = tmp_path / f"{identifier}.docx"
+        source = ground_document(
+            uuid4(), uuid4().hex, path, "docx", sha256(path.read_bytes()).hexdigest()
+        )
+        assert source.issuer_tax_id == inn
+        assert source.issuer_locator == ParagraphLocator(kind="paragraph", paragraph=2)
+        records.append(record)
+    for order in permutations(records):
+        result = _reconcile_cli(list(order), "200.00")
+        assert result["rows"][0]["status"] == "correct"
+        assert set(result["rows"][0]["source_ids"]) == {"first", "second"}
+        assert result["duplicates"] == []
 
 
 def test_real_api_distinct_valid_inns_are_attributed_to_source_fields(database_url, tmp_path):

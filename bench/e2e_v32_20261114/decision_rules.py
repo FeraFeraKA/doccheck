@@ -13,7 +13,7 @@ from decimal import Decimal, InvalidOperation
 import hashlib
 import re
 import unicodedata
-from .document_identity import literal_id, normalize_issuer_spelling, validate_number_evidence
+from .document_identity import ISSUER_LABEL, literal_id, normalize_issuer_spelling, validate_number_evidence
 
 
 CATEGORIES = {"production_overhead", "general_admin", "payroll", "insurance", "other"}
@@ -44,22 +44,35 @@ def _inn_checksum_valid(value):
     return False
 
 
-def _issuer_comparison_key(value, native_text):
+def _issuer_comparison_key(value, native_text, issuer_evidence):
     """Return bounded issuer context only when source requisites are unambiguous.
 
-    Full and short legal forms follow the same normalization as the API.
-    An INN elsewhere in the document cannot safely be attributed to this issuer.
+    The issuer field must be directly labelled in native text. An INN in a
+    separate party field cannot be used as the issuer's number.
     """
     if (not isinstance(value, str) or not isinstance(native_text, str)
             or "\ufffd" in value or _OTHER_PARTY.search(value)):
         return None
+    if not isinstance(issuer_evidence, list) or len(issuer_evidence) != 1:
+        return None
+    candidate = issuer_evidence[0]
+    if not isinstance(candidate, dict):
+        return None
+    start, end, raw = candidate.get("start"), candidate.get("end"), candidate.get("text")
+    if (not isinstance(start, int) or not isinstance(end, int) or not isinstance(raw, str)
+            or not 0 <= start < end <= len(native_text) or native_text[start:end] != raw):
+        return None
+    line_start = native_text.rfind("\n", 0, start) + 1
+    cell_start = max(line_start, native_text.rfind("|", line_start, start) + 1,
+                     native_text.rfind(";", line_start, start) + 1)
+    prefix = re.sub(r"^\s*(?:[A-Z]+\d+:\s*)?", "", native_text[cell_start:start], flags=re.I)
+    if not ISSUER_LABEL.fullmatch(prefix):
+        return None
     value = unicodedata.normalize("NFC", value).casefold().translate(str.maketrans("", "", '«»“”„"'))
     value = re.sub(r"\s+", " ", value).strip()
     labels = _ISSUER_TAX_LABEL.findall(value)
-    if len(_ISSUER_TAX_LABEL.findall(native_text)) != len(labels):
-        return None
     tax_ids = _ISSUER_TAX_VALUE.findall(value)
-    if len(labels) != len(tax_ids) or len(set(tax_ids)) > 1 or any(not _inn_checksum_valid(x) for x in tax_ids):
+    if len(labels) != 1 or len(tax_ids) != 1 or not _inn_checksum_valid(tax_ids[0]):
         return None
     issuer = _ISSUER_REQUISITES.sub("", value).strip(" .,:;«»\"'()")
     for full, short in _ISSUER_FORMS.items():
@@ -67,10 +80,11 @@ def _issuer_comparison_key(value, native_text):
             issuer = short + issuer[len(full):]
             break
     match = re.fullmatch(r"(ооо|пао|ао|ип)\s+(.+)", issuer)
-    if not match:
+    if not match and not issuer:
         return None
-    name = normalize_issuer_spelling(match.group(2))
-    return (match.group(1), name, tax_ids[0] if tax_ids else None) if name else None
+    form, raw_name = (match.group(1), match.group(2)) if match else (None, issuer)
+    name = normalize_issuer_spelling(raw_name)
+    return (form, name, tax_ids[0]) if name else None
 
 
 def _distinct_issuers(left, right):
@@ -295,15 +309,21 @@ def reconcile(documents, report_rows, contract_number, period_start, period_end,
             abstain(doc_id, category, "amount_missing_or_invalid")
             continue
         identity = validate_number_evidence(document)
+        if identity["status"] == "invalid":
+            # A broken source gate cannot establish that this amount belongs to
+            # a distinct operation, even when the model supplied no raw number.
+            abstain(doc_id, category, "business_identity_invalid")
+            identity_review.add(doc_id)
         number = identity["number"] if identity["identity_usable"] else None
         raw_number = literal_id(document.get("raw_prediction", facts).get("doc_number"))
         possible_ids = {number} if number else set(identity["candidates"])
         if not number and raw_number and identity.get("raw_alias_allowed", True) and (raw_number in possible_ids or raw_number not in identity["non_own_candidates"]):
             possible_ids.add(raw_number)
+        issuer_evidence = (document.get("number_evidence") or {}).get("issuer_evidence") if identity["valid"] else None
         item = {"id": doc_id, "amount": amount, "category": category,
                 "period_start": start.isoformat(), "period_end": end.isoformat(),
                 "document_kind": identity.get("document_kind"), "issuer_key": identity.get("issuer_key"),
-                "issuer_comparison": _issuer_comparison_key(identity.get("issuer_key"), document.get("source_native_text"))}
+                "issuer_comparison": _issuer_comparison_key(identity.get("issuer_key"), document.get("source_native_text"), issuer_evidence)}
         # A model-only counterparty spelling cannot prove separate operations.
         context = (contract, start, end)
         if number:
