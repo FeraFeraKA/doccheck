@@ -308,3 +308,34 @@ def test_header_lines_with_seven_pixel_gap_fail_without_exception(table):
         return (_source(text, 10, 10, 36, 36),)
 
     assert read_table_amounts(image, row, (*headings, moved_heading), read) == {}
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "confirmed"),
+    [(539, 661, False), (527, 668, True)],
+    ids=["unconfirmed-conflicting-frame", "confirmed-conflict-touches-crop-margin"],
+)
+def test_full_frame_alternatives_use_atomic_cell_not_crop_margin(table, left, right, confirmed):
+    image, row, headings = table
+    source = _source("5678,90", left, 370, right, 380)
+    conflicting = Observation(source.raw_text, source.locator, repeated_read=confirmed)
+    matching = Observation("1234,67", source.locator)
+
+    result = read_table_amounts(image, row, (*headings, matching, conflicting), _default_cell_read)
+
+    assert "production_overhead" not in result
+    assert result["payroll"].amount == Decimal("1234.67")
+
+
+def test_widely_separated_numeric_groups_on_same_baseline_are_not_one_amount(table):
+    image, row, headings = table
+
+    def read(box, scale):
+        if box[1] > _ROW[0] and box[0] > 525:
+            return (_source("123", 45, 100, 160, 145), _source("456,78", 740, 100, 790, 145))
+        return _default_cell_read(box, scale)
+
+    result = read_table_amounts(image, row, headings, read)
+
+    assert "production_overhead" not in result
+    assert result["payroll"].amount == Decimal("1234.67")
