@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import './source-drawer.css';
 
 function visibleFragment(viewport: HTMLElement) {
-  const fragment = viewport.querySelector('.source-viewer-highlight');
+  const fragment = viewport.querySelector('.source-viewer-highlight[data-source-active="true"]');
   if (!fragment) return null;
   const mark = fragment.getBoundingClientRect();
   const { top, left } = viewport.getBoundingClientRect();

@@ -96,6 +96,10 @@
   box-shadow: inset 0 -2px var(--source-mark);
 }
 
+.source-viewer :is(td, p)[data-source-active="true"] {
+  box-shadow: inset 0 0 0 2px var(--source-mark);
+}
+
 .source-viewer [data-source-tone] mark {
   color: inherit;
   background: var(--source-strong);
@@ -106,4 +110,8 @@
 .source-viewer .source-viewer-highlight[data-source-tone] {
   background: color-mix(in srgb, var(--source-strong) 38%, transparent);
   border-color: var(--source-mark);
+}
+
+.source-viewer .source-viewer-highlight[data-source-active="true"] {
+  border-width: 3px;
 }

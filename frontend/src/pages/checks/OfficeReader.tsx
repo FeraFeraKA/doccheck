@@ -1,15 +1,16 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type { ReactNode, RefObject } from 'react';
 import { getOfficePreview } from './documentPreviewApi';
 import type { OfficePreview } from './documentPreviewApi';
 import { getSourceFragmentPreview } from './sourceApi';
 import type { SourceEvidence } from './sourceApi';
+import { strongestTone } from './sourceHighlights';
+import type { SourceHighlight, SourceTone } from './sourceHighlights';
 import { WorkspaceIcon } from './WorkspaceIcon';
 import './document-reader.css';
 
 type Locator = SourceEvidence['locator'];
 type Fragment = Awaited<ReturnType<typeof getSourceFragmentPreview>>;
-export type SourceTone = 'discrepancy' | 'unverified' | 'verified';
 type Window = { sheet?: string; row: number; column: number };
 type Sheet = Extract<OfficePreview, { sheets: string[] }>;
 
@@ -33,28 +34,90 @@ function addressWindow(locator: Locator | undefined): Window {
   return { sheet: locator.sheet, row: Math.max(1, cell.row - 5), column: Math.max(1, cell.column - 3) };
 }
 
-function rangeBounds(locator: Locator | undefined, sheet: string) {
-  if (locator?.kind !== 'sheet' || locator.sheet !== sheet) return;
-  const [first, last = first] = locator.range.split(':');
+function rangeBounds(range: string) {
+  const [first, last = first] = range.split(':');
   return { first: cellPosition(first), last: cellPosition(last) };
 }
 
-export function OfficeReader({ runId, documentId, format, locator, evidenceId, tone, active, fallback }: {
+function sheetTones(preview: Sheet, highlights: readonly SourceHighlight[]) {
+  const tones = preview.rows.map((cells) => new Array<SourceTone | undefined>(cells.length));
+  for (const { locator, tone } of highlights) {
+    if (!('sheet' in locator) || locator.sheet !== preview.sheet) continue;
+    const { first, last } = rangeBounds(locator.range);
+    const lastRow = Math.min(tones.length - 1, last.row - preview.row);
+    for (let row = Math.max(0, first.row - preview.row); row <= lastRow; row++) {
+      const lastColumn = Math.min(tones[row].length - 1, last.column - preview.column);
+      for (let column = Math.max(0, first.column - preview.column); column <= lastColumn; column++) {
+        tones[row][column] = strongestTone(tones[row][column], tone);
+      }
+    }
+  }
+  return tones;
+}
+
+function wordTones(highlights: readonly SourceHighlight[]) {
+  const paragraphs = new Map<number, SourceTone>();
+  const tables = new Map<string, Map<number, SourceTone>>();
+  for (const { locator, tone } of highlights) {
+    if ('paragraph' in locator) {
+      const preferred = strongestTone(paragraphs.get(locator.paragraph), tone);
+      if (preferred) paragraphs.set(locator.paragraph, preferred);
+    } else if ('table' in locator) {
+      const id = locator.table + ':' + locator.row;
+      const row = tables.get(id) ?? new Map<number, SourceTone>();
+      const preferred = strongestTone(row.get(locator.cell), tone);
+      if (preferred) row.set(locator.cell, preferred);
+      tables.set(id, row);
+    }
+  }
+  return { paragraphs, tables };
+}
+
+function cellTone(tones: ReadonlyMap<number, SourceTone> | undefined, column: number, span: number) {
+  if (span === 1 || !tones) return tones?.get(column);
+  let preferred: SourceTone | undefined;
+  for (const [address, tone] of tones) {
+    if (address >= column && address < column + span) preferred = strongestTone(preferred, tone);
+  }
+  return preferred;
+}
+
+function centerCell(scroller: RefObject<HTMLDivElement | null>, focus: RefObject<HTMLElement | null>,
+  preview: OfficePreview | undefined | null, locator: Locator | undefined, active: boolean) {
+  const target = focus.current;
+  const container = scroller.current;
+  if (!preview || !active || !target || !container) return;
+  const from = container.getBoundingClientRect();
+  const to = target.getBoundingClientRect();
+  if (container.clientWidth === 0 || container.clientHeight === 0) return;
+  container.scrollTop += to.top + to.height / 2 - from.top - container.clientHeight / 2;
+  container.scrollLeft += to.left + to.width / 2 - from.left - container.clientWidth / 2;
+  return { locator, preview };
+}
+
+export function OfficeReader({ runId, documentId, format, locator, evidenceId, tone, highlights, active, fallback }: {
   runId: string;
   documentId: string;
   format: 'xlsx' | 'docx';
   locator?: Locator;
   evidenceId: string | null;
   tone?: SourceTone;
+  highlights: readonly SourceHighlight[];
   active: boolean;
   fallback: ReactNode;
 }) {
   const [attempt, setAttempt] = useState(0);
-  const [manualWindow, setWindow] = useState<Window>();
+  const [windowChoice, setWindowChoice] = useState<Window>();
   const [documentState, setDocumentState] = useState<{
     request: string; preview: OfficePreview | null; lastSheet?: Sheet;
   }>();
   const [textState, setTextState] = useState<{ id: string; fragment: Fragment }>();
+  const [selectedId, setSelectedId] = useState(evidenceId);
+  if (selectedId !== evidenceId) {
+    setSelectedId(evidenceId);
+    setWindowChoice(undefined);
+  }
+  const manualWindow = selectedId === evidenceId ? windowChoice : undefined;
   const viewing = manualWindow ?? addressWindow(locator);
   const params = new URLSearchParams();
   if (format === 'xlsx') {
@@ -66,9 +129,15 @@ export function OfficeReader({ runId, documentId, format, locator, evidenceId, t
   const request = query + '#' + attempt;
   const preview = documentState?.request === request ? documentState.preview : undefined;
   const fragment = textState?.id === evidenceId ? textState.fragment : null;
+  const visibleSheetData = documentState?.lastSheet;
+  const sheetEvidence = useMemo(() => visibleSheetData && sheetTones(visibleSheetData, highlights),
+    [visibleSheetData, highlights]);
+  const wordEvidence = useMemo(() => format === 'docx' ? wordTones(highlights) : undefined,
+    [format, highlights]);
   const focus = useRef<HTMLElement | null>(null);
   function trackFocus(node: HTMLElement | null) { focus.current = node; }
   const scroller = useRef<HTMLDivElement>(null);
+  const centered = useRef<{ locator?: Locator; preview: OfficePreview }>(undefined);
 
   useEffect(() => {
     const abort = new AbortController();
@@ -100,14 +169,18 @@ export function OfficeReader({ runId, documentId, format, locator, evidenceId, t
   }, [runId, documentId, evidenceId]);
 
   useLayoutEffect(() => {
-    const target = focus.current;
-    const container = scroller.current;
-    if (!preview || !active || !target || !container) return;
-    const from = container.getBoundingClientRect();
-    const to = target.getBoundingClientRect();
-    container.scrollTop += to.top + to.height / 2 - from.top - container.clientHeight / 2;
-    container.scrollLeft += to.left + to.width / 2 - from.left - container.clientWidth / 2;
-  }, [active, locator, preview]);
+    if (manualWindow || (centered.current?.preview === preview && centered.current?.locator === locator)) return;
+    if (!locator) {
+      if (scroller.current && centered.current?.locator) {
+        scroller.current.scrollTop = 0;
+        scroller.current.scrollLeft = 0;
+      }
+      centered.current = undefined;
+      return;
+    }
+    const centeredView = centerCell(scroller, focus, preview, locator, active);
+    if (centeredView) centered.current = centeredView;
+  }, [active, locator, manualWindow, preview]);
 
   const matchingPreview = preview && (format === 'xlsx' ? 'sheets' in preview : 'blocks' in preview) ? preview : null;
   const pending = <div className="source-viewer-placeholder"><p role="status">Чтение документа…</p></div>;
@@ -124,51 +197,54 @@ export function OfficeReader({ runId, documentId, format, locator, evidenceId, t
     return <>{before}<mark>{match}</mark>{after}</>;
   }
 
-  const mode = tone ?? 'source';
-  if (format === 'xlsx' && documentState?.lastSheet) {
-    const { sheet, sheets, row, column, last_row, last_column, rows } = documentState.lastSheet;
+  if (format === 'xlsx' && visibleSheetData) {
+    const { sheet, sheets, row, column, last_row, last_column, rows } = visibleSheetData;
     const columns = rows[0].length;
-    const bounds = rangeBounds(locator, sheet);
+    const bounds = locator?.kind === 'sheet' && locator.sheet === sheet ? rangeBounds(locator.range) : undefined;
     const singleCell = !!bounds && bounds.first.row === bounds.last.row
       && bounds.first.column === bounds.last.column;
     const visibleSheet = viewing.sheet && sheets.includes(viewing.sheet) ? viewing.sheet : sheet;
     function pageRow(delta: number) {
       const next = row + delta;
       if (matchingPreview && next <= last_row && (delta > 0 || row > 1)) {
-        setWindow({ sheet, row: Math.max(1, next), column });
+        setWindowChoice({ sheet, row: Math.max(1, next), column });
       }
     }
     function pageColumn(delta: number) {
       const next = column + delta;
       if (matchingPreview && next <= last_column && (delta > 0 || column > 1)) {
-        setWindow({ sheet, row, column: Math.max(1, next) });
+        setWindowChoice({ sheet, row, column: Math.max(1, next) });
       }
     }
     return <div className="document-reader">
       <div className="document-reader-controls">
         <label>Лист <select aria-label="Лист XLSX" value={visibleSheet}
-          onChange={(event) => setWindow({ sheet: event.currentTarget.value, row: 1, column: 1 })}>
+          onChange={(event) => setWindowChoice({ sheet: event.currentTarget.value, row: 1, column: 1 })}>
           {sheets.map((title) => <option key={title}>{title}</option>)}
         </select></label>
         <div className="document-reader-paging" role="group" aria-label="Область листа">
           <button type="button" title="Предыдущие строки" aria-label="Предыдущие строки" aria-disabled={!matchingPreview || row === 1}
             tabIndex={row === 1 ? -1 : undefined}
             onClick={() => pageRow(-rows.length)}><WorkspaceIcon name="chevron" size={15} /></button>
-          <span aria-live="polite">{row}–{row + rows.length - 1} / {last_row}</span>
+          <span aria-live="polite">Строки {row}–{row + rows.length - 1} из {last_row}</span>
           <button type="button" title="Следующие строки" aria-label="Следующие строки" aria-disabled={!matchingPreview || row + rows.length > last_row}
             tabIndex={row + rows.length > last_row ? -1 : undefined}
             onClick={() => pageRow(rows.length)}><WorkspaceIcon name="chevron" size={15} /></button>
           <button type="button" title="Предыдущие столбцы" aria-label="Предыдущие столбцы" aria-disabled={!matchingPreview || column === 1}
             tabIndex={column === 1 ? -1 : undefined}
             onClick={() => pageColumn(-columns)}><WorkspaceIcon name="chevron" size={15} /></button>
-          <span>{columnName(column)}–{columnName(column + columns - 1)}</span>
+          <span>Столбцы {columnName(column)}–{columnName(column + columns - 1)}</span>
           <button type="button" title="Следующие столбцы" aria-label="Следующие столбцы" aria-disabled={!matchingPreview || column + columns > last_column}
             tabIndex={column + columns > last_column ? -1 : undefined}
             onClick={() => pageColumn(columns)}><WorkspaceIcon name="chevron" size={15} /></button>
         </div>
         {locator?.kind === 'sheet' && <button className="reader-source-jump" type="button"
           tabIndex={manualWindow ? undefined : -1}
-          aria-disabled={!manualWindow} onClick={() => { if (manualWindow) setWindow(undefined); }}>К источнику</button>}
+          aria-disabled={!manualWindow} onClick={() => {
+            if (!manualWindow) return;
+            centered.current = undefined;
+            setWindowChoice(undefined);
+          }}>К источнику</button>}
       </div>
       {matchingPreview
         ? <div ref={scroller} className="document-reader-scroll" tabIndex={0} aria-label={'Лист «' + sheet + '»'} role="region">
@@ -185,9 +261,13 @@ export function OfficeReader({ runId, documentId, format, locator, evidenceId, t
                 && current >= bounds.first.column && current <= bounds.last.column;
               const first = selected && number === Math.max(row, bounds.first.row)
                 && current === Math.max(column, bounds.first.column);
+              const background = sheetEvidence?.[index]?.[offset];
+              const markTone = selected ? strongestTone(background, tone) ?? 'source' : background;
               return <td key={current} title={address} data-source-address={address}
                 ref={first ? trackFocus : undefined}
-                data-source-tone={selected ? mode : undefined}>{selected ? highlight(text, singleCell) : text}</td>;
+                data-source-active={selected ? 'true' : undefined} data-source-tone={markTone}>
+                {selected ? highlight(text, singleCell) : text}
+              </td>;
             })}</tr>;
           })}</tbody>
         </table>
@@ -205,8 +285,10 @@ export function OfficeReader({ runId, documentId, format, locator, evidenceId, t
         {matchingPreview.blocks.map((block) => {
           if ('paragraph' in block) {
             const selected = locator?.kind === 'paragraph' && locator.paragraph === block.paragraph;
+            const background = wordEvidence?.paragraphs.get(block.paragraph);
             return <p key={'p' + block.paragraph} data-source-address={'paragraph-' + block.paragraph}
-              data-word-heading={block.heading} data-source-tone={selected ? mode : undefined}
+              data-word-heading={block.heading} data-source-active={selected ? 'true' : undefined}
+              data-source-tone={selected ? strongestTone(background, tone) ?? 'source' : background}
               ref={selected ? trackFocus : undefined}>
               {selected ? highlight(block.text) : block.text || '\u00a0'}
             </p>;
@@ -215,9 +297,11 @@ export function OfficeReader({ runId, documentId, format, locator, evidenceId, t
             {block.rows.map((cells, index) => <tr key={index}>{cells.map((cell) => {
               const selected = locator?.kind === 'table_cell' && locator.table === block.table
                 && locator.row === index + 1 && locator.cell >= cell.column && locator.cell < cell.column + cell.span;
+              const background = cellTone(wordEvidence?.tables.get(block.table + ':' + (index + 1)), cell.column, cell.span);
               return <td key={cell.column} colSpan={cell.span}
                 data-source-address={`table-${block.table}-${index + 1}-${cell.column}`}
-                data-source-tone={selected ? mode : undefined}
+                data-source-active={selected ? 'true' : undefined}
+                data-source-tone={selected ? strongestTone(background, tone) ?? 'source' : background}
                 ref={selected ? trackFocus : undefined}>
                 {selected ? highlight(cell.text) : cell.text}
               </td>;
