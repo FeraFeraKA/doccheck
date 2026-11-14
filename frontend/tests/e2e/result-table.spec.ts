@@ -1,5 +1,21 @@
 import { expect, test } from '@playwright/test';
 
+test('status labels stay inside their column at narrower widths', async ({ page }) => {
+  for (const width of [1100, 768]) {
+    await page.setViewportSize({ width, height: 844 });
+    await page.goto('/checks/synthetic-example');
+    const table = page.getByRole('table', { name: 'Показатели КФЗ' });
+    for (const status of await table.locator('.row-status').all()) {
+      const fits = await status.evaluate((element) => {
+        const badge = element.getBoundingClientRect();
+        const cell = element.closest('td')?.getBoundingClientRect();
+        return cell !== undefined && badge.left >= cell.left && badge.right <= cell.right;
+      });
+      expect(fits).toBe(true);
+    }
+  }
+});
+
 test('the result disclosure keeps each component and its source address selectable', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/checks/synthetic-example');
