@@ -510,7 +510,7 @@ NRT-61. В roadmap сначала идут ручной разбор и журн
 виды допустимых исправлений и необходимость второго согласования,
 Николай — роли и маршруты, Семён — правила для зависимых строк и
 проверку источников. Для записи в ERP или ЭДО нужен отдельный сценарий
-приёмки. [NRT-62][nrt62] · [Ответственность](../../README.md#ответственность)
+приёмки. [NRT-62][nrt62]
 
 [nrt62]: https://linear.app/andreiakimov/issue/NRT-62/dizajn-predlozhenie-i-primenenie-ispravlenij-posle-sverki
 [nrt13]: https://linear.app/andreiakimov/issue/NRT-13/kontrakt-api-i-moki-dlya-fronta
