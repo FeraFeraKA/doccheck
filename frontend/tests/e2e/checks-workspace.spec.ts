@@ -310,7 +310,7 @@ test('the finished check loads stored findings and can retry without repeating s
     return route.fulfill({ json: findings });
   });
   await page.goto('/checks/partial-result');
-  await expect(page.getByText('Загрузка результата сверки…')).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Результат проверки' })).toHaveAttribute('aria-busy', 'true');
   finishFailure?.();
   await expect(page.getByRole('alert')).toHaveText('Не удалось загрузить результат сверки.');
   await expect(page.getByText('Состояние проверки · Готово с замечаниями')).toBeVisible();
