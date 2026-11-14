@@ -14,6 +14,7 @@ import { formatDecimal, formatLocation, statusLabels } from './reviewResult';
 import type { ReviewResult } from './reviewResult';
 import { useCheckData } from './useCheckData';
 import './result-workspace.css';
+import './result-focus.css';
 
 const componentEvidenceFields = [
   ['amount_refs', 'Сумма'],
@@ -193,6 +194,10 @@ function Reconciliation({ result, storedRunId, rowJump }: {
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [evidenceId, setEvidenceId] = useState<string>();
   const [openSourceId, setOpenSourceId] = useState<string>();
+  const [focused, setFocused] = useState(false);
+  const workspace = useRef<HTMLDialogElement>(null);
+  const focusToggle = useRef<HTMLButtonElement>(null);
+  const restoreScroll = useRef<(() => void) | undefined>(undefined);
   const tableScroll = useRef<HTMLDivElement>(null);
   const selectedRow = useRef<HTMLTableRowElement>(null);
   const pendingIssueScroll = useRef<{ id: string; focus: boolean }>(undefined);
@@ -219,6 +224,38 @@ function Reconciliation({ result, storedRunId, rowJump }: {
   });
   const row = visible.find(({ id }) => id === selectedId) ?? visible[0];
   const issueIndex = discrepancies.findIndex(({ id }) => id === row?.id);
+
+  useLayoutEffect(() => () => restoreScroll.current?.(), []);
+
+  function closeFocus(restoreFocus = true) {
+    const panel = workspace.current;
+    if (!panel || !restoreScroll.current) return;
+    const activeElement = window.document.activeElement;
+    panel.close();
+    panel.show();
+    restoreScroll.current();
+    restoreScroll.current = undefined;
+    setFocused(false);
+    const target = restoreFocus ? focusToggle.current : activeElement;
+    if (target instanceof HTMLElement && panel.contains(target)) target.focus({ preventScroll: true });
+  }
+
+  function enterFocus() {
+    const panel = workspace.current;
+    if (!panel || restoreScroll.current) return;
+    const previousOverflow = window.document.body.style.overflow;
+    panel.close();
+    panel.showModal();
+    window.document.body.style.overflow = 'hidden';
+    restoreScroll.current = () => { window.document.body.style.overflow = previousOverflow; };
+    setFocused(true);
+    focusToggle.current?.focus({ preventScroll: true });
+  }
+
+  function openSource(id: string) {
+    closeFocus(false);
+    setOpenSourceId(id);
+  }
 
   useLayoutEffect(() => {
     if (!rowJump || rowJump === lastRowJump.current) return;
@@ -252,10 +289,19 @@ function Reconciliation({ result, storedRunId, rowJump }: {
 
     // On a narrow screen the table itself can sit below the viewport.
     const visibleBounds = selected.getBoundingClientRect();
+    const focusedPanel = focused ? workspace.current : null;
+    if (focusedPanel) {
+      const focusBounds = focusedPanel.getBoundingClientRect();
+      const topOffset = visibleBounds.top - focusBounds.top;
+      const bottomOffset = visibleBounds.bottom - focusBounds.bottom;
+      if (topOffset < 0) focusedPanel.scrollTop += topOffset;
+      else if (bottomOffset > 0) focusedPanel.scrollTop += bottomOffset;
+      return;
+    }
     const viewportHeight = window.document.documentElement.clientHeight;
     if (visibleBounds.top < 0) window.scrollBy(0, visibleBounds.top);
     else if (visibleBounds.bottom > viewportHeight) window.scrollBy(0, visibleBounds.bottom - viewportHeight);
-  }, [expanded, filter, query, row?.id, selectedId]);
+  }, [expanded, filter, focused, query, row?.id, selectedId]);
 
   function selectRow(id?: string) {
     setSelectedId(id);
@@ -306,7 +352,17 @@ function Reconciliation({ result, storedRunId, rowJump }: {
   }
 
   return (
+    <dialog open ref={workspace} className="result-focus-dialog"
+      aria-label={focused ? 'Полноэкранная сверка' : undefined}
+      role={focused ? undefined : 'none'}
+      onCancel={(event) => { event.preventDefault(); closeFocus(); }}>
     <section className="result-reconciliation" aria-label="Рабочее место сверки" onKeyDown={(event) => {
+      if (openSourceId) return;
+      if (focused && event.key === 'Escape') {
+        event.preventDefault();
+        closeFocus();
+        return;
+      }
       if (!event.altKey || (event.key !== 'ArrowDown' && event.key !== 'ArrowUp')) return;
       if (event.target instanceof HTMLElement && event.target.closest('input, select, textarea, [contenteditable="true"]')) return;
       event.preventDefault();
@@ -323,6 +379,15 @@ function Reconciliation({ result, storedRunId, rowJump }: {
             onClick={() => moveIssue(-1)}>↑</button>
           <button type="button" aria-label="Следующее расхождение" title="Следующее расхождение · Alt + ↓" aria-keyshortcuts="Alt+ArrowDown" disabled={discrepancies.length === 0 || issueIndex === discrepancies.length - 1}
             onClick={() => moveIssue(1)}>↓</button>
+          <button ref={focusToggle} type="button" aria-pressed={focused}
+            aria-label={focused ? 'Выйти из полноэкранного режима' : 'На весь экран'}
+            title={focused ? 'Выйти из полноэкранного режима' : 'На весь экран'}
+            onClick={() => { if (focused) closeFocus(); else enterFocus(); }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+              strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d={focused ? 'M8 3v5H3m13-5v5h5M8 21v-5H3m13 5v-5h5' : 'M8 3H5a2 2 0 0 0-2 2v3m13-5h3a2 2 0 0 1 2 2v3M3 16v3a2 2 0 0 0 2 2h3m13-5v3a2 2 0 0 1-2 2h-3'} />
+            </svg>
+          </button>
         </div>
       </div>
       <div className="reconcile-panes reconcile-panes-stacked">
@@ -339,7 +404,7 @@ function Reconciliation({ result, storedRunId, rowJump }: {
           onSelectSource={(rowId, id) => {
             setSelectedId(rowId);
             selectSource(id);
-            if (storedRunId) setOpenSourceId(id);
+            if (storedRunId) openSource(id);
           }}
         />
         <section className="evidence-panel">
@@ -413,7 +478,7 @@ function Reconciliation({ result, storedRunId, rowJump }: {
             ) : <p>Адрес источника недоступен.</p>}
             {storedRunId && source && document && <>
               <button type="button" aria-haspopup="dialog" aria-expanded={openSourceId === source.id}
-                onClick={() => setOpenSourceId(source.id)}>
+                onClick={() => openSource(source.id)}>
                 Просмотреть источник
               </button>
               {openSourceId === source.id && (
@@ -432,6 +497,7 @@ function Reconciliation({ result, storedRunId, rowJump }: {
         </section>
       </div>
     </section>
+    </dialog>
   );
 }
 
