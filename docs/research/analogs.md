@@ -21,7 +21,7 @@
   сообщение. Compose поднимает этот контур. [Исторический экран](https://github.com/VCyberPunk2077/doccheck/blob/e454fa91978527a5fb0051e3b504a9a37db08d90/frontend/src/pages/home/HomePage.tsx) ·
   [Маршруты](../../backend/src/doccheck_backend/api.py) ·
   [Worker](../../backend/src/doccheck_backend/worker.py) ·
-  [Запуск](../../README.md#запуск-doccheck-с-моделью-через-docker-compose)
+  [Описание Compose](../../backend/README.md#docker-compose)
 - **Доступно для интеграции.** `doccheck_ml.process_documents` получает
   готовые наблюдения, возвращает кандидатов реквизитов, адреса, группы
   копий и ошибки. Семантика `doccheck-check-result/1` уже описывает
