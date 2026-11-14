@@ -34,8 +34,10 @@ from doccheck_backend.contracts.result import (
     Summary,
     Versions,
 )
+from doccheck_backend.local_ocr import read_scan
 from doccheck_backend.native_observations import Observation
 from doccheck_backend.native_reader import read_native_document
+from doccheck_backend.ocr_report import parse_scan_report
 from doccheck_backend.run_worker import StoredRun
 
 _MODEL_DIGEST = "d8b0f5e9760cd1682034f292d7ef72ec46f432149be0df7574bf2d6e92e38c04"
@@ -421,6 +423,7 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
         return _failure(run, "v32_model_unavailable", "Закреплённая модель v3.2 недоступна.")
 
     with TemporaryDirectory(prefix="doccheck-v32-") as temp:
+        missing_scan_amounts = set()
         folder = Path(temp)
         report_entry = report.v32_entry(folder, "report")
         source_path = upload_folder / report.id
@@ -447,20 +450,54 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
         else:
             v32.verify_source(report_entry)
             native_report = read_native_document(report_path, "pdf")
-            if native_report.issues or not native_report.observations:
+            if not native_report.observations and {
+                issue.code for issue in native_report.issues
+            } <= {"no_native_text"}:
+                scan = read_scan(report_path, "pdf")
+                parsed_scan = parse_scan_report(scan.observations) if not scan.issues else None
+                if parsed_scan is None:
+                    return _failure(
+                        run,
+                        "v32_pdf_scope_unavailable",
+                        "OCR не подтвердил договор, период или адреса сумм в скане КФЗ.",
+                    )
+                inferred = Scope(
+                    report_document_id=report.id,
+                    contract_number=parsed_scan.contract,
+                    period_start=parsed_scan.start.isoformat(),
+                    period_end=parsed_scan.end.isoformat(),
+                    report_row_locator=parsed_scan.row,
+                )
+                report_evidence = {
+                    category: Evidence(
+                        id=f"{report.id}-{category}-reported",
+                        document_id=report.id,
+                        kind="reported_value",
+                        raw_value=item.raw_text,
+                        normalized_value=_money(item.amount),
+                        unit="RUB",
+                        method="ocr",
+                        locator=item.locator,
+                    )
+                    for category, item in parsed_scan.amounts.items()
+                }
+                missing_scan_amounts = set(v32.CATEGORY_CODES.values()) - report_evidence.keys()
+                v32.verify_source(report_entry)
+            elif native_report.issues:
                 return _failure(
                     run,
                     "v32_pdf_scope_unavailable",
-                    "Для PDF КФЗ нужны адресуемые реквизиты и суммы. Скан требует OCR.",
+                    "Для PDF КФЗ нужны адресуемые реквизиты и суммы.",
                 )
-            parsed = _read_pdf_report(report, native_report.observations, decision_rules)
-            if parsed is None:
-                return _failure(
-                    run,
-                    "v32_pdf_scope_ambiguous",
-                    "Не удалось однозначно определить договор, период и суммы в PDF КФЗ.",
-                )
-            inferred, report_evidence = parsed
+            else:
+                parsed = _read_pdf_report(report, native_report.observations, decision_rules)
+                if parsed is None:
+                    return _failure(
+                        run,
+                        "v32_pdf_scope_ambiguous",
+                        "Не удалось однозначно определить договор, период и суммы в PDF КФЗ.",
+                    )
+                inferred, report_evidence = parsed
         scope = requested_scope or inferred
         if (scope.contract_number, scope.period_start, scope.period_end) != (
             inferred.contract_number,
@@ -472,6 +509,7 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
         documents, extractions, hashes = {}, [], {report.digest: report.id}
         previous = {}
         observations_by_id = {}
+        addressed_scans = {}
         artifact_root = v32.runtime.ART
         try:
             v32.runtime.ART = folder / "runtime"
@@ -512,6 +550,10 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
                         observations_by_id[file.id] = (
                             () if file.format == "pdf" and native.issues else native.observations
                         )
+                        if file.format in {"png", "pdf"} and not native.observations:
+                            ocr = read_scan(Path(entry["path"]), file.format)
+                            if not ocr.issues:
+                                addressed_scans[file.id] = ocr.observations
                         extracted = v32.extract_primary(entry, previous)
                         if not extracted.get("error"):
                             # The configured model schema supplies no counterparty proof.
@@ -553,6 +595,10 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
             [
                 {"category": category, "reported_amount": source.normalized_value}
                 for category, source in report_evidence.items()
+            ]
+            + [
+                {"category": category, "reported_amount": None}
+                for category in sorted(missing_scan_amounts)
             ],
             scope.contract_number,
             scope.period_start,
@@ -570,8 +616,9 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
         for item in comparison["rows"]:
             category = item["category"]
             code, label = _ARTICLES[category]
-            reported = report_evidence[category]
-            evidence.append(reported)
+            reported = report_evidence.get(category)
+            if reported is not None:
+                evidence.append(reported)
             components = []
             for file_id in item["source_ids"]:
                 if file_id in conflicted_sources:
@@ -607,6 +654,14 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
             reasons = [
                 Reason(code="completeness_unknown", message=completeness.reason, evidence_refs=[])
             ]
+            if reported is None:
+                reasons.append(
+                    Reason(
+                        code="ocr_report_amount_unconfirmed",
+                        message="OCR не подтвердил сумму этой статьи в выбранной строке КФЗ.",
+                        evidence_refs=[],
+                    )
+                )
             relevant_conflicts = any(
                 decision_rules.normalize_category(by_id[file_id]["prediction"].get("category"))
                 in (None, category)
@@ -635,8 +690,8 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
                     label=label,
                     indicator_code=code,
                     unit="RUB",
-                    reported_value=reported.normalized_value,
-                    reported_evidence_refs=[reported.id],
+                    reported_value=reported.normalized_value if reported else None,
+                    reported_evidence_refs=[reported.id] if reported else [],
                     expected_value=None,
                     observed_evidence_sum=observed,
                     delta=None,
@@ -679,6 +734,35 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
             documents[file_id] = _document(
                 file, state="needs_review", message="Доказательства требуют ручной проверки."
             )
+    # An OCR address alone cannot admit a model-predicted amount. It does let a
+    # reviewer open the actual contract text rather than an ungrounded quotation.
+    for file_id, source_items in addressed_scans.items():
+        file = files[file_id]
+        document = documents[file_id]
+        if document.decision.state != "needs_review":
+            continue
+        matching = [
+            item
+            for item in source_items
+            if item.confidence is not None
+            and item.confidence >= 0.8
+            and _contract(item.raw_text) == scope.contract_number
+        ]
+        if len(matching) != 1:
+            continue
+        item = matching[0]
+        source = Evidence(
+            id=f"{file.id}-ocr-contract",
+            document_id=file.id,
+            kind="contract",
+            raw_value=item.raw_text,
+            normalized_value=scope.contract_number,
+            unit=None,
+            method="ocr",
+            locator=item.locator,
+        )
+        evidence.append(source)
+        document.decision.evidence_refs.append(source.id)
     documents[report.id] = _document(report, report=True)
     result = CheckResult(
         schema_version=RESULT_SCHEMA_VERSION,

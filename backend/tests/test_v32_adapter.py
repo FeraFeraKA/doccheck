@@ -687,3 +687,46 @@ def test_xlsx_primary_formula_cache_conflict_requires_review(uploaded_files, tmp
     decision = result.documents[1].decision
     assert decision.state == "needs_review"
     assert decision.reason_code == "formula_cache_mismatch"
+
+
+def test_scan_reports_inferred_period_and_marks_missing_amounts(
+    uploaded_files, tmp_path, monkeypatch
+):
+    from test_local_ocr import _box
+    from test_native_pdf import _write_pdf
+
+    from doccheck_backend.native_observations import NativeDocument
+
+    calls = _stub_ollama(monkeypatch, "1172.70")
+    report = uploaded_files[0]
+    path = tmp_path / report["id"]
+    _write_pdf(path, [b"0 0 10 10 re f"])
+    report.update(format="pdf", name="report.pdf", sha256=sha256(path.read_bytes()).hexdigest())
+
+    observations = (
+        _box("Договор № E2E-31", 0.06, 0.09, 0.36),
+        _box("Начало 2 этапа", 0.06, 0.12, 0.14),
+        _box('"22" октября 2026 г.', 0.18, 0.12, 0.28),
+        _box("Окончание 2 этапа", 0.06, 0.15, 0.15),
+        _box('"17" марта 2027 г.', 0.18, 0.15, 0.28),
+        _box("Общехозяйственные затраты", 0.73, 0.24, 0.81),
+        _box("2 этап, 2026 г.:", 0.04, 0.50, 0.16),
+        _box("2 этап, 2027 г.:", 0.04, 0.53, 0.16),
+        _box("1 250,50", 0.75, 0.53, 0.79),
+    )
+    monkeypatch.setattr(
+        "doccheck_backend.v32_adapter.read_scan", lambda *_: NativeDocument(observations)
+    )
+    job = process(StoredRun(uuid4(), None, uploaded_files), tmp_path)
+
+    assert calls == ["/api/tags", "/api/chat", "/api/ps"]
+    assert job.status == "completed"
+    assert job.result.scope.period_start == "2027-01-01"
+    assert job.result.scope.period_end == "2027-03-17"
+    assert job.result.scope.report_row_locator.bbox[:2] == (0.04, 0.53)
+    rows = {row.id: row for row in job.result.rows}
+    assert rows["general_admin"].reported_value == "1250.50"
+    assert rows["general_admin"].observed_evidence_sum == "1172.70"
+    for name in ("payroll", "insurance", "production_overhead"):
+        assert rows[name].reported_value is None
+        assert "ocr_report_amount_unconfirmed" in {reason.code for reason in rows[name].reasons}
