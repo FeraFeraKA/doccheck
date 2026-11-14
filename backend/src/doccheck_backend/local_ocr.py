@@ -301,6 +301,36 @@ def _lift_crop(
     )
 
 
+def _lift_word_boxes(
+    fragments: list[Observation],
+    image_size: tuple[int, int],
+    bounds: tuple[int, int, int, int],
+    page: int,
+) -> tuple[tuple[int, int, PageLocator], ...]:
+    left, top, right, bottom = bounds
+    width, height = image_size
+    boxes = []
+    offset = 0
+    for fragment in fragments:
+        for start, end, location in fragment.text_boxes:
+            if not isinstance(location, PageLocator) or location.bbox is None:
+                continue
+            x0, y0, x1, y1 = location.bbox
+            original = PageLocator(
+                kind="page",
+                page=page,
+                bbox=(
+                    (left + x0 * (right - left)) / width,
+                    (top + y0 * (bottom - top)) / height,
+                    (left + x1 * (right - left)) / width,
+                    (top + y1 * (bottom - top)) / height,
+                ),
+            )
+            boxes.append((offset + start, offset + end, original))
+        offset += len(fragment.raw_text) + 1
+    return tuple(boxes)
+
+
 def _date_windows_crop(image, item: Observation, target, page, helper, executable):
     from PIL import Image, ImageOps
 
@@ -426,7 +456,23 @@ def _context_windows_crops(
         ]
         if _overlap(*locations) < 0.55:
             continue
-        result.append(Observation(texts[0], locations[0], repeated_read=True))
+        word_boxes = [
+            _lift_word_boxes(fragments, page_image.size, (left, top, right, bottom), page)
+            for fragments in reads
+        ]
+        # The whole line may be stable even when its word segmentation is not.
+        # Don't claim exact token coordinates unless both frames agree.
+        first_boxes, second_boxes = word_boxes
+        if len(first_boxes) != len(second_boxes) or any(
+            start != other_start or end != other_end or _overlap(locator, other_locator) < 0.55
+            for (start, end, locator), (other_start, other_end, other_locator) in zip(
+                first_boxes, second_boxes
+            )
+        ):
+            first_boxes = ()
+        result.append(
+            Observation(texts[0], locations[0], repeated_read=True, text_boxes=first_boxes)
+        )
     return tuple(result)
 
 

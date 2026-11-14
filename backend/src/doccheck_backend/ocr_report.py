@@ -120,11 +120,15 @@ _TRAILING_CONTRACT_DATE = re.compile(
 
 def _matches_trailing_date(candidate: Observation, source: Observation) -> bool:
     date = _TRAILING_CONTRACT_DATE.search(source.raw_text)
-    return bool(
-        date
-        and date[1] == candidate.raw_text.strip()
-        and _center(candidate, 0) > _center(source, 0)
-    )
+    if date is None or date[1] != candidate.raw_text.strip():
+        return False
+    start, end = date.span(1)
+    locations = [
+        Observation(date[1], locator)
+        for lower, upper, locator in source.text_boxes
+        if start <= lower < end and start < upper <= end + 1
+    ]
+    return any(_same_region(location, candidate) for location in locations)
 
 
 def _has_intervening_text(
@@ -212,6 +216,50 @@ def _dated_stages(
     return stages
 
 
+def select_scan_contract(
+    positioned: tuple[Observation, ...],
+    visible: tuple[Observation, ...] | None = None,
+) -> tuple[str, Observation] | None:
+    """Return the single addressed contract when its observed readings agree."""
+    if visible is None:
+        positioned = tuple(
+            item
+            for item in positioned
+            if isinstance(item.locator, PageLocator) and item.locator.bbox is not None
+        )
+        visible = tuple(
+            item
+            for item in positioned
+            if item.repeated_read or (item.confidence is not None and item.confidence >= _MIN_SCORE)
+        )
+    contracts: dict[str, list[tuple[Observation, Observation | None]]] = {}
+    for reading, source in _row_readings(visible, _CONTRACT, "contract", context=positioned):
+        contracts.setdefault(reading[1], []).append(
+            (source, _contract_value_source(reading, source))
+        )
+    if len(contracts) != 1:
+        return None
+    contract, sources = next(iter(contracts.items()))
+    for reading, location in _row_readings(positioned, _CONTRACT, "contract"):
+        if reading[1] != contract and any(_same_region(source, location) for source, _ in sources):
+            return None
+    precise = [(source, location) for source, location in sources if location is not None]
+    for item in positioned:
+        value = item.raw_text.strip()
+        if value == contract or not _CONTRACT_TOKEN.fullmatch(value):
+            continue
+        if precise:
+            if any(_same_region(location, item) for _, location in precise):
+                return None
+            if any(_matches_trailing_date(item, source) for source, _ in precise):
+                continue
+            # A compact alternative outside all precise ID boxes does not
+            # dispute the contract (e.g. the date beside the actual identifier).
+        elif any(_same_region(source, item) for source, _ in sources):
+            return None
+    return contract, sources[0][0]
+
+
 def parse_scan_report(observations: tuple[Observation, ...]) -> ScanScope | None:
     positioned = tuple(
         item
@@ -223,16 +271,10 @@ def parse_scan_report(observations: tuple[Observation, ...]) -> ScanScope | None
         for item in positioned
         if item.repeated_read or (item.confidence is not None and item.confidence >= _MIN_SCORE)
     )
-    contracts = {}
-    contract_value_locations = {}
-    for reading, source in _row_readings(visible, _CONTRACT, "contract", context=positioned):
-        contracts.setdefault(reading[1], source)
-        value_location = _contract_value_source(reading, source)
-        if value_location is not None:
-            contract_value_locations.setdefault(reading[1], []).append(value_location)
-    if len(contracts) != 1:
+    selection = select_scan_contract(positioned, visible)
+    if selection is None:
         return None
-    contract, contract_source = next(iter(contracts.items()))
+    contract, contract_source = selection
     stages = _dated_stages(visible, positioned)
     if len(stages) != 1:
         return None
@@ -273,18 +315,5 @@ def parse_scan_report(observations: tuple[Observation, ...]) -> ScanScope | None
         selected, source = adjudicated[name]
         if (read_stage != stage or alternative != selected) and _same_region(source, location):
             return None
-    for reading, location in _row_readings(positioned, _CONTRACT, "contract"):
-        if reading[1] != contract and _same_region(contract_source, location):
-            return None
-    if any(
-        _CONTRACT_TOKEN.fullmatch(item.raw_text.strip())
-        and item.raw_text.strip() != contract
-        and not _matches_trailing_date(item, contract_source)
-        and any(
-            _same_region(location, item) for location in contract_value_locations.get(contract, ())
-        )
-        for item in positioned
-    ):
-        return None
     assert isinstance(row.locator, PageLocator)
     return ScanScope(contract, start, last, row.locator, contract_source, cutoff_source)

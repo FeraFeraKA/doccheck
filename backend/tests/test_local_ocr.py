@@ -267,10 +267,67 @@ def test_compact_numeric_alternative_inside_contract_value_rejects_scope(scanned
 def test_date_to_right_of_contract_value_does_not_compete(scanned_stage):
     _, *others = scanned_stage
     contract = _box("Договор № 741208 от 01.01.2027", 0.06, 0.09, 0.36)
+    from dataclasses import replace
+
+    number = _box("741208", 0.165, 0.09, 0.218)
     date_reading = _box("01.01.2027", 0.258, 0.09, 0.36, confidence=0.73)
+    number_start = contract.raw_text.index(number.raw_text)
+    date_start = contract.raw_text.index(date_reading.raw_text)
+    contract = replace(
+        contract,
+        text_boxes=(
+            (number_start, number_start + len(number.raw_text), number.locator),
+            (date_start, date_start + len(date_reading.raw_text), date_reading.locator),
+        ),
+    )
 
     result = parse_scan_report((contract, *others, date_reading))
 
     assert result is not None
     assert result.contract == "741208"
     assert result.end.isoformat() == "2028-04-17"
+
+
+def test_literal_date_in_precise_contract_box_remains_a_conflict(scanned_stage):
+    from dataclasses import replace
+
+    _, *others = scanned_stage
+    source = _box("Договор № SYN-41 от 2027-01-01", 0.06, 0.09, 0.36)
+    number = _box("SYN-41", 0.225, 0.09, 0.275)
+    date = _box("2027-01-01", 0.299, 0.09, 0.36, confidence=0.72)
+    source = replace(
+        source,
+        text_boxes=(
+            (source.raw_text.index("SYN"), source.raw_text.index(" от"), number.locator),
+            (source.raw_text.index("2027"), len(source.raw_text), date.locator),
+        ),
+    )
+    disputed = replace(date, locator=number.locator)
+
+    assert parse_scan_report((source, *others, date)) is not None
+    assert parse_scan_report((source, *others, disputed)) is None
+
+
+def test_repeated_context_lifts_exact_word_positions(tmp_path, monkeypatch):
+    from dataclasses import replace
+
+    from PIL import Image
+
+    from doccheck_backend.local_ocr import _context_windows_crops
+
+    original = _box("Договор № SYN-41", 0.06, 0.10, 0.19)
+    local = _box("Договор № SYN-41", 0.05, 0.32, 0.52)
+    local = replace(
+        local,
+        text_boxes=((10, 16, _box("SYN-41", 0.30, 0.32, 0.52).locator),),
+    )
+    monkeypatch.setattr("doccheck_backend.local_ocr._windows_frame", lambda *_: (local,))
+    result = _context_windows_crops(
+        Image.new("RGB", (1000, 700)), (original,), tmp_path / "area.png", 1, None, None
+    )
+
+    (box,) = result
+    ((start, end, location),) = box.text_boxes
+    assert box.raw_text[start:end] == "SYN-41"
+    assert location.bbox[0] > box.locator.bbox[0]
+    assert location.bbox[2] == box.locator.bbox[2]
