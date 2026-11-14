@@ -112,7 +112,7 @@ def test_multilevel_scan_checks_units_without_losing_labor_quantity(
     xs = list(range(0, 1001, 100))
     ys = [100, 200, 300, 400]
     monkeypatch.setattr(scanned_report, "_table_rules", lambda *_: (None, xs, ys))
-    monkeypatch.setattr(scanned_report, "_row_band", lambda *_: (300, 400))
+    monkeypatch.setattr(scanned_report, "_row_band", lambda *_: (300, 400, "1"))
     groups = {
         "0200": scanned_report.HeaderGroup(2, 4, 200),
         "0300": scanned_report.HeaderGroup(4, 5, 200),

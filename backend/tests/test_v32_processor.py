@@ -190,6 +190,7 @@ def test_final_ruble_total_has_priority_over_intermediate_amount():
     ("printed", "bounds"),
     [
         ("Период: Январь 2031 — Февраль 2031", ("2031-01-01", "2031-02-28")),
+        ("Период: Январь 2031 г — Февраль 2031 г", ("2031-01-01", "2031-02-28")),
         ("Период: с декабря 2030 г. по январь 2031 г.", ("2030-12-01", "2031-01-31")),
         ("Период: Январь 2031", ("2031-01-01", "2031-01-31")),
         ("Период: Январь 2031 — Февраль", None),
@@ -206,6 +207,54 @@ def test_primary_period_does_not_shorten_a_month_range(printed, bounds):
         ((period, source),) = reading
         assert (period.start, period.end) == bounds
         assert source.locator == first
+
+
+def test_wrapped_month_range_withholds_a_partial_period():
+    first = PageLocator(kind="page", page=1, bbox=(0.1, 0.2, 0.8, 0.24))
+    second = PageLocator(kind="page", page=1, bbox=(0.1, 0.26, 0.8, 0.3))
+    dated = PageLocator(kind="page", page=1, bbox=(0.1, 0.4, 0.8, 0.5))
+    assert (
+        _periods(
+            (
+                Observation("Период: Январь 2031 г.", first),
+                Observation("— Февраль 2031 г.", second),
+                Observation("Дата: 31.01.2031", dated),
+            )
+        )
+        == []
+    )
+
+
+def test_unbound_final_label_blocks_the_intermediate_total():
+    lines = ("Итого: 100,00 руб.", "Итого к оплате:", "120,00 руб.")
+    document = NativeDocument(
+        tuple(
+            Observation(text, PageLocator(kind="page", page=1, bbox=(0.1, y, 0.6, y + 0.04)))
+            for text, y in zip(lines, (0.2, 0.4, 0.5), strict=True)
+        )
+    )
+    assert _money(document, template=False, format_="pdf") == (None, [])
+
+
+def test_faint_ocr_period_cannot_be_replaced_by_document_date(monkeypatch, tmp_path):
+    from doccheck_backend import grounded_amounts
+
+    image = Image.new("RGB", (300, 200), "white")
+    path = tmp_path / "synthetic.png"
+    image.save(path)
+    monkeypatch.setattr(
+        grounded_amounts,
+        "recognize_lines",
+        lambda _: [
+            OcrLine("Акт № TEST-43 от 01.03.2031", (5, 10, 200, 20), 95),
+            OcrLine("Период: с 01.02.2031 по 28.02.2031", (5, 30, 240, 40), 45),
+            OcrLine("Итого: 120,00 руб.", (5, 70, 200, 80), 95),
+        ],
+    )
+    source = grounded_amounts.ground_document(uuid4(), "e" * 32, path, "png", "b" * 64)
+    assert source.period is None
+    assert source.amount == "120.00"
+    assert not any(item.kind == "period" for item in source.assertions)
 
 
 @pytest.mark.parametrize(
