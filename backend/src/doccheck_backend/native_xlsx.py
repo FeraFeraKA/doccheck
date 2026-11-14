@@ -117,7 +117,7 @@ def _cells(
         style = int(node.get("s", "0"))
         if not 0 <= style < len(temporal_styles):
             raise ValueError("Invalid spreadsheet cell style")
-        if kind in {"b", "d", "e"} or temporal_styles[style]:
+        if kind in {"b", "d", "e"} or (kind == "n" and temporal_styles[style]):
             cells[key] = _Cell(value, "nonmonetary", formula=formula is not None)
             continue
         if formula is not None:
