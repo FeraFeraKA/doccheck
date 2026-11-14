@@ -42,3 +42,49 @@ test('uses a Secure cookie and shows only the invited synthetic result', async (
   expect(exportResult.ok()).toBe(true);
   expect(exportResult.headers()['content-type']).toContain('spreadsheetml.sheet');
 });
+
+test('distinguishes a missing original, a retryable failure and an available original without text', async ({ page }) => {
+  const runId = '11111111-1111-4111-8111-111111111111';
+  const prefix = '/api/preview/v1/runs';
+  await page.route('**' + prefix, (route) => route.fulfill({
+    json: [{ run_id: runId, status: 'completed' }],
+  }));
+  await page.route('**' + prefix + '/' + runId + '/findings', (route) => route.fulfill({
+    json: {
+      synthetic: true,
+      evidence: [
+        { id: 'missing', document_id: 'missing-original' },
+        { id: 'retry', document_id: 'retry-original' },
+        { id: 'without-text', document_id: 'image' },
+      ],
+      documents: [
+        { id: 'missing-original', name: 'Удалённый DOCX' },
+        { id: 'retry-original', name: 'Временный сбой' },
+        { id: 'image', name: 'Скан' },
+      ],
+    },
+  }));
+  let attempts = 0;
+  await page.route('**/fragment-preview?*', (route) => {
+    const id = new URL(route.request().url()).searchParams.get('evidence_id');
+    if (id === 'missing') return route.fulfill({ status: 404, json: { code: 'document_not_found' } });
+    if (id === 'retry' && attempts++ === 0) return route.fulfill({ status: 503 });
+    return route.fulfill({ json: { text: null, highlight: null } });
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Источники', exact: true }).click();
+  const sources = page.getByRole('region', { name: 'Источники проверки' });
+  const original = sources.getByRole('link', { name: 'Скачать оригинал' });
+  await sources.getByRole('button', { name: /Удалённый DOCX/ }).click();
+  await expect(sources.getByRole('status')).toHaveText('Оригинал недоступен.');
+  await expect(original).toHaveCount(0);
+  const retry = sources.getByRole('button', { name: /Временный сбой/ });
+  await retry.click();
+  await expect(sources.getByRole('alert')).toContainText('Не удалось загрузить фрагмент.');
+  await expect(original).toHaveCount(0);
+  await retry.click();
+  await expect(original).toHaveAttribute('href', prefix + '/' + runId + '/documents/retry-original');
+  await sources.getByRole('button', { name: /Скан/ }).click();
+  await expect(sources.getByRole('status')).toHaveText('У оригинала нет доступного текстового фрагмента.');
+  await expect(original).toHaveAttribute('href', prefix + '/' + runId + '/documents/image');
+});
