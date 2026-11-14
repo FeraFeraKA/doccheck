@@ -286,6 +286,7 @@ def select_scan_contract(
     visible: tuple[Observation, ...] | None = None,
     *,
     require_one_location: bool = False,
+    required_page: int | None = None,
 ) -> tuple[str, Observation] | None:
     """Return the single addressed contract when its observed readings agree."""
     if visible is None:
@@ -323,7 +324,11 @@ def select_scan_contract(
             continue
         if any(_same_region(location, item) for location in locations):
             return None
-    return contract, sources[0][0]
+    source = next(
+        (item for item, _ in sources if required_page is None or _page(item) == required_page),
+        None,
+    )
+    return (contract, source) if source is not None else None
 
 
 def parse_scan_report(observations: tuple[Observation, ...]) -> ScanScope | None:
@@ -337,10 +342,6 @@ def parse_scan_report(observations: tuple[Observation, ...]) -> ScanScope | None
         for item in positioned
         if item.repeated_read or (item.confidence is not None and item.confidence >= _MIN_SCORE)
     )
-    selection = select_scan_contract(positioned, visible)
-    if selection is None:
-        return None
-    contract, contract_source = selection
     stages = _dated_stages(visible, positioned)
     if len(stages) != 1:
         return None
@@ -350,7 +351,6 @@ def parse_scan_report(observations: tuple[Observation, ...]) -> ScanScope | None
         return None
     first = next(iter(starts))
     last, cutoff_readings = next(iter(ends.items()))
-    cutoff_source, _ = cutoff_readings[0]
     start = max(first, date(last.year, 1, 1))
     if start > last:
         return None
@@ -370,12 +370,17 @@ def parse_scan_report(observations: tuple[Observation, ...]) -> ScanScope | None
         for other in matches
     ):
         return None
-    if _page(contract_source) != _page(row) or _page(cutoff_source) != _page(row):
-        return None
+    page = _page(row)
+    selection = select_scan_contract(positioned, visible, required_page=page)
+    cutoff_source = next((source for source, _ in cutoff_readings if _page(source) == page), None)
     start_readings = starts[first]
-    start_source, _ = start_readings[0]
-    if _page(start_source) != _page(row):
+    if (
+        selection is None
+        or cutoff_source is None
+        or not any(_page(source) == page for source, _ in start_readings)
+    ):
         return None
+    contract, contract_source = selection
     # Confidence is a promotion gate, not a reason to discard a competing
     # well-formed date in the same source region.
     adjudicated = {

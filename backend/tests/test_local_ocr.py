@@ -432,3 +432,23 @@ def test_scanned_contract_drops_sentence_dot_without_changing_internal_dots(scan
     assert scope is not None
     assert scope.contract == "E2E.31"
     assert scope.contract_source.raw_text.endswith(".")
+
+
+def test_scanned_scope_uses_same_value_metadata_on_selected_row_page(scanned_stage):
+    from dataclasses import replace
+
+    # The full report is on page 2, with identical metadata repeated on page 1.
+    report = tuple(
+        replace(item, locator=item.locator.model_copy(update={"page": 2})) for item in scanned_stage
+    )
+    cover = scanned_stage[:5]
+    result = parse_scan_report((*cover, *report))
+
+    assert result is not None
+    assert result.row.page == result.contract_source.locator.page == 2
+    assert result.cutoff_source.locator.page == 2
+    assert parse_scan_report((*cover, *report[1:])) is None
+    assert parse_scan_report((*cover, report[0], *report[5:])) is None
+
+    conflicting_cover = replace(cover[0], raw_text="Договор № OTHER-19")
+    assert parse_scan_report((conflicting_cover, *cover[1:], *report)) is None
