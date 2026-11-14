@@ -761,7 +761,7 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
                 file,
                 state="needs_review",
                 reason_code="period_partially_overlaps_unallocatable_amount",
-                message="Период документа частично вне сверки. Сумму за нужные даты нельзя выделить.",
+                message="Период частично вне сверки. Сумму за нужные даты нельзя выделить.",
             )
         elif exclusion == "different_contract":
             documents[file_id] = _document(
