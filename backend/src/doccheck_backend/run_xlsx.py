@@ -309,10 +309,11 @@ def export_check_result(result: CheckResult) -> bytes:
             suffix = f" · {row.unit}"
         if len(suffix.encode("utf-16-le")) // 2 > 32_000:
             suffix = " · Единица на листе «Сверка»"
-        label = row.label + suffix
+        label = _NON_XML_TEXT.sub(lambda match: ascii(match[0])[1:-1], row.label) + suffix
         if len(label.encode("utf-16-le")) // 2 > 32_767:
             available = 32_767 - len(("… " + suffix).encode("utf-16-le")) // 2
-            prefix = row.label.encode("utf-16-le")[: max(0, available) * 2]
+            clean_label = _NON_XML_TEXT.sub(lambda match: ascii(match[0])[1:-1], row.label)
+            prefix = clean_label.encode("utf-16-le")[: max(0, available) * 2]
             label = prefix.decode("utf-16-le", errors="ignore") + "… " + suffix
         _append(
             report,
@@ -372,7 +373,6 @@ def export_check_result(result: CheckResult) -> bytes:
         if pages > 1:
             report.insert_rows(row_number + 1, pages - 1)
         for page in range(max(pages, 1)):
-            height = 1
             for column, cell_lines in enumerate(lines, 1):
                 portion = cell_lines[page * 24 : (page + 1) * 24]
                 if not portion:
@@ -381,8 +381,16 @@ def export_check_result(result: CheckResult) -> bytes:
                 cell.value = values[column - 1] if len(cell_lines) <= 24 else "\n".join(portion)
                 cell.data_type = "s"
                 cell.alignment = Alignment(vertical="top", wrap_text=True)
-                height = max(height, len(portion))
-            report.row_dimensions[row_number + page].height = max(18, height * 15)
+    for row in report.iter_rows(min_row=header + 1):
+        height = max(
+            (
+                sum(len(textwrap.wrap(part, width)) or 1 for part in cell.value.split("\n"))
+                if isinstance(cell.value, str)
+                else 1
+            )
+            for cell, width in zip(row, widths, strict=True)
+        )
+        report.row_dimensions[row[0].row].height = max(18, min(360, height * 15))
     report.freeze_panes = f"A{header + 1}"
     report.print_title_rows = f"1:{header}"
     workbook.active = 0
