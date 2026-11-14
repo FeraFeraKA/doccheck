@@ -862,3 +862,31 @@ def test_model_pixel_pages_cannot_reuse_pdf_text_overlay_as_evidence(
     assert result.documents[1].decision.state == "needs_review"
     assert result.rows[0].observed_evidence_sum is None
     assert all(item.document_id != uploaded_files[1]["id"] for item in result.evidence)
+
+
+def test_report_request_preserves_text_and_image_on_the_same_page(tmp_path):
+    from types import SimpleNamespace
+
+    from doccheck_backend.v32_report_model import read_report_with_model
+
+    requests = []
+    image = tmp_path / "rendered.png"
+    image.write_bytes(b"rendered bytes")
+
+    def prepare_pages(path, output):
+        return [SimpleNamespace(number=2, text="Visible native heading", image=image)]
+
+    def request(path, body, *, timeout):
+        requests.append(body)
+        return {"message": {"content": "{}"}}
+
+    runtime = SimpleNamespace(prepare_pdf_pages=prepare_pages, api=request)
+    has_raster, prediction = read_report_with_model(
+        tmp_path / "report.pdf", runtime, "test", pdf=True
+    )
+
+    assert has_raster and prediction is None
+    (message,) = requests[0]["messages"]
+    assert "Страница 2: изображение № 1." in message["content"]
+    assert "Страница 2, извлечённый текст:\nVisible native heading" in message["content"]
+    assert len(message["images"]) == 1

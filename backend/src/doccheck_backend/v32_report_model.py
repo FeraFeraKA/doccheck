@@ -55,7 +55,7 @@ def read_report_with_model(
             if page.image is not None:
                 images.append(b64encode(page.image.read_bytes()).decode("ascii"))
                 sections.append(f"Страница {page.number}: изображение № {len(images)}.")
-            else:
+            if page.text is not None:
                 sections.append(f"Страница {page.number}, извлечённый текст:\n{page.text}")
     else:
         sections.append(f"Извлечённый текст КФЗ:\n{_read_xlsx_scope_text(path)}")
