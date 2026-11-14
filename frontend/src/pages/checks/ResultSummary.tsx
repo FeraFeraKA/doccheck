@@ -1,7 +1,6 @@
-import { useId, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { Link } from 'react-router';
 import type { ReviewResult } from './reviewResult';
-import { isRunId } from './runStatusApi';
 import { XlsxDownload } from './XlsxDownload';
 
 const statuses = [
@@ -30,14 +29,12 @@ function Card({ title, children }: { title: string; children: ReactNode }) {
   </section>;
 }
 
-export function ResultSummary({ id, runPath, result, stored, onOpenRow }: {
-  id: string;
+export function ResultSummary({ runPath, result, exportRunId, onOpenRow }: {
   runPath: string;
   result: ReviewResult;
-  stored: boolean;
+  exportRunId?: string;
   onOpenRow?: (rowId: string) => void;
 }) {
-  const noteId = useId();
   const { counts, conclusion, primary_issues: issues } = result.summary;
   const total = counts.verified + counts.discrepancy + counts.unverified;
   const tone = resultTone(counts);
@@ -48,14 +45,9 @@ export function ResultSummary({ id, runPath, result, stored, onOpenRow }: {
         <p className="result-summary-muted text-[13px]">Вывод по проверке</p>
         <h2 className="result-summary-title" data-tone={tone}>{resultHeadline[tone]}</h2>
         <p className="mt-2 max-w-[820px] text-[15px]">{conclusion}</p>
-        <div className="result-summary-actions mt-4 flex flex-wrap items-center gap-3">
-          {stored && isRunId(id) ? <XlsxDownload key={id} runId={id} /> : (
-            <>
-              <button type="button" disabled aria-describedby={noteId}>Скачать XLSX</button>
-              <p id={noteId} className="result-summary-muted text-[13px]">Скачивание XLSX доступно для сохранённой проверки.</p>
-            </>
-          )}
-        </div>
+        {exportRunId && <div className="result-summary-actions mt-4 flex flex-wrap items-center gap-3">
+          <XlsxDownload key={exportRunId} runId={exportRunId} />
+        </div>}
       </div>
 
       <dl aria-label="Счётчики показателей" className="grid grid-cols-1 gap-3 sm:grid-cols-3">

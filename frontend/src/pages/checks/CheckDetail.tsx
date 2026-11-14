@@ -5,6 +5,7 @@ import type { RunDetails } from './checkData';
 import { demoJob } from './demoData';
 import { DocumentSourcePreview } from './DocumentSourcePreview';
 import { SourceDrawer } from './SourceDrawer';
+import { SourceContext } from './SourceContext';
 import { FindingsHttpError, loadFindings } from './loadFindings';
 import { ResultHeader } from './ResultHeader';
 import type { CheckView } from './ResultHeader';
@@ -14,6 +15,7 @@ import { ResultTable } from './ResultTable';
 import { formatDecimal, formatLocation, statusLabels } from './reviewResult';
 import type { ReviewResult } from './reviewResult';
 import { useCheckData } from './useCheckData';
+import { isRunId } from './runStatusApi';
 import './result-workspace.css';
 import './result-focus.css';
 
@@ -136,6 +138,7 @@ function ResultContent({ id, view, result, run, synthetic, stored }: ResultConte
   }, [location.search, location.key, result.rows]);
   const { summary, scope } = result;
   const runPath = '/checks/' + encodeURIComponent(id);
+  const exportRunId = stored && isRunId(id) ? id : undefined;
   const tone = resultTone(summary.counts);
   const syntheticLabel = id === demoJob.run_id ? 'Синтетическая сверка · готовый пример'
     : synthetic ? 'Синтетический результат · сохранённая проверка' : undefined;
@@ -145,7 +148,8 @@ function ResultContent({ id, view, result, run, synthetic, stored }: ResultConte
       <ResultHeader title={run.title} runPath={runPath} view={view} scope={scope}
         conclusion={resultHeadline[tone]} tone={tone} syntheticLabel={syntheticLabel} />
       {stored && <div className="stored-run-status mt-3 text-[13px]"><RunState run={run} /></div>}
-      {(view === 'table' || view === 'conclusion') && <ResultSummary id={id} runPath={runPath} result={result} stored={stored}
+      {(view === 'table' || view === 'conclusion') && <ResultSummary runPath={runPath} result={result}
+        exportRunId={view === 'conclusion' ? exportRunId : undefined}
         onOpenRow={view === 'table' ? (rowId) => setRowJump({ id: rowId, locationKey: location.key }) : undefined} />}
       {view === 'table' && <>
         <div className="mt-6">
@@ -161,6 +165,7 @@ function ResultContent({ id, view, result, run, synthetic, stored }: ResultConte
       {(view === 'documents' || view === 'exceptions') && <ResultDocuments
         key={view} result={result} runPath={runPath} storedRunId={stored ? id : undefined}
         exceptions={view === 'exceptions'} synthetic={synthetic}
+        exportRunId={view === 'documents' ? exportRunId : undefined}
         rowEvidenceIds={resultRowEvidenceIds} formatAddress={formatSourceChoice}
       />}
       {view === 'log' && <CheckLog synthetic={synthetic} />}
@@ -350,8 +355,23 @@ function Reconciliation({ result, storedRunId, rowJump }: {
 
   function selectSource(id: string) {
     setEvidenceId(id);
-    setOpenSourceId(undefined);
+    if (openSourceId) setOpenSourceId(id);
   }
+
+  const sourcePicker = sources.length > 0 && <div className="document-picker">
+    <button type="button" aria-label="Предыдущий источник" disabled={sourceIndex <= 0}
+      onClick={() => selectSource(sources[sourceIndex - 1].id)}>‹</button>
+    <label><span className="source-picker-caption">Доказательство</span>
+      <select value={source?.id} onChange={(event) => selectSource(event.target.value)}>
+        {sources.map((item) => (
+          <option key={item.id} value={item.id}>{documentsById.get(item.document_id)?.name}
+            {' · '}{formatSourceChoice(item.locator)}</option>
+        ))}
+      </select>
+    </label>
+    <button type="button" aria-label="Следующий источник" disabled={sourceIndex >= sources.length - 1}
+      onClick={() => selectSource(sources[sourceIndex + 1].id)}>›</button>
+  </div>;
 
   return (
     <dialog open ref={workspace} className="result-focus-dialog"
@@ -451,20 +471,7 @@ function Reconciliation({ result, storedRunId, rowJump }: {
             {affectedFiles.flatMap((item) => item.errors.filter((error) => fileErrorIds.has(error.id)).map((error) => (
               <p key={error.id}>{item.name} · {error.message}</p>
             )))}
-            {sources.length > 0 && <div className="document-picker">
-                <button type="button" aria-label="Предыдущий источник" disabled={sourceIndex <= 0}
-                onClick={() => selectSource(sources[sourceIndex - 1].id)}>‹</button>
-              <label>Доказательство
-              <select value={source?.id} onChange={(event) => selectSource(event.target.value)}>
-                {sources.map((item) => (
-                  <option key={item.id} value={item.id}>{documentsById.get(item.document_id)?.name}
-                    {' · '}{formatSourceChoice(item.locator)}</option>
-                ))}
-              </select>
-              </label>
-                <button type="button" aria-label="Следующий источник" disabled={sourceIndex >= sources.length - 1}
-                onClick={() => selectSource(sources[sourceIndex + 1].id)}>›</button>
-            </div>}
+            {!openSourceId && sourcePicker}
             {source && document ? (
               <dl className="source-address-card">
                 <dt>Документ</dt><dd>{document.name}</dd>
@@ -485,11 +492,14 @@ function Reconciliation({ result, storedRunId, rowJump }: {
               </button>
               {openSourceId === source.id && (
                 <SourceDrawer onClose={() => setOpenSourceId(undefined)}>
-                  <DocumentSourcePreview
-                    runId={storedRunId}
-                    document={{ id: document.id, name: document.name, format: document.format ?? null }}
-                    evidenceId={source.id}
-                  />
+                  <SourceContext row={row} picker={sourcePicker}>
+                    {(active) => <DocumentSourcePreview
+                      runId={storedRunId}
+                      document={{ id: document.id, name: document.name, format: document.format ?? null }}
+                      evidenceId={source.id}
+                      active={active}
+                    />}
+                  </SourceContext>
                 </SourceDrawer>
               )}
             </>}
