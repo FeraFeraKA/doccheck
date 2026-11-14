@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
 import hashlib
 import json
@@ -85,7 +86,90 @@ def safe_sum_formula(cell, sheet):
     return f"{total:.2f} [вычислено из {value}]"
 
 
-def native_text(path):
+@dataclass(frozen=True)
+class PDFPageInput:
+    number: int
+    text: str | None = None
+    image: Path | None = None
+
+
+def _needs_visible_page(page, text_page):
+    from pypdfium2 import raw
+
+    contents = text_page.get_contents()
+    # PDFium can omit invisible objects entirely; a text extractor can still
+    # include their strings. Use the rendered page when such operations occur.
+    if contents is not None and any(
+        operator == b"Tr" and operands and operands[0] in (3, 7)
+        for operands, operator in contents.operations
+    ):
+        return True
+    left, bottom, right, top = page.get_bbox()
+    page_area = (right - left) * (top - bottom)
+    image_area = 0.0
+    for item in page.get_objects(filter=[raw.FPDF_PAGEOBJ_IMAGE, raw.FPDF_PAGEOBJ_TEXT]):
+        if item.type == raw.FPDF_PAGEOBJ_TEXT:
+            mode = raw.FPDFTextObj_GetTextRenderMode(item)
+            if mode in (raw.FPDF_TEXTRENDERMODE_INVISIBLE, raw.FPDF_TEXTRENDERMODE_CLIP):
+                return True
+            continue
+        # Image coordinates start as a unit square. Container matrices place nested
+        # Form XObjects onto the visible page before assessing scan coverage.
+        matrix = item.get_matrix()
+        container = item.container
+        while container is not None:
+            matrix = matrix.multiply(container.get_matrix())
+            container = container.container
+        x0, y0, x1, y1 = matrix.on_rect(0, 0, 1, 1)
+        image_area += max(0, min(right, x1) - max(left, x0)) * max(
+            0, min(top, y1) - max(bottom, y0)
+        )
+        if image_area >= 0.5 * page_area:
+            return True
+    return False
+
+
+def _read_pdf_pages(path, out=None):
+    import pypdfium2 as pdfium
+    from pypdf import PdfReader
+
+    reader = PdfReader(path)
+    with pdfium.PdfDocument(path) as document:
+        if len(reader.pages) != len(document) or not len(document):
+            raise ValueError("Cannot establish PDF page order")
+        for number, text_page in enumerate(reader.pages, 1):
+            page = document[number - 1]
+            try:
+                text = None
+                if not _needs_visible_page(page, text_page):
+                    text = (text_page.extract_text() or "").strip() or None
+                if text is not None or out is None:
+                    yield PDFPageInput(number, text=text)
+                else:
+                    width, height = page.get_size()
+                    scale = min(2.5, 2000 / width, 2500 / height)
+                    bitmap = page.render(scale=scale)
+                    try:
+                        target = out / f"page-{number}.png"
+                        bitmap.to_pil().convert("RGB").save(target)
+                    finally:
+                        bitmap.close()
+                    yield PDFPageInput(number, image=target)
+            finally:
+                page.close()
+
+
+def prepare_pdf_pages(path: Path, out: Path) -> list[PDFPageInput]:
+    """Read native pages and render raster pages in original PDF order."""
+    out.mkdir(parents=True, exist_ok=True)
+    return list(_read_pdf_pages(path, out))
+
+
+def _pdf_text(pages):
+    return "\n".join(f"Страница {page.number}\n{page.text}" for page in pages)
+
+
+def native_text(path, *, split_pdf=True):
     suffix = path.suffix.lower()
     if suffix == ".docx":
         from docx import Document
@@ -114,6 +198,10 @@ def native_text(path):
         workbook.close()
         return "\n".join(blocks)
     if suffix == ".pdf":
+        if split_pdf:
+            pages = list(_read_pdf_pages(path))
+            return _pdf_text(pages) if all(page.text is not None for page in pages) else None
+
         from pypdf import PdfReader
         parts = [(page.extract_text() or "").strip() for page in PdfReader(path).pages]
         # A mixed/scanned PDF must not lose image-only pages through this shortcut.
@@ -122,15 +210,32 @@ def native_text(path):
     return None
 
 
-def prepare(entry):
+def prepare(entry, *, split_pdf=False):
     """Generate a prompt input using the document only; expected labels are untouched."""
     path = resolve_file(entry)
     profile = b"render-v1:scale2.5:max2000x2500:ocr-v2:ru-v5:ori1:lineori1:uvdoc0:detmax1280:recbatch1"
+    split_pdf = split_pdf and path.suffix.lower() == ".pdf"
+    if split_pdf:
+        profile += b":primary-pdf-page-routing-v1"
     key = hashlib.sha256(path.read_bytes() + profile).hexdigest()
     out = ART / "inputs" / key
     out.mkdir(parents=True, exist_ok=True)
     start = time.perf_counter()
-    text = native_text(path)
+    if split_pdf:
+        pages = prepare_pdf_pages(path, out)
+        images = [str(page.image) for page in pages if page.image is not None]
+        prepared = {
+            "key": key, "images": images, "pages": pages,
+            "prepare_s": time.perf_counter() - start,
+        }
+        if len(images) == len(pages):
+            return {**prepared, "kind": "scan"}
+        if images:
+            return {**prepared, "kind": "mixed"}
+        text = _pdf_text(pages)
+        (out / "native.txt").write_text(text, encoding="utf-8")
+        return {**prepared, "kind": "native", "text": text}
+    text = native_text(path, split_pdf=False)
     if text is not None:
         (out / "native.txt").write_text(text, encoding="utf-8")
         return {"kind": "native", "text": text, "images": [], "key": key, "prepare_s": time.perf_counter() - start}
@@ -228,6 +333,24 @@ def infer(entry, prepared, model, route, num_ctx=8192):
     preproc_s = prepared["prepare_s"]
     if prepared["kind"] == "native":
         message["content"] += "\nТекст документа с сохранённой структурой:\n" + prepared["text"]
+    elif prepared["kind"] == "mixed":
+        if route != "direct":
+            raise ValueError("Mixed page input requires the direct model route")
+        image_number = 0
+        pages = []
+        for page in prepared["pages"]:
+            content = page.text
+            if page.image is not None:
+                image_number += 1
+                content = f"Приложение {image_number} (изображение)"
+            pages.append(f"Страница {page.number}\n{content}")
+        message["content"] += (
+            "\nДалее страницы одного документа в исходном порядке. "
+            "Приложения перечислены в порядке приложенных изображений.\n" + "\n".join(pages)
+        )
+        message["images"] = [
+            base64.b64encode(Path(image).read_bytes()).decode() for image in prepared["images"]
+        ]
     elif route == "paddle":
         cache = ART / "ocr" / f"{prepared['key']}.json"
         ocr = json.loads(cache.read_text(encoding="utf-8"))

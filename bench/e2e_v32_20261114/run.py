@@ -170,9 +170,19 @@ def extract_primary(entry, previous):
         if prior and not prior.get("error"):
             record.update(prediction=copy.deepcopy(prior.get("raw_prediction", prior["prediction"])), source_native_text=prior.get("source_native_text"), input_kind=prior["input_kind"],
                           duplicate_of=prior["id"], byte_duplicate_reuse=True, reused_result=False)
+            record["raster_pages"] = prior.get("raster_pages", ())
         else:
-            prepared = runtime.prepare(entry)
+            prepared = runtime.prepare(entry) if VARIANT == "baseline" else runtime.prepare(
+                entry, split_pdf=True
+            )
             record["input_kind"] = prepared["kind"]
+            record["raster_pages"] = tuple(
+                page.number for page in prepared.get("pages", ()) if page.image is not None
+            )
+            if runtime.resolve_file(entry).suffix.lower() == ".png" and prepared["kind"] == "scan":
+                record["raster_pages"] = (1,)
+            # Partial native text cannot establish that a field is absent from
+            # the whole document. Mixed records use model-only checks here.
             record["source_native_text"] = prepared.get("text") if prepared["kind"] == "native" else None
             record.update(runtime.infer(entry, prepared, MODEL, "direct"))
         verify_source(entry)
