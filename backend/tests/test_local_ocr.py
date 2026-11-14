@@ -250,6 +250,30 @@ def test_crop_cannot_erase_conflict_from_verification_frame(scanned_stage, tmp_p
     assert parse_scan_report(merged) is None
 
 
+def test_windows_page_keeps_matching_amount_in_verification_with_separate_signs(
+    tmp_path, monkeypatch
+):
+    from PIL import Image
+
+    from doccheck_backend.local_ocr import _read_windows_page
+
+    first, second = tmp_path / "first.png", tmp_path / "second.png"
+    Image.new("RGB", (40, 40)).save(first)
+    amount = _box("723,45", 0.50, 0.50, 0.60)
+    left = _box("(", 0.48, 0.50, 0.49)
+    right = _box(")", 0.61, 0.50, 0.62)
+    monkeypatch.setattr(
+        "doccheck_backend.local_ocr._windows_frame",
+        lambda path, *_: (amount,) if path == first else (left, amount, right),
+    )
+    monkeypatch.setattr("doccheck_backend.local_ocr._context_windows_crops", lambda *_: ())
+
+    result = _read_windows_page(first, second, 1, None, None)
+
+    assert [item.raw_text for item in result if item.frame_id == 0] == ["723,45"]
+    assert [item.raw_text for item in result if item.frame_id == 1] == ["(", "723,45", ")"]
+
+
 def test_date_parser_cannot_skip_intervening_low_quality_fragment(scanned_stage):
     fragment = _box("архивный", 0.147, 0.15, 0.172, confidence=0.54)
 

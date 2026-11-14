@@ -501,8 +501,12 @@ def _repeated_full_frame_read(
 def _read_windows_page(
     first: Path, second: Path, page: int, helper: Path, executable: Path
 ) -> tuple[Observation, ...]:
-    original = _windows_frame(first, page, helper, executable)
-    verification = _windows_frame(second, page, helper, executable)
+    original = tuple(
+        replace(item, frame_id=0) for item in _windows_frame(first, page, helper, executable)
+    )
+    verification = tuple(
+        replace(item, frame_id=1) for item in _windows_frame(second, page, helper, executable)
+    )
     readings = tuple(
         replace(item, repeated_read=_repeated_full_frame_read(item, original, verification))
         for item in original
@@ -518,7 +522,10 @@ def _read_windows_page(
     alternatives = tuple(
         item
         for item in verification
-        if not any(
+        # The same digits may have a separate sign or grouping in this frame.
+        # Retain the constituents so table corroboration can reconstruct it.
+        if re.fullmatch(r"[0-9\s.,()+−–-]+", item.raw_text.strip())
+        or not any(
             _position_text(item.raw_text) == _position_text(other.raw_text)
             and _overlap(item.locator, other.locator) >= 0.55
             for other in readings

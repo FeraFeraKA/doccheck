@@ -1,3 +1,4 @@
+from dataclasses import replace
 from decimal import Decimal
 
 import pytest
@@ -339,3 +340,80 @@ def test_widely_separated_numeric_groups_on_same_baseline_are_not_one_amount(tab
 
     assert "production_overhead" not in result
     assert result["payroll"].amount == Decimal("1234.67")
+
+
+def test_matching_amount_and_separate_digits_from_different_frames_do_not_merge(table):
+    image, row, headings = table
+    amount = replace(_source("1234,67", 550, 370, 640, 380), frame_id=0)
+    stray_fragment = replace(_source("1", 542, 370, 548, 380), frame_id=1)
+
+    result = read_table_amounts(image, row, (*headings, amount, stray_fragment), _default_cell_read)
+
+    assert result["production_overhead"].amount == Decimal("1234.67")
+
+
+def test_split_accounting_amount_conflicts_with_positive_crop(table):
+    image, row, headings = table
+    negative = tuple(
+        replace(_source(value, left, 370, right, 380), frame_id=1)
+        for value, left, right in (
+            ("(", 540, 544),
+            ("1", 546, 552),
+            ("234,67", 555, 588),
+            (")", 590, 594),
+        )
+    )
+    positive = replace(_source("1234,67", 545, 370, 588, 380), frame_id=0)
+
+    result = read_table_amounts(image, row, (*headings, positive, *negative), _default_cell_read)
+
+    assert "production_overhead" not in result
+    assert result["payroll"].amount == Decimal("1234.67")
+
+
+def test_third_payroll_leaf_funding_qualifier_without_total_blocks_amount(table):
+    image, row, headings = table
+
+    def read(box, scale):
+        if 145 < box[1] < 270 and scale == 4:
+            return (_source("Оплату труда за счет субсидии", 10, 10, 36, 36),)
+        return _default_cell_read(box, scale)
+
+    result = read_table_amounts(image, row, headings, read)
+    assert "payroll" not in result
+    assert result["production_overhead"].amount == Decimal("1234.67")
+
+
+def test_qualified_overhead_header_is_not_full_article(table):
+    image, row, headings = table
+
+    def read(box, scale):
+        if box[1] < 145 and box[0] > 525:
+            return (
+                _source(
+                    "Общепроизводственные затраты (0800), в том числе за счет субсидии",
+                    10,
+                    10,
+                    36,
+                    36,
+                ),
+            )
+        return _default_cell_read(box, scale)
+
+    result = read_table_amounts(image, row, headings, read)
+    assert "production_overhead" not in result
+    assert result["payroll"].amount == Decimal("1234.67")
+
+
+def test_overhead_only_allows_isolated_article_code_suffix(table):
+    image, row, headings = table
+
+    def read(box, scale):
+        if box[1] < 145 and box[0] > 525:
+            article = ("калькуляции", "калькуляция", "калькуляинн")[scale - 2]
+            text = f"Общепроизводственные затраты (статья {article} 0800) :"
+            return (_source(text, 10, 10, 36, 36),)
+        return _default_cell_read(box, scale)
+
+    result = read_table_amounts(image, row, headings, read)
+    assert result["production_overhead"].amount == Decimal("1234.67")

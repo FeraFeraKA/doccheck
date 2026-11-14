@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal
@@ -30,6 +31,18 @@ _AGGREGATES = {
     "insurance": ("0300", ("страховые взносы",)),
 }
 _WORD = r"[^\W\d_]+"
+_OVERHEAD_HEADER = {
+    "0800": re.compile(r"общепроизводственные\s+(?:затраты|расходы)"),
+    "0900": re.compile(r"общехозяйственные\s+(?:затраты|расходы)"),
+}
+_ARTICLE = r"статья\s+калькуляци[ия]"
+# A broken read of the isolated printed suffix may abstain. Only the
+# canonical words and the alternate inflection above count as confirmation.
+_UNREADABLE_ARTICLE = r"статья\s+калькуля[а-яё]{2,4}"
+_HEADER_QUALIFIER = re.compile(
+    r"\b(?:в\s+том\s+числе|за\s+сч[её]т|из\s+средств|по\s+видам|"
+    r"без\s+уч[её]та|только|часть|подытог|субсид\w*|со[-\s]?финансирован\w*)\b"
+)
 # Accept only finite known leaf vocabulary (including narrow OCR spelling
 # variants), never an arbitrary qualifier. Parent section code is separate proof.
 _PAYROLL_LEAD = r"(?:(?:затраты|ззтрзты)\s+(?:(?:на|ва)\s+)?)?"
@@ -152,6 +165,7 @@ def _repeat_contains(
     read: ReadCell, box: PixelBox, required: tuple[str, ...], *, code: str
 ) -> bool:
     texts = [_tokens(read(box, scale)) for scale in (2, 3, 4)]
+    overhead = _OVERHEAD_HEADER.get(code)
     hits = 0
     for text in texts:
         other_roles = [
@@ -161,9 +175,23 @@ def _repeat_contains(
         ]
         if any(role in text for role in other_roles):
             return False
+        if _HEADER_QUALIFIER.search(text):
+            return False
         codes = set(_CODE.findall(text))
         if codes - {code}:
             return False
+        if overhead is not None:
+            # Longer headings cannot stand for the complete label. The only
+            # allowed suffix is the printed expense classification and code.
+            article = rf"{overhead.pattern}\s*\(?\s*{{}}{code}\s*\)?\s*[.:]?"
+            if re.fullmatch(article.format(rf"(?:{_ARTICLE}\s+)?"), text):
+                hits += 1
+            elif all(term in text for term in required) and not re.fullmatch(
+                article.format(rf"{_UNREADABLE_ARTICLE}\s+"), text
+            ):
+                if codes or overhead.fullmatch(text) is None:
+                    return False
+            continue
         if all(term in text for term in required) and code in codes:
             hits += 1
     return hits >= 2
@@ -199,7 +227,7 @@ def _repeat_leaf(read: ReadCell, box: PixelBox, category: str) -> bool:
         items = read(box, scale)
         if _leaf_header(items, category) is not None:
             hits += 1
-        elif "всего" in _tokens(items):
+        elif "всего" in (content := _tokens(items)) or _HEADER_QUALIFIER.search(content):
             # A rejected read that names an aggregate may describe part of it.
             # It may only be ignored if its words form an OCR variant handled
             # above, never because another scale omitted a printed qualifier.
@@ -372,37 +400,33 @@ def _money_read(
 def _page_amount_candidates(
     observations: list[Observation], frame_size: tuple[int, int]
 ) -> set[Decimal]:
-    chains = []
+    frames = defaultdict(list)
     for item in observations:
-        box = item.locator.bbox
-        successors = sorted(
-            (
-                other
-                for other in observations
-                if other is not item
-                and other.locator.bbox[0] >= box[2]
-                and max(box[1], other.locator.bbox[1]) < min(box[3], other.locator.bbox[3])
-                and (other.locator.bbox[0] - box[2]) * frame_size[0]
-                <= min(box[3] - box[1], other.locator.bbox[3] - other.locator.bbox[1])
-                * frame_size[1]
-                * 1.2
-            ),
-            key=lambda other: other.locator.bbox[0],
-        )
-        for right in successors:
-            chains.append((item, right))
-            for end in observations:
-                if end is item or end is right:
-                    continue
-                b = right.locator.bbox
-                c = end.locator.bbox
-                if (
-                    c[0] >= b[2]
-                    and (c[0] - b[2]) * frame_size[0]
-                    <= min(b[3] - b[1], c[3] - c[1]) * frame_size[1] * 1.2
-                    and max(box[1], b[1], c[1]) < min(box[3], b[3], c[3])
-                ):
-                    chains.append((item, right, end))
+        frames[item.frame_id].append(item)
+    return {
+        value for frame in frames.values() for value in _frame_amount_candidates(frame, frame_size)
+    }
+
+
+def _frame_amount_candidates(
+    observations: list[Observation], frame_size: tuple[int, int]
+) -> set[Decimal]:
+    observations = sorted(observations, key=lambda item: item.locator.bbox[0])
+    chains = []
+    for start, item in enumerate(observations):
+        chain = [item]
+        for following in observations[start + 1 : start + 6]:
+            previous = chain[-1].locator.bbox
+            box = following.locator.bbox
+            if (
+                box[0] < previous[2]
+                or max(previous[1], box[1]) >= min(previous[3], box[3])
+                or (box[0] - previous[2]) * frame_size[0]
+                > min(previous[3] - previous[1], box[3] - box[1]) * frame_size[1] * 1.2
+            ):
+                break
+            chain.append(following)
+            chains.append(tuple(chain))
     used = set()
     candidates = set()
     for chain in sorted(chains, key=len, reverse=True):
