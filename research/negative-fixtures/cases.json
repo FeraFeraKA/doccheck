@@ -1,0 +1,71 @@
+{
+  "fixture_version": 1,
+  "synthetic": true,
+  "source_package": "docs/synthetic/nrt-89",
+  "cases": [
+    {
+      "id": "truncated_pdf",
+      "source_id": "04_act",
+      "mutation": "keep_pdf_header_and_first_object",
+      "output_file": "truncated_act.pdf",
+      "synthetic_row_id": "production_overhead",
+      "expected_stage": "native_read",
+      "expected_file_outcome": "PDF parsing fails after the upload format check accepts the header.",
+      "expected_coverage_effect": "The affected document contributes no usable evidence. Complete coverage from the remaining documents would require separate proof."
+    },
+    {
+      "id": "empty_file",
+      "source_id": "04_act",
+      "mutation": "clear_bytes",
+      "output_file": "empty_act.pdf",
+      "synthetic_row_id": "production_overhead",
+      "expected_stage": "upload",
+      "expected_file_outcome": "HTTP 422 invalid_input. No persisted file error.",
+      "expected_coverage_effect": "The upload fails before a run result or coverage can exist."
+    },
+    {
+      "id": "missing_worksheet",
+      "source_id": "02_payroll_06",
+      "mutation": "remove_required_worksheet",
+      "required_sheet": "Ведомость",
+      "output_file": "payroll_without_required_sheet.xlsx",
+      "synthetic_row_id": "payroll",
+      "expected_stage": "template_lookup",
+      "expected_file_outcome": "The workbook is readable but the synthetic payroll worksheet and its data are absent.",
+      "expected_coverage_effect": "No usable evidence from that worksheet. Complete coverage from the remaining documents would require separate proof."
+    },
+    {
+      "id": "rotated_png",
+      "source_id": "12_communication",
+      "mutation": "rotate_png_90_ccw",
+      "output_file": "communication_rotated.png",
+      "synthetic_row_id": "general_admin",
+      "expected_stage": "image_decode",
+      "expected_file_outcome": "The PNG decodes with width and height swapped and pixels rotated 90 degrees counterclockwise.",
+      "expected_coverage_effect": "Undetermined until the working pipeline is tested. Rotation alone does not establish a file error or a coverage change."
+    },
+    {
+      "id": "noisy_png",
+      "source_id": "12_communication",
+      "mutation": "salt_and_pepper_png",
+      "output_file": "communication_noisy.png",
+      "noise_seed": 890041,
+      "noise_density_percent": 3,
+      "synthetic_row_id": "general_admin",
+      "expected_stage": "image_decode",
+      "expected_file_outcome": "The PNG decodes with the original dimensions and reproducible light and dark speckles.",
+      "expected_coverage_effect": "Undetermined until the working pipeline is tested. Noise alone does not establish a file error or a coverage change."
+    },
+    {
+      "id": "equal_partial_sum",
+      "expectations_file": "expectations/manifest.json",
+      "synthetic_row_id": "general_admin",
+      "expected_stage": "fixture_expectation",
+      "expected_file_outcome": null,
+      "expected_coverage_effect": "Matching observed subtotal and report amount still yields incomplete coverage.",
+      "expected_status": "unverified",
+      "expected_amount": null,
+      "delta": null
+    }
+  ]
+}
