@@ -78,13 +78,13 @@ function CheckDetailContent({ id, view, loadRun }: {
   if (run.result) {
     return <ResultContent id={id} view={view} result={run.result} run={run} synthetic stored={false} />;
   }
-  if (!hasStoredResult) return <PendingRun run={run} />;
+  if (!hasStoredResult) return <PendingRun id={id} run={run} />;
   if (findings.phase === 'ready' && findings.data) {
     const { result, synthetic } = findings.data;
     return <ResultContent id={id} view={view} result={result} run={run} synthetic={synthetic} stored />;
   }
 
-  return <><PendingRun run={run} /><section className="checks-card">
+  return <><PendingRun id={id} run={run} /><section className="checks-card">
     {findings.phase === 'failed'
       ? <p role="alert">Не удалось загрузить результат сверки.</p>
       : <p role="status">Результат проверки недоступен.</p>}
@@ -101,13 +101,18 @@ function RunState({ run }: { run: RunDetails }) {
   </>;
 }
 
-function PendingRun({ run }: { run: RunDetails }) {
+function PendingRun({ id, run }: { id: string; run: RunDetails }) {
   return <>
     <nav className="result-breadcrumb" aria-label="Путь к проверке">
       <Link to="/checks">← Все проверки</Link>
     </nav>
     <div className="result-header"><h1>{run.title}</h1></div>
     <RunState run={run} />
+    {run.status === 'failed' && run.errorCode === 'scan_scope_required' &&
+      <Link className="workspace-button workspace-button-outline mt-3"
+        to={'/checks/new?scope=manual&from=' + encodeURIComponent(id)}>
+        Выбрать строку КФЗ вручную
+      </Link>}
   </>;
 }
 
@@ -355,7 +360,7 @@ function Reconciliation({ result, storedRunId, runPath, rowJump, onOpenRow }: {
   const filters = [
     ['all', 'Все', rows.length],
     ['discrepancy', 'Расхождения', summary.counts.discrepancy],
-    ['unverified', 'Нет данных', summary.counts.unverified],
+    ['unverified', 'Не проверено', summary.counts.unverified],
     ['verified', 'Подтверждено', summary.counts.verified],
   ] as const;
   return (

@@ -37,6 +37,7 @@ from doccheck_backend.contracts.result import (
 )
 from doccheck_backend.native_observations import Observation
 from doccheck_backend.native_reader import read_native_document
+from doccheck_backend.report_identity import report_number as read_report_number
 from doccheck_backend.run_worker import StoredRun
 from doccheck_backend.v32_report_model import read_report_with_model, uncovered_pdf_observations
 
@@ -50,12 +51,6 @@ _ARTICLES = {
     "other": (None, "Прочие расходы"),
 }
 _CONTRACT = re.compile(r"^Договор\s*(?:№|:)\s*(\S+?)\.?$", re.IGNORECASE)
-_REPORT_NUMBER = re.compile(
-    r"^(?:КФЗ|Карточка\s+уч[её]та\s+фактических\s+затрат)"
-    r"\s*№\s*([A-ZА-ЯЁ0-9][A-ZА-ЯЁ0-9-]*(?:[./][A-ZА-ЯЁ0-9][A-ZА-ЯЁ0-9-]*)*)"
-    r"(?:\s*[·—]\s*[^\r\n]+)?\.?$",
-    re.IGNORECASE,
-)
 _XLSX_SCOPE = re.compile(r"^Проект:\s*(\S+)\s*\|\s*(Период:\s*.+)$", re.IGNORECASE)
 _MONTHS = (
     "январь январе января",
@@ -212,11 +207,6 @@ def _report_evidence(file: InputFile, category: str, entry: dict) -> Evidence:
         method="v32_native_xlsx",
         locator=SheetLocator(kind="sheet", sheet=sheet, range=cell),
     )
-
-
-def _report_number(headers: list[str]) -> str | None:
-    numbers = {match[1] for text in headers if (match := _REPORT_NUMBER.fullmatch(text.strip()))}
-    return next(iter(numbers)) if len(numbers) == 1 else None
 
 
 def _pdf_report_headers(observations: tuple[Observation, ...]) -> list[str]:
@@ -491,7 +481,7 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
             if extracted_report.get("error"):
                 return _failure(run, "v32_report_unreadable", "Не удалось прочитать КФЗ.")
             prediction = extracted_report["prediction"]
-            report_number = _report_number(prediction.get("header_text", []))
+            report_number = read_report_number(prediction.get("header_text", []))
             inferred = Scope(
                 report_document_id=report.id,
                 contract_number=prediction["contract_number"],
@@ -547,7 +537,7 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
                     "Не удалось однозначно определить договор, период и суммы в PDF КФЗ.",
                 )
             inferred, report_evidence = parsed
-            report_number = _report_number(_pdf_report_headers(native_report.observations))
+            report_number = read_report_number(_pdf_report_headers(native_report.observations))
             if reading.raster_pages:
                 try:
                     observations = uncovered_pdf_observations(
@@ -562,7 +552,7 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
                         for category, item in report_evidence.items()
                         if unobstructed[1].get(category) == item
                     }
-                    if _report_number(_pdf_report_headers(observations)) != report_number:
+                    if read_report_number(_pdf_report_headers(observations)) != report_number:
                         report_number = None
                 else:
                     report_evidence = {}

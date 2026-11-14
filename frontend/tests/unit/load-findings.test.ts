@@ -57,6 +57,18 @@ it('читает результат с меткой синтетики, осно
   ]));
 });
 
+it('сохраняет основание сверки по загруженному комплекту', async () => {
+  const [first, ...otherRows] = example.result.rows;
+  stubFetch(Response.json({
+    ...example.result,
+    rows: [{ ...first, completeness: { ...first.completeness, basis: 'uploaded_package' } }, ...otherRows],
+  }));
+
+  const { result } = await loadFindings(id);
+
+  expect(result.rows[0].completeness.basis).toBe('uploaded_package');
+});
+
 it('сохраняет подтверждённый формат и явный null из API', async () => {
   const documents = example.result.documents.map((document) => document.role === 'report'
     ? document : { ...document, format: null });

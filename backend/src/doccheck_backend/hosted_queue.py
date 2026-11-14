@@ -157,7 +157,7 @@ def get_file(request: Request, lease_id: UUID, file_id: str, _auth: Auth) -> Res
         _require_current(attempt, run, _clock(session))
         document = run_reads._stored_document(run, file_id)
         run_id = run.id
-    stream, size = run_reads._open_original(
+    stream, size = run_reads.open_run_original(
         request.app.state.upload_root, run_id, file_id, document
     )
 

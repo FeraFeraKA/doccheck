@@ -3,9 +3,18 @@ import { isRunId } from './runStatusApi';
 
 const runsPath = '/api/v0/runs';
 
+export interface ScanScope {
+  contractNumber: string;
+  periodStart: string;
+  periodEnd: string;
+  page: number;
+  stage: number;
+}
+
 export interface RunUpload {
   report: File;
   documents: readonly File[];
+  scanScope?: ScanScope;
   synthetic?: boolean;
 }
 
@@ -14,6 +23,7 @@ interface RunTransfer {
   documents: readonly File[];
   sourceRunId?: string;
   retainedDocumentIds?: readonly string[];
+  scanScope?: ScanScope;
 }
 
 export interface RetainedDocument {
@@ -107,11 +117,24 @@ function hasExpectedLocation(value: string | null, requestUrl: URL, path: string
   }
 }
 
+function appendScanScope(form: FormData, scope: ScanScope) {
+  const { contractNumber, periodStart, periodEnd, page, stage } = scope;
+  form.append('contract_number', contractNumber);
+  form.append('period_start', periodStart);
+  form.append('period_end', periodEnd);
+  form.append('report_row_locator', JSON.stringify({
+    kind: 'page',
+    page,
+    fragment_id: 'kfz-stage-' + stage + '-' + periodStart.slice(0, 4),
+  }));
+}
+
 /** Один снимок пакета и UUID на осознанную отправку. Для повтора вызовите ту же функцию. */
 export function prepareRunUpload(upload: RunUpload, idempotencyKey: string) {
   const form = new FormData();
   form.append('report', upload.report);
   for (const document of upload.documents) form.append('documents', document);
+  if (upload.scanScope) appendScanScope(form, upload.scanScope);
   if (upload.synthetic) form.append('synthetic', 'true');
 
   return async (signal?: AbortSignal, onProgress?: (percent: number) => void): Promise<AcceptedRun> => {
@@ -137,6 +160,7 @@ export function prepareRunTransfer(upload: RunTransfer, idempotencyKey: string) 
   for (const document of upload.documents) form.append('documents', document);
   if (upload.sourceRunId) form.append('source_run_id', upload.sourceRunId);
   for (const id of upload.retainedDocumentIds ?? []) form.append('retained_document_id', id);
+  if (upload.scanScope) appendScanScope(form, upload.scanScope);
 
   function acceptTransfer(status: number, value: unknown): { upload_id: string } {
     if (status < 200 || status >= 300) throw new RunUploadHttpError(status, parseUploadError(value));

@@ -136,6 +136,57 @@ uv run --frozen python -m doccheck_backend.run_worker --processor my_local_adapt
 загрузки адаптера завершает команду до захвата заданий. Опция `--once`
 ограничивает процесс одним заданием.
 
+### Сверка с Qwen и LoRA в WSL
+
+Для локальной загрузки КФЗ и первичных документов запустите отдельный
+документный worker v3.2 в WSL 2 с Ubuntu 24.04, Python 3.12 и доступной
+из WSL видеокартой NVIDIA с поддержкой CUDA 12. Подготовьте локальный
+PostgreSQL по инструкции выше и задайте `DATABASE_URL` в корневом файле
+`.env`. API и worker должны использовать одну базу и одну папку загрузок.
+По умолчанию это каталог `data/runs` репозитория.
+
+В терминале WSL из корня репозитория:
+
+```sh
+sudo apt install python3.12-venv tesseract-ocr-rus tesseract-ocr-eng libgl1 libglib2.0-0t64
+python3.12 -m venv data/venv-v32
+data/venv-v32/bin/python -m pip install -r backend/requirements-v32-cuda.lock
+data/venv-v32/bin/python -m pip install --no-deps -e ./backend -e ./backend/ml_module
+data/venv-v32/bin/python -m pip check
+data/venv-v32/bin/python -m alembic -c backend/alembic.ini upgrade head
+```
+
+Запустите API и документный worker в разных терминалах WSL из корня репозитория.
+
+```sh
+data/venv-v32/bin/python -m uvicorn doccheck_backend.api:app --host 127.0.0.1 --port 8000
+```
+
+```sh
+export DOCCHECK_QWEN_MODEL_DIR=/path/to/local-qwen-model
+export DOCCHECK_QWEN_ADAPTER_PATH=/path/to/local-adapter/checkpoint.safetensors
+PYTHONPATH="$PWD" data/venv-v32/bin/python -m doccheck_backend.run_worker --v32
+```
+
+В каталоге модели должен быть `model.safetensors`, рядом с выбранным
+чекпойнтом LoRA — `adapter_config.json`. Подготовьте совместимые веса на
+машине с worker. `PYTHONPATH` даёт worker доступ к модулям сверки в
+`bench/` текущей рабочей копии.
+
+В третьем терминале из корня запустите интерфейс:
+
+```sh
+cd frontend
+pnpm install --frozen-lockfile
+pnpm dev --host 127.0.0.1
+```
+
+Откройте адрес Vite и загрузите КФЗ с первичкой. Worker определит строку
+КФЗ по скану и выполнит сверку по загруженному комплекту. При неоднозначной
+строке откройте из карточки проверки ручной выбор для уже загруженного
+комплекта. Для штатного профиля Compose выбор обработчика остаётся явной
+настройкой.
+
 ### Отдельный документный worker в Compose
 
 Для локальной проверки XLSX КФЗ и DOCX первички через сайт на Windows
