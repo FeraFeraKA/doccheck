@@ -52,7 +52,7 @@ test('search finds document names and Alt+Arrow selects, opens and focuses an is
   await workspace.getByRole('button', { name: 'Сбросить фильтры' }).click();
   await expect(search).toHaveValue('');
 
-  await workspace.getByRole('button', { name: 'Нет данных 1' }).click();
+  await workspace.getByRole('button', { name: 'Не проверено 1' }).click();
   await search.focus();
   await search.press('Alt+ArrowDown');
   await expect(issue).toHaveCount(0);

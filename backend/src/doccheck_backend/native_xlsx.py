@@ -156,10 +156,19 @@ def _matches_title(cells: dict[str, _Cell], expected: dict[str, str]) -> bool:
 
 
 def _money_template(cells: dict[str, _Cell]) -> tuple[str, set[str]] | None:
-    if _matches_title(
+    title = (
+        _normalized_title(cells["A1"].raw)
+        .removesuffix(" — синтетический документ")
+        .removesuffix(" - синтетический документ")
+        if "A1" in cells
+        else ""
+    )
+    if title in {
+        "расчетная ведомость по оплате труда",
+        "расчетная ведомость заработной платы",
+    } and _matches_title(
         cells,
         {
-            "A1": "расчетная ведомость по оплате труда",
             "A5": "код статьи",
             "B5": "вид начисления",
             "C5": "сумма, руб.",
@@ -167,10 +176,12 @@ def _money_template(cells: dict[str, _Cell]) -> tuple[str, set[str]] | None:
         },
     ):
         return "C8", {"C6", "C7"}
-    if _matches_title(
+    if title in {
+        "расчет страховых взносов",
+        "ведомость начисленных страховых взносов",
+    } and _matches_title(
         cells,
         {
-            "A1": "расчет страховых взносов",
             "A5": "база начислений, руб.",
             "B5": "начислено взносов, руб.",
             "C5": "код статьи",
