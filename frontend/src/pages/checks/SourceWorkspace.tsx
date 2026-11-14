@@ -100,6 +100,7 @@ export function useSourceWorkspace({
   const reportPage: PageAddress | undefined = reportLocator && 'page' in reportLocator ? reportLocator : undefined;
   const selected = selection?.evidenceId === undefined ? undefined : evidenceById.get(selection.evidenceId);
   const row = selection?.row;
+  const unverifiedRows = result.rows.filter((item) => item.status === 'unverified' && item.reported_value === null);
   const highlights = useMemo(() => (documentId ? evidenceByDocument.get(documentId) ?? [] : []).flatMap((item) => {
     const kind = sourceField(item.kind) ?? fieldsByEvidenceId.get(item.id);
     return kind ? [{ locator: item.locator, kind }] : [];
@@ -114,7 +115,7 @@ export function useSourceWorkspace({
   return {
     open, documentId, defaultDocumentId, evidenceId: selected?.id, rowId: open && selected ? row?.id : undefined,
     openEvidence, openDocument, close, clear, returnFocusRoot, focusRequest, row,
-    selectDocument, selected, documents, storedRunId, highlights,
+    selectDocument, selected, documents, storedRunId, highlights, unverifiedRows,
     reportPage: selection?.scopeOnly ? reportPage : undefined,
   };
 }
@@ -201,10 +202,21 @@ export function SourceWorkspace({ workspace }: { workspace: ReturnType<typeof us
 
   const documentIndex = workspace.documents.findIndex(({ id }) => id === workspace.documentId);
   const selectedDocument = workspace.documents[documentIndex];
+  const candidates = workspace.row ? [workspace.row] : workspace.unverifiedRows;
+  const selected = workspace.selected;
+  const readingRow = selected && candidates.find((item) => item.status === 'unverified'
+    && item.reported_value === null && item.reported_evidence_refs.includes(selected.id));
+  const readingIds = readingRow ? [...new Set(readingRow.reported_evidence_refs)] : [];
+  const selectedReading = selected && readingRow
+    ? `Непроверенное чтение${readingIds.length > 1 ? ` ${readingIds.indexOf(selected.id) + 1}` : ''}`
+    : undefined;
 
   function preview(active: boolean): ReactNode {
     if (!selectedDocument) return <p className="source-workspace-notice">Документы комплекта отсутствуют.</p>;
     return <>
+      {selectedReading && workspace.selected && <p className="source-workspace-notice" aria-live="polite">
+        <strong>{selectedReading}:</strong> {workspace.selected.raw_value}
+      </p>}
       {selectedDocument.decision.state !== 'include' && <p className="source-workspace-notice" role="status">
         {selectedDocument.decision.message}
       </p>}
