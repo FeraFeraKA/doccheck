@@ -532,12 +532,12 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
                         "Не удалось однозначно определить договор, период и суммы в PDF КФЗ.",
                     )
                 inferred, report_evidence = parsed
-        scope = requested_scope or inferred
-        if (scope.contract_number, scope.period_start, scope.period_end) != (
-            inferred.contract_number,
-            inferred.period_start,
-            inferred.period_end,
-        ):
+        scope = inferred
+        if requested_scope is not None and (
+            requested_scope.contract_number,
+            requested_scope.period_start,
+            requested_scope.period_end,
+        ) != (inferred.contract_number, inferred.period_start, inferred.period_end):
             return _failure(run, "v32_scope_mismatch", "Параметры задания не совпадают с КФЗ.")
 
         documents, extractions, hashes = {}, [], {report.digest: report.id}
@@ -778,8 +778,7 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
         matching = [
             item
             for item in source_items
-            if item.confidence is not None
-            and item.confidence >= 0.8
+            if (item.repeated_read or (item.confidence is not None and item.confidence >= 0.8))
             and _contract(item.raw_text) == scope.contract_number
         ]
         if len(matching) != 1:

@@ -134,7 +134,13 @@ def _process(run: StoredRun, upload_root: Path, process: RunProcessor) -> CheckJ
             raise ValueError("processor must return a terminal outcome for the claimed run")
         if outcome.result is not None and (
             outcome.result.scope.report_document_id != report_document_id
-            or (scope is not None and outcome.result.scope != scope)
+            or (
+                scope is not None
+                and outcome.result.scope.model_copy(
+                    update={"report_row_locator": None} if scope.report_row_locator is None else {}
+                )
+                != scope
+            )
             or {doc.id: doc.sha256 for doc in outcome.result.documents} != documents
         ):
             raise ValueError("result must match the uploaded scope and document IDs")
