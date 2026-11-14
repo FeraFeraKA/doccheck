@@ -78,6 +78,7 @@ class ReportReading:
     cells: list[ReportCell]
     complete: bool
     details: tuple[ReportDetailCell, ...] = ()
+    stage: str | None = None
 
 
 @dataclass(frozen=True)
@@ -502,7 +503,7 @@ def _row_band(
     ys: list[int],
     header_periods: set[ReportPeriod],
     period: ReportPeriod,
-) -> tuple[int, int] | None:
+) -> tuple[int, int, str] | None:
     if locator is not None and locator.bbox is not None:
         left, top, right, bottom = locator.bbox
         matches = [
@@ -521,7 +522,7 @@ def _row_band(
     if locator and locator.bbox is None and not selector:
         return None
     candidates = [
-        (top, bottom)
+        (top, bottom, stage)
         for top, bottom, stage, year in _stage_bands(image, xs, ys, selected)
         if (selector is None or (stage, year) == selector.groups())
         and _visible_row_period(image, xs, top, bottom, year, header_periods) == period
@@ -572,7 +573,7 @@ def read_report_row(
     band = _row_band(image, selected, xs, ys, bounds, period)
     if band is None:
         return None
-    top, bottom = band
+    top, bottom, stage = band
     header_edges = [y for y in ys if y <= top]
     groups = _headers(image, ink, xs, header_edges)
     cells = []
@@ -614,4 +615,4 @@ def read_report_row(
                     code,
                 )
             )
-    return ReportReading(cells, {*_GROUP_HEADER, "total"} <= groups.keys(), tuple(details))
+    return ReportReading(cells, {*_GROUP_HEADER, "total"} <= groups.keys(), tuple(details), stage)

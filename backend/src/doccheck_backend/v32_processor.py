@@ -66,7 +66,7 @@ _ARTICLES = {
 _HEX = re.compile(r"[0-9a-f]{32}")
 _MAX_PAGES = 12
 _MAX_NATIVE_CHARS = 24_000
-_RULES_VERSION = "doccheck-local-v3.2-addressed.8"
+_RULES_VERSION = "doccheck-local-v3.2-addressed.9"
 _REPORT_FIELDS = ("contract_number", "period_start", "period_end")
 _REPORT_SCHEMA = {
     "type": "object",
@@ -87,6 +87,7 @@ _CODES = {
     "addressed_amount": "Сумма, договор, период и статья подтверждены источниками.",
     "different_contract": "В оригинале указан другой договор.",
     "outside_period": "Документ относится к периоду вне выбранной области.",
+    "different_stage": "В первичном документе указан другой этап работ.",
     "source_unreadable": "Оригинал недоступен, изменён или не читается.",
     "encrypted_pdf": "PDF защищён паролем. Загрузите доступную копию файла.",
     "source_incomplete": "Часть оригинала не прочитана. Итог требует проверки.",
@@ -360,6 +361,7 @@ _FIELD_MESSAGES = {
     "amount_missing": "Однозначный итог документа не найден.",
     "duplicate_identity": "В комплекте есть другое чтение с той же идентичностью документа.",
     "period_partial": "Период документа выходит за границы выбранного интервала.",
+    "stage_ambiguous": "Этап работ в первичном документе требует проверки.",
     "source_incomplete": _CODES["source_incomplete"],
 }
 
@@ -405,23 +407,44 @@ def _identity_collisions(grounds: dict[str, GroundedDocument]) -> set[str]:
     for group in identities.values():
         for (left_id, left), (right_id, right) in combinations(group, 2):
             # Missing context cannot establish that two readings describe different documents.
-            if left.issuer_key and right.issuer_key and left.issuer_key != right.issuer_key:
-                continue
             if (
                 left.document_kind
                 and right.document_kind
                 and left.document_kind != right.document_kind
             ):
                 continue
+            if left.issuer_tax_id and right.issuer_tax_id:
+                if left.issuer_tax_id != right.issuer_tax_id:
+                    continue
+            elif left.issuer_key and right.issuer_key and left.issuer_key != right.issuer_key:
+                continue
             collisions.update((left_id, right_id))
     return collisions
 
 
-def _amount_components(scope, documents, grounds, bound):
+def _amount_components(scope, documents, grounds, bound, *, stage: str | None = None):
     grouped = {}
+    stage_evidence = {}
     for item in bound:
         grouped.setdefault(item.document_id, []).append(item)
-    collisions = _identity_collisions(grounds)
+        if item.kind == "stage":
+            stage_evidence.setdefault(item.document_id, []).append(item)
+    stage_values = {
+        doc_id: {item.normalized_value for item in readings}
+        for doc_id, readings in stage_evidence.items()
+    }
+    outside_stage = {
+        doc_id
+        for doc_id, source in grounds.items()
+        if stage is not None
+        and (values := stage_values.get(doc_id))
+        and len(values) == 1
+        and stage not in values
+        and not source.stage_uncertain
+    }
+    collisions = _identity_collisions(
+        {key: source for key, source in grounds.items() if key not in outside_stage}
+    )
     components = {}
     unresolved = {}
     for document in documents:
@@ -451,6 +474,10 @@ def _amount_components(scope, documents, grounds, bound):
         if period and (period.start > scope.period_end or period.end < scope.period_start):
             document.decision = _decision("exclude", "outside_period", [e.id for e in periods])
             continue
+        if document.id in outside_stage:
+            refs = [item.id for item in stage_evidence[document.id]]
+            document.decision = _decision("exclude", "different_stage", refs)
+            continue
         missing = []
         if not contracts:
             missing.append("contract_missing")
@@ -458,6 +485,10 @@ def _amount_components(scope, documents, grounds, bound):
             missing.append("period_missing")
         elif period.start < scope.period_start or period.end > scope.period_end:
             missing.append("period_partial")
+        if stage is not None and (
+            source.stage_uncertain or len(stage_values.get(document.id, ())) > 1
+        ):
+            missing.append("stage_ambiguous")
         if not source.category or not articles:
             missing.append("category_missing")
         if not totals or source.amount is None:
@@ -568,7 +599,10 @@ def _rows(run_id, scope, report, native, scanned: ReportReading | None, document
         document.errors.append(error.error)
         if document.parse_status == "parsed":
             document.parse_status = "partial"
-    components, unresolved = _amount_components(scope, documents, grounds, binding.evidence)
+    stage = scanned.stage if scanned else native["stage"] if native else None
+    components, unresolved = _amount_components(
+        scope, documents, grounds, binding.evidence, stage=stage
+    )
     reported_evidence = {
         item.locator.model_dump_json(): item
         for item in binding.evidence

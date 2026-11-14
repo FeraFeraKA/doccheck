@@ -265,6 +265,20 @@ def test_bundled_example_counts_the_document_total(database_url, tmp_path):
 def test_unresolved_scan_can_retry_existing_files_with_the_correct_stage(database_url, tmp_path):
     require_raster_ocr()
     _, documents = write_reconciliation_case(tmp_path)
+    for stage, amount in [(5, "399,12"), (6, "700,00")]:
+        document = Document()
+        document.add_paragraph("Акт № SYN-043")
+        document.add_paragraph(f"Договор № {CONTRACT}")
+        document.add_paragraph(f"Период: {START} — {END}")
+        document.add_paragraph(f"Этап: {stage}")
+        document.add_paragraph("Общехозяйственные расходы.")
+        document.add_paragraph(f"Итого: {amount} руб.")
+        path = tmp_path / f"admin-stage-{stage}.docx"
+        document.save(path)
+        if stage == 5:
+            documents = [path if item.name == "ADM-72.docx" else item for item in documents]
+        else:
+            documents.append(path)
     target = ScanRow(5, 2031, ("1070,45", "351,29", "789,05", "399,12", "2609,91"))
     ambiguous = ScanRow(6, 2031, ("1040,00", "340,00", "790,00", "400,00", "2570,00"))
     report = write_scanned_kfz(
@@ -311,31 +325,49 @@ def test_unresolved_scan_can_retry_existing_files_with_the_correct_stage(databas
         )
         findings = client.get(f"/api/v0/runs/{corrected}/findings")
         assert findings.status_code == 200
-        assert findings.json()["summary"]["counts"] == {
+        result = findings.json()
+        assert result["summary"]["counts"] == {
             "verified": 3,
             "discrepancy": 2,
             "unverified": 0,
         }
+        excluded = next(doc for doc in result["documents"] if doc["name"] == "admin-stage-6.docx")
+        assert excluded["decision"]["reason_code"] == "different_stage"
+        assert [
+            evidence["normalized_value"]
+            for evidence in result["evidence"]
+            if evidence["kind"] == "stage"
+            and evidence["id"] in excluded["decision"]["evidence_refs"]
+        ] == ["6"]
+        admin = next(row for row in result["rows"] if row["id"] == "general_admin")
+        assert admin["expected_value"] == "399.12"
 
 
 @pytest.mark.parametrize(
-    ("second_issuer", "second_kind", "expected"),
+    ("first_issuer", "second_issuer", "second_kind", "expected"),
     [
-        ("ООО Бета", "Акт", "399.12"),
-        ("ООО Альфа", "Акт", None),
-        ("ООО Альфа.", "Акт", None),
-        ("ООО «Альфа» (ИНН 7700000000)", "Акт", None),
-        (None, "Акт", None),
-        ("ООО Альфа", "УПД", "399.12"),
+        ("ООО Альфа", "ООО Бета", "Акт", "399.12"),
+        ("ООО Альфа", "ООО Альфа", "Акт", None),
+        ("ООО Альфа", "ООО Альфа.", "Акт", None),
+        ("ООО Альфа", "ООО «Альфа» (ИНН 7700000000)", "Акт", None),
+        ("ООО Альфа", None, "Акт", None),
+        ("ООО Альфа", "ООО Альфа", "УПД", "399.12"),
+        (
+            "ООО Альфа (ИНН 7700000000)",
+            "Общество с ограниченной ответственностью Альфа (ИНН 7700000000)",
+            "Акт",
+            None,
+        ),
+        ("ООО Альфа (ИНН 7700000000)", "ООО Альфа (ИНН 7800000000)", "Акт", "399.12"),
     ],
 )
 def test_equal_primary_numbers_require_compatible_issuer_and_kind(
-    database_url, tmp_path, second_issuer, second_kind, expected
+    database_url, tmp_path, first_issuer, second_issuer, second_kind, expected
 ):
     report, _ = write_reconciliation_case(tmp_path)
     files = []
     for i, (issuer, kind, amount) in enumerate(
-        [("ООО Альфа", "Акт", "200,00"), (second_issuer, second_kind, "199,12")]
+        [(first_issuer, "Акт", "200,00"), (second_issuer, second_kind, "199,12")]
     ):
         source = Document()
         source.add_paragraph(f"{kind} № 17")

@@ -29,7 +29,7 @@ interface TableCellLocator {
 }
 
 type SourceLocator = PageLocator | SheetLocator | ParagraphLocator | TableCellLocator;
-type EvidenceKind = 'reported_value' | 'amount' | 'contract' | 'period' | 'article' | 'document_identity';
+type EvidenceKind = 'reported_value' | 'amount' | 'contract' | 'period' | 'article' | 'document_identity' | 'stage';
 interface Period {
   start: string | null;
   end: string | null;
@@ -161,6 +161,7 @@ function isEvidence(value: unknown): value is SourceEvidence {
     case 'contract':
     case 'article':
     case 'document_identity':
+    case 'stage':
       return isText(normalized);
     default:
       return false;
