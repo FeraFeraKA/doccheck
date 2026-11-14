@@ -56,8 +56,22 @@ try {
         'ollama' {
             $env:OLLAMA_HOST = '127.0.0.1:11438'
             $env:OLLAMA_NO_CLOUD = '1'
-            $env:OLLAMA_MODELS = Join-Path $OllamaDirectory 'models'
-            Invoke-Checked (Join-Path $OllamaDirectory 'ollama.exe') @('serve')
+            $packagedOllama = Join-Path $OllamaDirectory 'ollama.exe'
+            if ($PSBoundParameters.ContainsKey('OllamaDirectory') -or
+                (Test-Path -LiteralPath $packagedOllama -PathType Leaf)) {
+                if (-not (Test-Path -LiteralPath $packagedOllama -PathType Leaf)) {
+                    throw "Ollama не найдена в указанном каталоге: $packagedOllama."
+                }
+                $env:OLLAMA_MODELS = Join-Path $OllamaDirectory 'models'
+                $ollamaExecutable = $packagedOllama
+            } else {
+                $installedOllama = Get-Command 'ollama.exe' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+                if ($null -eq $installedOllama) {
+                    throw 'Ollama не найдена. Установите ollama.exe в PATH или укажите -OllamaDirectory.'
+                }
+                $ollamaExecutable = $installedOllama.Source
+            }
+            Invoke-Checked $ollamaExecutable @('serve')
         }
         'site' {
             $env:DOCCHECK_API_TARGET = "http://127.0.0.1:$ApiPort"
