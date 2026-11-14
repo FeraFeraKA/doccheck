@@ -28,7 +28,7 @@ interface ResultTableProps {
   onQueryChange: (value: string) => void;
   onReset: () => void;
   onToggle: (id: string) => void;
-  onSelectSource: (rowId: string, evidenceId: string) => void;
+  onSelectSource: (rowId: string, evidenceId: string, trigger: HTMLElement) => void;
 }
 
 export function ResultTable({
@@ -122,24 +122,32 @@ export function ResultTable({
                       <ol className="indicator-documents" aria-label={`Слагаемые показателя: ${row.label}`}>
                         {components.map((component) => <li key={component.amount_refs[0]}>
                           <div className="indicator-amount">
-                            <span>{component.relation_reason}</span>
+                            {component.amount_refs[0] && <button type="button" className="indicator-component-document"
+                              onClick={(event) => onSelectSource(row.id, component.amount_refs[0], event.currentTarget)}>
+                              {documentsById.get(evidenceById.get(component.amount_refs[0])?.document_id ?? '')?.name
+                                ?? 'Источник суммы'}
+                            </button>}
                             <strong>{formatMeasure(component.amount, row.unit)}</strong>
                           </div>
-                          <ul className="indicator-addresses">
+                          <details className="indicator-component-details">
+                            <summary>Адреса и основание</summary>
+                            <p>{component.relation_reason}</p>
+                            <ul className="indicator-addresses">
                             {evidenceFields.flatMap(([field, role]) => (component[field] ?? []).map((id) => {
                               const item = evidenceById.get(id);
                               const document = item && documentsById.get(item.document_id);
                               return <li key={`${field}:${id}`}>
                                 {item && document ? <button
                                   type="button" aria-pressed={selected && selectedEvidenceId === id}
-                                  onClick={() => onSelectSource(row.id, id)}
+                                  onClick={(event) => onSelectSource(row.id, id, event.currentTarget)}
                                 >
                                   <span>{role} · {document.name} · {formatAddress(item.locator)}</span>
                                   <span aria-hidden="true">›</span>
                                 </button> : <span>{role} · Адрес источника недоступен.</span>}
                               </li>;
                             }))}
-                          </ul>
+                            </ul>
+                          </details>
                         </li>)}
                       </ol>}
                   </div>

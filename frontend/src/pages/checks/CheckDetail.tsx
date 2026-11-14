@@ -1,11 +1,10 @@
+import type { ReactNode } from 'react';
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useParams } from 'react-router';
 import { loadCheckRun, runStatusLabels } from './checkData';
 import type { RunDetails } from './checkData';
 import { demoJob } from './demoData';
-import { DocumentSourcePreview } from './DocumentSourcePreview';
-import { SourceDrawer } from './SourceDrawer';
-import { SourceContext } from './SourceContext';
+import { SourceWorkspace, useSourceWorkspace } from './SourceWorkspace';
 import { FindingsHttpError, loadFindings } from './loadFindings';
 import { ResultHeader } from './ResultHeader';
 import type { CheckView } from './ResultHeader';
@@ -143,11 +142,18 @@ function ResultContent({ id, view, result, run, synthetic, stored }: ResultConte
   const syntheticLabel = id === demoJob.run_id ? 'Синтетика · готовый пример'
     : synthetic ? 'Синтетика · сохранённая проверка' : undefined;
 
+  function renderHeader(documentFilters?: ReactNode, documentActions?: ReactNode) {
+    return <>
+      <ResultHeader title={result.reportNumber ? runTitle(id, result.reportNumber) : run.title}
+        runPath={runPath} view={view} scope={scope} syntheticLabel={syntheticLabel}
+        documentFilters={documentFilters} documentActions={documentActions} />
+      {stored && <div className="stored-run-status mt-2 text-[13px]"><RunState run={run} /></div>}
+    </>;
+  }
+
   return (
     <>
-      <ResultHeader title={result.reportNumber ? runTitle(id, result.reportNumber) : run.title} runPath={runPath} view={view} scope={scope}
-        syntheticLabel={syntheticLabel} />
-      {stored && <div className="stored-run-status mt-3 text-[13px]"><RunState run={run} /></div>}
+      {view !== 'documents' && view !== 'exceptions' && renderHeader()}
       {(view === 'table' || view === 'conclusion') && <ResultConclusion result={result}
         exportRunId={view === 'conclusion' ? exportRunId : undefined} />}
       {view === 'table' && <>
@@ -160,10 +166,10 @@ function ResultContent({ id, view, result, run, synthetic, stored }: ResultConte
           onOpenRow={(rowId) => setRowJump({ id: rowId, locationKey: location.key })} />
       </>}
       {(view === 'documents' || view === 'exceptions') && <ResultDocuments
-        key={view} result={result} runPath={runPath} storedRunId={stored ? id : undefined}
+        key={view + (new URLSearchParams(location.search).has('document') ? location.search : '')} result={result} runPath={runPath} storedRunId={stored ? id : undefined}
         exceptions={view === 'exceptions'} synthetic={synthetic}
         exportRunId={view === 'documents' ? exportRunId : undefined}
-        rowEvidenceIds={resultRowEvidenceIds} formatAddress={formatSourceChoice}
+        renderHeader={renderHeader} rowEvidenceIds={resultRowEvidenceIds}
       />}
       {view === 'log' && <CheckLog synthetic={synthetic} />}
     </>
@@ -197,7 +203,7 @@ function Reconciliation({ result, storedRunId, rowJump }: {
   const [selectedId, setSelectedId] = useState(() => rows.find(({ status }) => status === 'discrepancy')?.id);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [evidenceId, setEvidenceId] = useState<string>();
-  const [openSourceId, setOpenSourceId] = useState<string>();
+  const sourceWorkspace = useSourceWorkspace({ result, storedRunId });
   const [focused, setFocused] = useState(false);
   const workspace = useRef<HTMLDialogElement>(null);
   const focusToggle = useRef<HTMLButtonElement>(null);
@@ -247,6 +253,7 @@ function Reconciliation({ result, storedRunId, rowJump }: {
   function enterFocus() {
     const panel = workspace.current;
     if (!panel || restoreScroll.current) return;
+    sourceWorkspace.clear();
     const previousOverflow = window.document.body.style.overflow;
     panel.close();
     panel.showModal();
@@ -256,9 +263,11 @@ function Reconciliation({ result, storedRunId, rowJump }: {
     focusToggle.current?.focus({ preventScroll: true });
   }
 
-  function openSource(id: string) {
+  function openSource(id: string, trigger: HTMLElement, selectedRowId = selectedId) {
     closeFocus(false);
-    setOpenSourceId(id);
+    const selected = rows.find((item) => item.id === selectedRowId) ?? row;
+    const linkedIssue = summary.primary_issues.find((item) => item.id === selected?.root_issue_id);
+    sourceWorkspace.openEvidence(id, trigger, selected, [...new Set(resultRowEvidenceIds(selected, linkedIssue))]);
   }
 
   useLayoutEffect(() => {
@@ -270,7 +279,7 @@ function Reconciliation({ result, storedRunId, rowJump }: {
     setQuery('');
     setSelectedId(id);
     setEvidenceId(undefined);
-    setOpenSourceId(undefined);
+    sourceWorkspace.clear();
     setExpanded((previous) => new Set(previous).add(id));
   }, [rowJump]);
 
@@ -310,7 +319,7 @@ function Reconciliation({ result, storedRunId, rowJump }: {
   function selectRow(id?: string) {
     setSelectedId(id);
     setEvidenceId(undefined);
-    setOpenSourceId(undefined);
+    sourceWorkspace.clear();
   }
 
   function toggleRow(id: string) {
@@ -352,7 +361,7 @@ function Reconciliation({ result, storedRunId, rowJump }: {
 
   function selectSource(id: string) {
     setEvidenceId(id);
-    if (openSourceId) setOpenSourceId(id);
+    if (sourceWorkspace.open) sourceWorkspace.selectEvidence(id);
   }
 
   const sourcePicker = sources.length > 0 && <div className="document-picker">
@@ -371,12 +380,14 @@ function Reconciliation({ result, storedRunId, rowJump }: {
   </div>;
 
   return (
+    <>
+    <SourceWorkspace workspace={sourceWorkspace} />
     <dialog open ref={workspace} className="result-focus-dialog"
       aria-label={focused ? 'Полноэкранная сверка' : undefined}
       role={focused ? undefined : 'none'}
       onCancel={(event) => { event.preventDefault(); closeFocus(); }}>
     <section className="result-reconciliation" aria-label="Рабочее место сверки" onKeyDown={(event) => {
-      if (openSourceId) return;
+      if (sourceWorkspace.open) return;
       if (focused && event.key === 'Escape') {
         event.preventDefault();
         closeFocus();
@@ -412,7 +423,7 @@ function Reconciliation({ result, storedRunId, rowJump }: {
       <div className="reconcile-panes reconcile-panes-stacked">
         <ResultTable
           rows={visible} total={rows.length} filters={filters} filter={filter} query={query}
-          selectedId={row?.id} selectedEvidenceId={source?.id} expanded={expanded}
+          selectedId={sourceWorkspace.open ? sourceWorkspace.rowId : row?.id} selectedEvidenceId={sourceWorkspace.open ? sourceWorkspace.evidenceId : source?.id} expanded={expanded}
           tableScroll={tableScroll} selectedRow={selectedRow} evidenceFields={componentEvidenceFields}
           evidenceById={allEvidenceById} documentsById={documentsById}
           formatAddress={formatSourceChoice}
@@ -420,10 +431,10 @@ function Reconciliation({ result, storedRunId, rowJump }: {
           onQueryChange={(value) => { setQuery(value); selectRow(); }}
           onReset={() => { setFilter('all'); setQuery(''); selectRow(); }}
           onToggle={toggleRow}
-          onSelectSource={(rowId, id) => {
+          onSelectSource={(rowId, id, trigger) => {
             setSelectedId(rowId);
             selectSource(id);
-            if (storedRunId) openSource(id);
+            if (storedRunId) openSource(id, trigger, rowId);
           }}
         />
         <section className="evidence-panel">
@@ -466,7 +477,7 @@ function Reconciliation({ result, storedRunId, rowJump }: {
             {affectedFiles.flatMap((item) => item.errors.filter((error) => fileErrorIds.has(error.id)).map((error) => (
               <p key={error.id}>{item.name} · {error.message}</p>
             )))}
-            {!openSourceId && sourcePicker}
+            {!sourceWorkspace.open && sourcePicker}
             {source && document ? (
               <dl className="source-address-card">
                 <dt>Документ</dt><dd>{document.name}</dd>
@@ -480,24 +491,10 @@ function Reconciliation({ result, storedRunId, rowJump }: {
                 <dt>Значение источника</dt><dd>{source.raw_value}</dd>
               </dl>
             ) : <p>Адрес источника недоступен.</p>}
-            {storedRunId && source && document && <>
-              <button type="button" aria-haspopup="dialog" aria-expanded={openSourceId === source.id}
-                onClick={() => openSource(source.id)}>
-                Просмотреть источник
-              </button>
-              {openSourceId === source.id && (
-                <SourceDrawer onClose={() => setOpenSourceId(undefined)}>
-                  <SourceContext row={row} picker={sourcePicker}>
-                    {(active) => <DocumentSourcePreview
-                      runId={storedRunId}
-                      document={{ id: document.id, name: document.name, format: document.format ?? null }}
-                      evidenceId={source.id}
-                      active={active}
-                    />}
-                  </SourceContext>
-                </SourceDrawer>
-              )}
-            </>}
+            {storedRunId && source && document && <button type="button" aria-expanded={sourceWorkspace.open}
+              onClick={(event) => openSource(source.id, event.currentTarget)}>
+              Просмотреть источник
+            </button>}
             {!storedRunId && <p className="checks-caption">В готовом примере доступны адреса источников.</p>}
             </div>
           </div>}
@@ -505,6 +502,7 @@ function Reconciliation({ result, storedRunId, rowJump }: {
       </div>
     </section>
     </dialog>
+    </>
   );
 }
 
