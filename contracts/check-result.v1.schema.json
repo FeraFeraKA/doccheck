@@ -359,7 +359,8 @@
             "contract",
             "period",
             "article",
-            "document_identity"
+            "document_identity",
+            "stage"
           ],
           "title": "Kind",
           "type": "string"

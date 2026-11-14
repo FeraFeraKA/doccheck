@@ -29,7 +29,9 @@ _GROUP_HEADER = {
 }
 _AGGREGATES = {"0200", "0300"}
 _CONTRACT = re.compile(
-    r"\b(?:договор|контракт)\s*(?:№|No)?\s*([\w]+(?:[-/][\w]+)+)(?=$|[\s.,;:])", re.I
+    r"\b(?:договор|контракт)(?:\s*:\s*(?:№\s*|N[eoо°º]\.?\s+)?|\s*(?:№\s*|N[eoо°º]\.?\s+)"
+    r"|\s+(?=[\w/-]*[0-9/-]))(\w+(?:[-/]\w+)*)(?=$|[\s.,;:])",
+    re.I,
 )
 _ROW = re.compile(r"^\s*(\d+)\s*этап\s*[,.:]?\s*(\d{4})\s*(?:г\.?|год)?[.:\s—–-]*$", re.I)
 _ROW_LOCATOR = re.compile(r"kfz-stage-([1-9][0-9]*)-([0-9]{4})")
@@ -78,6 +80,7 @@ class ReportReading:
     cells: list[ReportCell]
     complete: bool
     details: tuple[ReportDetailCell, ...] = ()
+    stage: str | None = None
 
 
 @dataclass(frozen=True)
@@ -129,6 +132,8 @@ _ROW_PERIOD = re.compile(
     rf"(?:с\s+)?({_ROW_DATE})(?:\s+г\.?)?\s*(?:[—–-]|по)\s*({_ROW_DATE})(?:\s+г\.?)?"
 )
 _PERIOD_MARKER = re.compile(rf"[0-9]|\b(?:{'|'.join(_MONTH_NUMBERS)})\b", re.I)
+_MIN_SCOPE_CONFIDENCE = 50
+_PERIOD_HEADING = re.compile(r"^отч[её]тный\s+период\b", re.I)
 type ReportPeriod = tuple[str, str]
 
 
@@ -157,18 +162,12 @@ def _parse_money(text: str) -> Decimal | None:
 def read_explicit_scope(image: Image.Image) -> tuple[str, str, str] | None:
     """Return the report's own explicit interval when one pair of bounds is visible."""
     lines = recognize_lines(image, mode=6)
-    contracts = {m[1] for line in lines for m in _CONTRACT.finditer(line.text)}
-    bounds = {
-        tuple(normalize_document_date(value).value for value in match.groups())
-        for line in lines
-        if (match := _EXPLICIT_PERIOD.fullmatch(line.text))
-    }
-    if len(contracts) != 1 or len(bounds) != 1:
+    header = _scope_header(lines)
+    if header is None or len(header[1]) != 1:
         return None
+    contract, bounds = header
     start, end = next(iter(bounds))
-    if not start or not end or start > end:
-        return None
-    return next(iter(contracts)), start, end
+    return contract, start, end
 
 
 def _simple_table(
@@ -181,15 +180,7 @@ def _simple_table(
     if selected is not None:
         return None
     lines = recognize_lines(image, mode=6)
-    contracts = {m[1] for line in lines for m in _CONTRACT.finditer(line.text)}
-    if contracts != {contract_number}:
-        return None
-    bounds = {
-        tuple(normalize_document_date(value).value for value in match.groups())
-        for line in lines
-        if (match := _EXPLICIT_PERIOD.fullmatch(line.text))
-    }
-    if bounds != {period}:
+    if _scope_header(lines) != (contract_number, {period}):
         return None
     amounts = {}
     for line in lines:
@@ -404,16 +395,22 @@ def _stage_bands(
             yield top, bottom, str(int(match[1])), match[2]
 
 
-def _header_periods(lines: list[OcrLine]) -> set[ReportPeriod]:
-    return {
-        period
-        for line in lines
-        if (
-            period := _dates(_EXPLICIT_PERIOD.fullmatch(line.text))
-            or _header_month_period(line.text)
-        )
-        is not None
-    }
+def _scope_header(lines: list[OcrLine]) -> tuple[str, set[ReportPeriod]] | None:
+    contracts = set()
+    periods = set()
+    for line in lines:
+        numbers = {match[1] for match in _CONTRACT.finditer(line.text)}
+        period = _dates(_EXPLICIT_PERIOD.fullmatch(line.text)) or _header_month_period(line.text)
+        if line.confidence < _MIN_SCOPE_CONFIDENCE and (
+            numbers or period or _PERIOD_HEADING.match(line.text)
+        ):
+            return None
+        contracts.update(numbers)
+        if period is not None:
+            periods.add(period)
+    if len(contracts) != 1 or len(periods) > 1:
+        return None
+    return next(iter(contracts)), periods
 
 
 def _row_date(text: str) -> date:
@@ -472,12 +469,11 @@ def read_scan_page(image: Image.Image, page: int) -> ScanPage | None:
     if len(xs) < 6 or xs[-1] - xs[0] < image.width * 0.55:
         return None
     lines = recognize_lines(image.crop((0, 0, image.width, ys[0])))
-    contracts = {match[1] for line in lines for match in _CONTRACT.finditer(line.text)}
-    contract = next(iter(contracts)) if len(contracts) == 1 else None
-    periods = _header_periods(lines)
+    header = _scope_header(lines)
+    contract = header[0] if header else None
     rows = []
     for top, bottom, stage, year in _stage_bands(image, xs, ys):
-        period = _visible_row_period(image, xs, top, bottom, year, periods)
+        period = _visible_row_period(image, xs, top, bottom, year, header[1]) if header else None
         locator = page_locator(page, image, (xs[0], top, xs[2], bottom)).model_copy(
             update={"fragment_id": f"kfz-stage-{stage}-{year}"}
         )
@@ -502,7 +498,7 @@ def _row_band(
     ys: list[int],
     header_periods: set[ReportPeriod],
     period: ReportPeriod,
-) -> tuple[int, int] | None:
+) -> tuple[int, int, str] | None:
     if locator is not None and locator.bbox is not None:
         left, top, right, bottom = locator.bbox
         matches = [
@@ -521,7 +517,7 @@ def _row_band(
     if locator and locator.bbox is None and not selector:
         return None
     candidates = [
-        (top, bottom)
+        (top, bottom, stage)
         for top, bottom, stage, year in _stage_bands(image, xs, ys, selected)
         if (selector is None or (stage, year) == selector.groups())
         and _visible_row_period(image, xs, top, bottom, year, header_periods) == period
@@ -561,18 +557,16 @@ def read_report_row(
     width = image.width
     if len(xs) < 6 or xs[-1] - xs[0] < width * 0.55:
         return _simple_table(image, page, selected, contract_number, period) if period else None
-    header = image.crop((0, 0, width, ys[0]))
     if period is None:
         return None
-    lines = recognize_lines(header)
-    contracts = {match[1] for line in lines for match in _CONTRACT.finditer(line.text)}
-    if contracts != {contract_number}:
+    lines = recognize_lines(image.crop((0, 0, width, ys[0])))
+    header = _scope_header(lines)
+    if header is None or header[0] != contract_number:
         return None
-    bounds = _header_periods(lines)
-    band = _row_band(image, selected, xs, ys, bounds, period)
+    band = _row_band(image, selected, xs, ys, header[1], period)
     if band is None:
         return None
-    top, bottom = band
+    top, bottom, stage = band
     header_edges = [y for y in ys if y <= top]
     groups = _headers(image, ink, xs, header_edges)
     cells = []
@@ -614,4 +608,4 @@ def read_report_row(
                     code,
                 )
             )
-    return ReportReading(cells, {*_GROUP_HEADER, "total"} <= groups.keys(), tuple(details))
+    return ReportReading(cells, {*_GROUP_HEADER, "total"} <= groups.keys(), tuple(details), stage)

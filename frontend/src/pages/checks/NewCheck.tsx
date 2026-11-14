@@ -60,9 +60,9 @@ function readyPacket(
   };
 }
 
-function transferLabel(reading: boolean, uploading: boolean, percent: number | undefined, starting: boolean) {
+function transferLabel(reading: boolean, percent: number | undefined, starting: boolean) {
   if (starting) return 'Запуск проверки…';
-  if (uploading) return percent === 100 ? 'Ожидаем подтверждения загрузки…' : 'Загрузка файлов…';
+  if (percent !== undefined) return percent === 100 ? 'Ожидаем подтверждения загрузки…' : 'Загрузка файлов…';
   if (reading) return 'Чтение файлов…';
   return '';
 }
@@ -98,7 +98,7 @@ export function NewCheck({ initialPack }: { initialPack?: InitialRunPack } = {})
   const transfer = prepared.state?.phase === 'uploading' ? prepared.state : null;
   const ready = prepared.state?.phase === 'ready';
   const reading = [...report, ...documents].some((item) => 'file' in item && item.state === 'reading');
-  const status = transferLabel(reading, Boolean(transfer), transfer?.percent, starting);
+  const status = transferLabel(reading, transfer?.percent, starting);
   const transferError = prepared.state?.phase === 'failed'
     ? uploadErrorMessage(prepared.state.error, 'Не удалось подтвердить приём пакета.') : '';
 
@@ -225,7 +225,8 @@ export function NewCheck({ initialPack }: { initialPack?: InitialRunPack } = {})
             </p>
           </div>
           {transfer && <div className="upload-transfer-progress">
-            <RunProgressBar label="Загрузка пакета" value={transfer.percent ?? null} valueText={status} />
+            <RunProgressBar label="Загрузка пакета" value={transfer.percent} valueText={`${transfer.percent}%. ${status}`} />
+            <span aria-hidden="true" className="tabular-nums">{transfer.percent}%</span>
           </div>}
           {transferError && <div className="upload-validation">
             <p role="alert">{transferError}</p>

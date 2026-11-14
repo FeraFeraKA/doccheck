@@ -2,6 +2,7 @@ import json
 from io import BytesIO
 from pathlib import Path
 from uuid import uuid4
+from zipfile import ZipFile
 
 import pytest
 from docx import Document
@@ -166,6 +167,162 @@ def test_calculates_status_and_total_from_admitted_sources(database_url, tmp_pat
         assert client.get(f"/api/v0/runs/{run_id}/exports/xlsx").content.startswith(b"PK")
 
 
+@pytest.mark.parametrize(
+    ("filename", "code"),
+    [
+        ("truncated.pdf", "pdf_unreadable"),
+        ("truncated.docx", "source_incomplete"),
+        ("truncated.xlsx", "source_incomplete"),
+        ("empty.docx", "source_incomplete"),
+        ("empty.xlsx", "source_incomplete"),
+    ],
+)
+def test_unreadable_source_keeps_the_rest_of_the_run(database_url, tmp_path, filename, code):
+    report, files = write_reconciliation_case(tmp_path)
+    if filename.endswith(".pdf"):
+        content = b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog"
+    elif filename.startswith("truncated"):
+        content = b"PK\x03\x04"
+    else:
+        stream = BytesIO()
+        empty = Document() if filename.endswith(".docx") else Workbook()
+        empty.save(stream)
+        content = stream.getvalue()
+    settings = Settings(database_url, upload_root=tmp_path / "uploads")
+    with TestClient(create_app(settings)) as client:
+        run_id = _prepare_and_start(
+            client,
+            [
+                ("report", (report.name, report.read_bytes())),
+                *(("documents", (path.name, path.read_bytes())) for path in files),
+                ("documents", (filename, content)),
+            ],
+        )
+        assert run_document_worker(
+            client.app.state.engine,
+            settings.upload_root,
+            V32Processor(no_model, no_model),
+            once=True,
+        )
+        entry = f"/api/v0/runs/{run_id}"
+        findings = client.get(entry + "/findings")
+        assert findings.status_code == 200, client.get(entry).json()
+        assert client.get(entry).json()["status"] == "completed_with_issues"
+        result = findings.json()
+        damaged = next(doc for doc in result["documents"] if doc["name"] == filename)
+        assert damaged["decision"]["state"] == "parse_error"
+        assert damaged["parse_status"] == "error"
+        assert any(issue["code"] == code for issue in damaged["errors"])
+        if filename.endswith(".pdf"):
+            assert any("PDF" in issue["message"] for issue in damaged["errors"])
+        assert any(doc["decision"]["state"] == "include" for doc in result["documents"])
+        row = next(row for row in result["rows"] if row["id"] == "payroll")
+        assert row["reported_value"] == row["observed_evidence_sum"] == "1070.45"
+        assert row["status"] == "unverified"
+
+
+@pytest.mark.parametrize("bad_member", ["missing_relationships", "malformed_xml"])
+def test_unreadable_kfz_preserves_supporting_files(database_url, tmp_path, bad_member):
+    report, files = write_reconciliation_case(tmp_path)
+    content = BytesIO()
+    with ZipFile(report) as source, ZipFile(content, "w") as damaged:
+        if bad_member == "missing_relationships":
+            damaged.writestr("xl/workbook.xml", source.read("xl/workbook.xml"))
+        else:
+            damaged.writestr("xl/workbook.xml", "<workbook")
+    fields = {
+        "contract_number": CONTRACT,
+        "period_start": START,
+        "period_end": END,
+        "report_row_locator": json.dumps({"kind": "sheet", "sheet": "КФЗ", "range": "A4"}),
+    }
+    settings = Settings(database_url, upload_root=tmp_path / "uploads")
+    with TestClient(create_app(settings)) as client:
+        run_id = _prepare_and_start(
+            client,
+            [
+                ("report", (report.name, content.getvalue())),
+                *(("documents", (path.name, path.read_bytes())) for path in files),
+            ],
+            data=fields,
+        )
+        assert run_document_worker(
+            client.app.state.engine,
+            settings.upload_root,
+            V32Processor(no_model, no_model),
+            once=True,
+        )
+        entry = f"/api/v0/runs/{run_id}"
+        assert client.get(entry).json()["status"] == "completed_with_issues"
+        findings = client.get(entry + "/findings")
+        assert findings.status_code == 200
+        result = findings.json()
+        assert result["rows"] == []
+        source = next(doc for doc in result["documents"] if doc["role"] == "report")
+        assert source["parse_status"] == "error"
+        assert source["decision"]["reason_code"] == "source_unreadable"
+        assert all(
+            doc["decision"]["state"] == "include"
+            for doc in result["documents"]
+            if doc["role"] == "support"
+        )
+
+
+@pytest.mark.parametrize(
+    ("second_cell", "explicit_total", "expected"),
+    [
+        (None, False, "399.12"),
+        ("", False, None),
+        ("неразборчиво", False, None),
+        ("неразборчиво", True, "399.12"),
+    ],
+)
+def test_docx_amount_needs_a_single_billed_row_or_a_readable_total(
+    database_url, tmp_path, second_cell, explicit_total, expected
+):
+    report, files = write_reconciliation_case(tmp_path)
+    document = Document()
+    document.add_paragraph("Акт № SYN-202")
+    document.add_paragraph(f"Договор № {CONTRACT}")
+    document.add_paragraph(f"Период: {START} — {END}")
+    document.add_paragraph("Общехозяйственные расходы.")
+    table = document.add_table(rows=2, cols=2)
+    table.cell(0, 0).text, table.cell(0, 1).text = "Услуга", "Сумма, руб."
+    table.cell(1, 0).text, table.cell(1, 1).text = "Первая услуга", "399,12"
+    if second_cell is not None:
+        service, money = table.add_row().cells
+        service.text, money.text = "Вторая услуга", second_cell
+    if explicit_total:
+        document.add_paragraph("Итого: 399,12 руб.")
+    path = tmp_path / "ADM-72.docx"
+    document.save(path)
+    settings = Settings(database_url, upload_root=tmp_path / "uploads")
+    with TestClient(create_app(settings)) as client:
+        run_id = _prepare_and_start(
+            client,
+            [
+                ("report", (report.name, report.read_bytes())),
+                *(("documents", (item.name, item.read_bytes())) for item in files),
+            ],
+        )
+        assert run_document_worker(
+            client.app.state.engine,
+            settings.upload_root,
+            V32Processor(no_model, no_model),
+            once=True,
+        )
+        findings = client.get(f"/api/v0/runs/{run_id}/findings")
+        assert findings.status_code == 200
+        row = next(row for row in findings.json()["rows"] if row["id"] == "general_admin")
+        assert row["expected_value"] == expected
+        if expected is None:
+            assert row["status"] == "unverified"
+            assert row["observed_evidence_sum"] is None
+            assert any(reason["code"] == "amount_missing" for reason in row["reasons"])
+        else:
+            assert row["status"] == "verified"
+
+
 def test_scanned_breakdown_retains_unverified_values_without_counting_them_twice(
     database_url, tmp_path
 ):
@@ -265,6 +422,20 @@ def test_bundled_example_counts_the_document_total(database_url, tmp_path):
 def test_unresolved_scan_can_retry_existing_files_with_the_correct_stage(database_url, tmp_path):
     require_raster_ocr()
     _, documents = write_reconciliation_case(tmp_path)
+    for stage, amount in [(5, "399,12"), (6, "700,00")]:
+        document = Document()
+        document.add_paragraph("Акт № SYN-043")
+        document.add_paragraph(f"Договор № {CONTRACT}")
+        document.add_paragraph(f"Период: {START} — {END}")
+        document.add_paragraph(f"Этап: № {stage:02}")
+        document.add_paragraph("Общехозяйственные расходы.")
+        document.add_paragraph(f"Итого: {amount} руб.")
+        path = tmp_path / f"admin-stage-{stage}.docx"
+        document.save(path)
+        if stage == 5:
+            documents = [path if item.name == "ADM-72.docx" else item for item in documents]
+        else:
+            documents.append(path)
     target = ScanRow(5, 2031, ("1070,45", "351,29", "789,05", "399,12", "2609,91"))
     ambiguous = ScanRow(6, 2031, ("1040,00", "340,00", "790,00", "400,00", "2570,00"))
     report = write_scanned_kfz(
@@ -311,31 +482,49 @@ def test_unresolved_scan_can_retry_existing_files_with_the_correct_stage(databas
         )
         findings = client.get(f"/api/v0/runs/{corrected}/findings")
         assert findings.status_code == 200
-        assert findings.json()["summary"]["counts"] == {
+        result = findings.json()
+        assert result["summary"]["counts"] == {
             "verified": 3,
             "discrepancy": 2,
             "unverified": 0,
         }
+        excluded = next(doc for doc in result["documents"] if doc["name"] == "admin-stage-6.docx")
+        assert excluded["decision"]["reason_code"] == "different_stage"
+        assert [
+            evidence["normalized_value"]
+            for evidence in result["evidence"]
+            if evidence["kind"] == "stage"
+            and evidence["id"] in excluded["decision"]["evidence_refs"]
+        ] == ["6"]
+        admin = next(row for row in result["rows"] if row["id"] == "general_admin")
+        assert admin["expected_value"] == "399.12"
 
 
 @pytest.mark.parametrize(
-    ("second_issuer", "second_kind", "expected"),
+    ("first_issuer", "second_issuer", "second_kind", "expected"),
     [
-        ("ООО Бета", "Акт", "399.12"),
-        ("ООО Альфа", "Акт", None),
-        ("ООО Альфа.", "Акт", None),
-        ("ООО «Альфа» (ИНН 7700000000)", "Акт", None),
-        (None, "Акт", None),
-        ("ООО Альфа", "УПД", "399.12"),
+        ("ООО Альфа", "ООО Бета", "Акт", "399.12"),
+        ("ООО Альфа", "ООО Альфа", "Акт", None),
+        ("ООО Альфа", "ООО Альфа.", "Акт", None),
+        ("ООО Альфа", "ООО «Альфа» (ИНН 7700000000)", "Акт", None),
+        ("ООО Альфа", None, "Акт", None),
+        ("ООО Альфа", "ООО Альфа", "УПД", "399.12"),
+        (
+            "ООО Альфа (ИНН 7700000000)",
+            "Общество с ограниченной ответственностью Альфа (ИНН 7700000000)",
+            "Акт",
+            None,
+        ),
+        ("ООО Альфа (ИНН 7700000000)", "ООО Альфа (ИНН 7800000000)", "Акт", "399.12"),
     ],
 )
 def test_equal_primary_numbers_require_compatible_issuer_and_kind(
-    database_url, tmp_path, second_issuer, second_kind, expected
+    database_url, tmp_path, first_issuer, second_issuer, second_kind, expected
 ):
     report, _ = write_reconciliation_case(tmp_path)
     files = []
     for i, (issuer, kind, amount) in enumerate(
-        [("ООО Альфа", "Акт", "200,00"), (second_issuer, second_kind, "199,12")]
+        [(first_issuer, "Акт", "200,00"), (second_issuer, second_kind, "199,12")]
     ):
         source = Document()
         source.add_paragraph(f"{kind} № 17")

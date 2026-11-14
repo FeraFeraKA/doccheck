@@ -52,6 +52,14 @@ _MODEL_UNAVAILABLE = Issue(
     code="v32_model_unavailable",
     message="Локальная Qwen с LoRA недоступна. Проверьте журнал обработчика.",
 )
+_ENCRYPTED_PDF = Issue(
+    code="encrypted_pdf",
+    message="Файл КФЗ защищён паролем. Загрузите доступную копию.",
+)
+_PDF_UNREADABLE = Issue(
+    code="pdf_unreadable",
+    message="Не удалось прочитать PDF КФЗ. Проверьте файл и загрузите доступную копию.",
+)
 _PUBLIC_RUN_FAILURES = {
     error.code: error
     for error in (
@@ -59,6 +67,8 @@ _PUBLIC_RUN_FAILURES = {
         _PDF_SCAN_SCOPE_UNCONFIRMED,
         _SCAN_SCOPE_REQUIRED,
         _MODEL_UNAVAILABLE,
+        _ENCRYPTED_PDF,
+        _PDF_UNREADABLE,
     )
 }
 

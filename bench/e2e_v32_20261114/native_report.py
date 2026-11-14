@@ -122,8 +122,8 @@ def read_native_report(path):
     if text("B6") != "Статья затрат" or text("C6") != "Отчетная сумма, руб.":
         raise ValueError("Unsupported report table headers")
     contract = re.fullmatch(r"Договор\s*№\s*(\S+)", text("A3"))
-    period = re.fullmatch(r"Период:\s*(\d{4}-\d{2}-\d{2})\s*[—–-]\s*(\d{4}-\d{2}-\d{2})\.\s*Этап\s+\d+\.", text("A4"))
-    if not contract or not period or not all(parse_date(value) for value in period.groups()):
+    period = re.fullmatch(r"Период:\s*(\d{4}-\d{2}-\d{2})\s*[—–-]\s*(\d{4}-\d{2}-\d{2})\.\s*Этап\s+(\d+)\.", text("A4"))
+    if not contract or not period or not all(parse_date(value) for value in period.groups()[:2]):
         raise ValueError("Report contract or period is missing/malformed")
     if parse_date(period.group(1)) > parse_date(period.group(2)):
         raise ValueError("Reversed report period")
@@ -145,6 +145,7 @@ def read_native_report(path):
         raise ValueError("Missing report rows or total")
     row_sum = sum((parse_amount(row["reported_amount"]) for row in rows), Decimal("0"))
     return {"contract_number": contract.group(1), "period_start": period.group(1), "period_end": period.group(2),
+            "stage": str(int(period.group(3))),
             "rows": rows, "total": total, "total_agrees_with_rows": row_sum == parse_amount(total["amount"]),
             "source": {"path": str(path), "sha256": hashlib.sha256(raw).hexdigest(), "sheet": "КФЗ",
                        "contract_cell": "КФЗ!A3", "period_cell": "КФЗ!A4"},

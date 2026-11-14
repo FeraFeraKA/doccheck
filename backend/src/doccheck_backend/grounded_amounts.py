@@ -6,11 +6,10 @@ from dataclasses import dataclass
 from decimal import Decimal
 from math import ulp
 from pathlib import Path
-from typing import Literal
 from uuid import UUID
 
 from doccheck_backend.contracts.locators import Locator, PageLocator, SheetLocator, TableCellLocator
-from doccheck_backend.contracts.result import FileFormat, Period
+from doccheck_backend.contracts.result import EvidenceKind, FileFormat, Period
 from doccheck_backend.evidence_binding import ObservationAssertion
 from doccheck_backend.native_observations import NativeDocument, NativeIssue, Observation
 from doccheck_backend.native_reader import _text_amount, read_native_document
@@ -45,15 +44,19 @@ _MONTHS = (
     ("декабрь", "декабря", "декабре"),
 )
 _MONTH = {name: i for i, variants in enumerate(_MONTHS, 1) for name in variants}
-_MONTH_YEAR = rf"({'|'.join(_MONTH)})\s+([0-9]{{4}})(?!\d)(?:\s+(?:года?|г\.))?"
-_MONTH_PERIOD = re.compile(rf"(?:\bпериод\s*:\s*(?:с\s+)?|\bза\s+|\bв\s+){_MONTH_YEAR}", re.I)
+_PERIOD_TITLE = r"(?:^\s*|\|\s*)(?:отч[её]тный\s+)?период\b"
+_PERIOD_LABEL = (
+    rf"{_PERIOD_TITLE}(?:\s+[\w-]+){{0,4}}\s*[:—–-]\s*"
+    rf"|{_PERIOD_TITLE}(?:\s+(?:оказания\s+услуг|выполнения\s+работ))?\s+"
+)
+_MONTH_YEAR = rf"({'|'.join(_MONTH)})\s+([0-9]{{4}})\b(?:\s+(?:года?\b|г\b\.?))?"
+_MONTH_PERIOD = re.compile(rf"(?:(?:{_PERIOD_LABEL})(?:с\s+)?|\bза\s+|\bв\s+){_MONTH_YEAR}", re.I)
 _MONTH_RANGE_END = re.compile(rf"\s*(?:[—–\-/]|\bпо\b|\bдо\b)\s*{_MONTH_YEAR}", re.I)
 _PERIOD_CONTINUATION = re.compile(r"^\s*(?:[—–\-/]|\bпо\b|\bдо\b)", re.I)
-_PERIOD_FIELD = re.compile(r"^(?:отч[её]тный\s+)?период(?:\s+[\w-]+){0,4}\s*:", re.I)
+_PERIOD_FIELD = re.compile(_PERIOD_TITLE, re.I)
 _DAY = r"(?:[0-9]{2}\.[0-9]{2}\.[0-9]{4}|[0-9]{4}-[0-9]{2}-[0-9]{2})"
 _DATE_RANGE = re.compile(
-    rf"(?:^|\|\s*)период(?:\s+(?:оказания\s+услуг|выполнения\s+работ))?\s*:"
-    rf"\s*(?:с\s+)?({_DAY})\s*(?:по|[–—-])\s*({_DAY})\b",
+    rf"(?:{_PERIOD_LABEL})(?:с\s+)?({_DAY})(?:\s+г\.?)?\s*(?:по|до|[–—-])\s*({_DAY})\b",
     re.I,
 )
 _DATE = re.compile(rf"^дата(?:\s+документа)?\s*[:№]?\s*({_DAY})(?:\s*г\.?)?$", re.I)
@@ -61,9 +64,18 @@ _HEADER_DATE = re.compile(
     rf"^(?:акт|счет-акт|счёт-акт|упд)\b[^\n]{{0,72}}?\bот\s+({_DAY})(?:\s*г\.?)?$", re.I
 )
 _CONTRACT_ID = r"[\w]+(?:[/-][\w]+)*"
+_STAGE_FIELD = re.compile(
+    r"^(?:номер\s+)?этап(?:\s+работ)?(?:\s*[:|—–-]\s*|\s+(?=№|[0-9])|(?=№|$))(.*)$",
+    re.I,
+)
+_STAGE_VALUE = re.compile(r"(?:№\s*)?0*([1-9][0-9]*)[.]?")
+_STAGE_CONTINUATION = re.compile(r"^(?:[,;/—–-]|и\s+|по\s+|до\s+)\s*(?:№\s*)?[0-9]", re.I)
+_CONTRACT_TYPE = r"(?:подряда|поставки|аренды|купли-продажи|оказания\s+услуг|выполнения\s+работ)"
+_CONTRACT_MARKER = r"(?:№\s*|N[eoо°º]\.?\s+)"
 _CONTRACT = re.compile(
-    rf"^(?:(?:по\s+|основание\s*:?\s*)?договор(?:у)?|контракт)(?=\s|[:№])"
-    rf"\s*:?\s*(?:№\s*|N[eoо°º]\s+(?=[\w/-]*[0-9]))?({_CONTRACT_ID})(?=$|[\s,.;|])",
+    rf"^(?:(?:по\s+|основание\s*:?\s*)?договор(?:у)?|контракт)(?=\s|[:№])\s*:?\s*"
+    rf"(?:(?:{_CONTRACT_TYPE}\s+)?{_CONTRACT_MARKER}|(?=[\w/-]*[0-9]))"
+    rf"({_CONTRACT_ID})(?=$|[\s,.;|])",
     re.I,
 )
 _BASIS = re.compile(r"^основание\s*:?\s*([0-9]+(?:/[0-9]+){2}-[0-9]+)$", re.I)
@@ -97,6 +109,13 @@ _OTHER_CURRENCY = re.compile(
 _WHOLE_RUBLES = Decimal("0.01")
 _PDF_OCR_ISSUES = {"clipped_pdf_text", "no_native_text"}
 _ISSUER_REQUISITES = re.compile(r"\s*[,;(]?\s*(?:инн|кпп|огрн(?:ип)?)\s*(?:[:№]\s*)?[0-9].*$")
+_ISSUER_TAX_ID = re.compile(r"\bинн\b\s*(?:[:№]\s*)?([0-9]{12}|[0-9]{10})(?![0-9])")
+_ISSUER_FORMS = {
+    "общество с ограниченной ответственностью": "ооо",
+    "публичное акционерное общество": "пао",
+    "акционерное общество": "ао",
+    "индивидуальный предприниматель": "ип",
+}
 
 
 @dataclass(frozen=True)
@@ -113,6 +132,8 @@ class GroundedDocument:
     identity: str | None
     document_kind: str | None
     issuer_key: str | None
+    issuer_tax_id: str | None
+    stage_uncertain: bool
 
 
 def _norm(text: str) -> str:
@@ -156,7 +177,7 @@ def _read_observations(
                 observations.append(observation)
         if len(observations) == before:
             issues.append(NativeIssue("no_addressed_source_text", page=page))
-    # Retain weak readings only for a second pass that can veto a confident category.
+    # Weak readings can veto an assertion without becoming evidence themselves.
     return NativeDocument(tuple(observations), tuple(issues)), "ocr", tuple(potential)
 
 
@@ -170,6 +191,39 @@ def _following(label: Observation, value: Observation) -> bool:
         and second.bbox is not None
         and 0 <= second.bbox[1] - first.bbox[1] <= 0.10
     )
+
+
+def _stages(
+    observations: tuple[Observation, ...],
+) -> tuple[list[tuple[str, Observation]], bool]:
+    stages = []
+    unresolved = False
+    for index, observation in enumerate(observations):
+        if not (field := _STAGE_FIELD.fullmatch(observation.raw_text.strip())):
+            continue
+        value = field[1].strip()
+        source = observation
+        if index + 1 < len(observations):
+            following = observations[index + 1]
+            label_cell, value_cell = observation.locator, following.locator
+            adjacent_cells = (
+                isinstance(label_cell, TableCellLocator)
+                and isinstance(value_cell, TableCellLocator)
+                and (label_cell.table, label_cell.row) == (value_cell.table, value_cell.row)
+                and label_cell.cell + 1 == value_cell.cell
+            )
+            if adjacent_cells or label_cell == value_cell or _following(observation, following):
+                next_text = following.raw_text.strip()
+                if value in {"", "№"}:
+                    value, source = next_text, following
+                elif _STAGE_CONTINUATION.match(next_text):
+                    unresolved = True
+                    continue
+        if match := _STAGE_VALUE.fullmatch(value):
+            stages.append((match[1], source))
+        else:
+            unresolved = True
+    return stages, unresolved
 
 
 def _contracts(
@@ -198,6 +252,16 @@ def _periods(observations: tuple[Observation, ...]) -> list[tuple[Period, Observ
     unresolved_period = False
     for i, observation in enumerate(observations):
         raw = observation.raw_text.strip()
+        # Separate OCR lines do not share a single exact address for both bounds.
+        following = observations[i + 1] if i + 1 < len(observations) else None
+        if (
+            following
+            and _following(observation, following)
+            and _PERIOD_CONTINUATION.match(following.raw_text.strip())
+            and (_PERIOD_FIELD.search(raw) or _MONTH_PERIOD.search(raw))
+        ):
+            unresolved_period = True
+            continue
         if match := _DATE_RANGE.search(raw):
             low, high = (normalize_document_date(value).value for value in match.groups())
             if low and high and low <= high:
@@ -224,7 +288,7 @@ def _periods(observations: tuple[Observation, ...]) -> list[tuple[Period, Observ
                     end=f"{last_year:04}-{last_month:02}-{monthrange(last_year, last_month)[1]:02}",
                 )
                 periods.append((period, observation))
-        elif _PERIOD_FIELD.match(raw):
+        elif _PERIOD_FIELD.search(raw.translate(_OCR_LABEL_MAP)):
             unresolved_period = True
         if match := _DATE.fullmatch(raw) or _HEADER_DATE.fullmatch(raw):
             if value := normalize_document_date(match[1]).value:
@@ -304,11 +368,9 @@ def _money(
         parts = [o for o in native.observations if o.locator in total.component_locators]
         return total, parts
     candidates = []
-    has_final_label = False
     for obs in native.observations:
         raw = obs.raw_text.strip()
         if value_label := _FINAL_VALUE.match(raw):
-            has_final_label = True
             value_text = raw[value_label.end() :]
             amount, ambiguous = _text_amount(value_text)
             if ambiguous:
@@ -332,7 +394,7 @@ def _money(
             else:
                 return None, []
         elif _FINAL_CELL.fullmatch(raw):
-            has_final_label = True
+            found = False
             for value in native.observations:
                 if not _total_column(obs, value):
                     continue
@@ -343,9 +405,12 @@ def _money(
                     return None, []
                 if amount is not None:
                     candidates.append(Observation(value.raw_text, value.locator, amount, "total"))
+                    found = True
+            if not found:
+                return None, []
         elif _FINAL_LINE.match(raw):
             return None, []
-    if has_final_label:
+    if candidates:
         # The explicit final line takes priority over an intermediate amount.
         unique = {item.locator.model_dump_json(): item for item in candidates}
         return (next(iter(unique.values())), []) if len(unique) == 1 else (None, [])
@@ -364,11 +429,24 @@ def _money(
             and o.locator.row == 1
             and _AMOUNT_CELL_HEADER.fullmatch(o.raw_text.strip())
         }
+        money_tables = {table for table, _ in headings}
+        populated_rows = {
+            (o.locator.table, o.locator.row)
+            for o in native.observations
+            if isinstance(o.locator, TableCellLocator)
+            and o.locator.table in money_tables
+            and o.locator.row > 1
+            and o.raw_text.strip()
+        }
+        # Without a printed total the only supported table layout is one
+        # populated charge row with one unambiguous ruble cell.
+        if len(populated_rows) != 1 or len(headings) != 1:
+            return None, []
         candidates = [
             o
             for o in native.observations
             if isinstance(o.locator, TableCellLocator)
-            and o.locator.row > 1
+            and (o.locator.table, o.locator.row) in populated_rows
             and (o.locator.table, o.locator.cell) in headings
             and o.amount is not None
         ]
@@ -465,7 +543,8 @@ def ground_document(
         if template
         else _category(observations, text, ocr=method == "ocr")
     )
-    if category and potential and len(potential) > len(observations):
+    has_weak_ocr = len(potential) > len(observations)
+    if category and has_weak_ocr:
         possible, _ = _category(potential, "\n".join(item.raw_text for item in potential), ocr=True)
         if possible != category:
             category, article_evidence = None, []
@@ -481,7 +560,7 @@ def ground_document(
     assertions = []
 
     def add(
-        kind: Literal["amount", "article", "contract", "period", "document_identity"],
+        kind: EvidenceKind,
         value: str | Period,
         observation: Observation,
     ) -> None:
@@ -506,8 +585,24 @@ def ground_document(
         if (value := normalize_contract_number(raw).value)
     ]
     period_hits = _periods(observations)
-    contracts = {value for value, _ in contract_hits}
+    stage_hits, stage_uncertain = _stages(observations)
+    if has_weak_ocr:
+        possible_stages, unresolved_stage = _stages(potential)
+        stage_uncertain |= unresolved_stage or {stage for stage, _ in possible_stages} != {
+            stage for stage, _ in stage_hits
+        }
     periods = {(p.start, p.end) for p, _ in period_hits}
+    if has_weak_ocr and {(p.start, p.end) for p, _ in _periods(potential)} != periods:
+        periods.clear()
+    contracts = {value for value, _ in contract_hits}
+    if has_weak_ocr:
+        possible_contracts = {
+            value
+            for raw, _ in _contracts(potential, template=False)
+            if (value := normalize_contract_number(raw).value)
+        }
+        if possible_contracts != contracts:
+            contracts.clear()
     contract = next(iter(contracts)) if len(contracts) == 1 else None
     period = period_hits[0][0] if len(periods) == 1 else None
     if contract:
@@ -516,6 +611,8 @@ def ground_document(
     if period:
         for value, o in period_hits:
             add("period", value, o)
+    for value, o in stage_hits:
+        add("stage", value, o)
     if category:
         code, _ = ARTICLES[category]
         for o in article_evidence:
@@ -585,8 +682,14 @@ def ground_document(
         identity = None
 
     issuer = parsed["issuer_key"]
+    tax_ids = set(_ISSUER_TAX_ID.findall(issuer or ""))
+    issuer_tax_id = next(iter(tax_ids)) if len(tax_ids) == 1 else None
     if issuer:
         issuer = _ISSUER_REQUISITES.sub("", issuer).strip(" .,:;«»\"'()")
+        for name, short in _ISSUER_FORMS.items():
+            if issuer.startswith(name + " "):
+                issuer = short + issuer[len(name) :]
+                break
     return GroundedDocument(
         tuple(assertions),
         category,
@@ -600,4 +703,6 @@ def ground_document(
         identity,
         parsed["document_kind"],
         issuer or None,
+        issuer_tax_id,
+        stage_uncertain,
     )

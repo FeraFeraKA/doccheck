@@ -15,7 +15,7 @@ RowStatus = Literal["verified", "discrepancy", "unverified"]
 FileFormat = Literal["pdf", "png", "xlsx", "docx"]
 FileDecisionState = Literal["include", "exclude", "needs_review", "parse_error"]
 EvidenceKind = Literal[
-    "reported_value", "amount", "contract", "period", "article", "document_identity"
+    "reported_value", "amount", "contract", "period", "article", "document_identity", "stage"
 ]
 _DECIMAL_PATTERN = re.compile(r"^-?[0-9]+(?:\.[0-9]+)?(?![\s\S])")
 _RUB_PATTERN = re.compile(r"^(?!-0+\.00(?![\s\S]))-?[0-9]+\.[0-9]{2}(?![\s\S])")
@@ -27,7 +27,7 @@ _DECIMAL_FIELDS = ("reported_value", "expected_value", "observed_evidence_sum", 
 _COMPLETED_JOB_STATES = ("completed", "completed_with_issues")
 _UNSUPPORTED_FORMAT = "unsupported_format"
 PageLine = tuple[str, int, int]
-ReadingKind = Literal["numeric", "contract", "period", "article", "document_identity"]
+ReadingKind = Literal["numeric", "contract", "period", "article", "document_identity", "stage"]
 DateBounds = tuple[str | None, str | None]
 Reading = tuple[str | None, Decimal | str | DateBounds]
 Digest = Annotated[
