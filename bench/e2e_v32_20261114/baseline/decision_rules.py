@@ -1,0 +1,219 @@
+"""Deterministic document reconciliation. No model calls or oracle lookups.
+
+The input consists exclusively of extracted facts and source-file identifiers.
+Missing or ambiguous supporting facts produce ``unverified``, not a fabricated
+financial discrepancy. Money is never evaluated with binary floating point.
+"""
+
+from __future__ import annotations
+
+from collections import defaultdict
+from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
+import re
+import unicodedata
+
+
+CATEGORIES = {"production_overhead", "general_admin", "payroll", "insurance", "other"}
+
+
+def normalize_identifier(value):
+    if value is None:
+        return None
+    # NFKC turns № into "No", so strip the label before Unicode normalization.
+    raw = re.sub(r"^(?:№|номер\s*)\s*", "", str(value).strip(), flags=re.IGNORECASE)
+    text = unicodedata.normalize("NFKC", raw).strip()
+    if not text or text.casefold() in {"null", "none", "unknown", "неизвестно"}:
+        return None
+    text = text.translate(str.maketrans({"–": "-", "—": "-", "−": "-", "‑": "-"}))
+    text = re.sub(r"^(?:№|номер\s*)\s*", "", text, flags=re.IGNORECASE)
+    return re.sub(r"\s+", "", text).casefold()
+
+
+def parse_amount(value):
+    """Normalize explicit decimal notation; never guess a missing digit/decimal."""
+    if value is None or isinstance(value, bool):
+        return None
+    text = unicodedata.normalize("NFKC", str(value)).strip()
+    text = re.sub(r"\s+", "", text)
+    text = re.sub(r"(?:руб\.?|рублей|rub|₽)$", "", text, flags=re.IGNORECASE)
+    if "," in text and "." in text:
+        # Accept unambiguous grouped numbers such as 1,234.56 or 1.234,56.
+        decimal_separator = "," if text.rfind(",") > text.rfind(".") else "."
+        group_separator = "." if decimal_separator == "," else ","
+        integer, fraction = text.rsplit(decimal_separator, 1)
+        if not re.fullmatch(r"[+-]?\d{1,3}(?:" + re.escape(group_separator) + r"\d{3})+", integer):
+            return None
+        if not re.fullmatch(r"\d{1,2}", fraction):
+            return None
+        text = integer.replace(group_separator, "") + "." + fraction
+    elif "," in text:
+        text = text.replace(",", ".")
+    if not re.fullmatch(r"[+-]?\d+(?:\.\d+)?", text):
+        return None
+    try:
+        amount = Decimal(text)
+    except InvalidOperation:
+        return None
+    return amount if amount.is_finite() else None
+
+
+def parse_date(value):
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if value is None:
+        return None
+    text = str(value).strip()
+    for fmt in ("%Y-%m-%d", "%d.%m.%Y", "%d/%m/%Y", "%d-%m-%Y"):
+        try:
+            return datetime.strptime(text, fmt).date()
+        except ValueError:
+            pass
+    return None
+
+
+def normalize_category(value):
+    text = str(value).strip().casefold() if value is not None else None
+    return text if text in CATEGORIES else None
+
+
+def money_string(value):
+    if value is None:
+        return None
+    # This is display formatting only; comparison uses the exact Decimal value.
+    return format(value, ".2f") if value == value.quantize(Decimal("0.01")) else format(value, "f")
+
+
+def extract_facts(document):
+    facts = document.get("prediction", document.get("fields", document))
+    return facts if isinstance(facts, dict) else {}
+
+
+def document_interval(facts):
+    start, end = parse_date(facts.get("period_start")), parse_date(facts.get("period_end"))
+    explicit_period = facts.get("period_start") is not None or facts.get("period_end") is not None
+    if explicit_period:
+        if start is None or end is None or end < start:
+            return None, None, "invalid_or_incomplete_period"
+        return start, end, None
+    point = parse_date(facts.get("date"))
+    return (point, point, None) if point else (None, None, "date_and_period_missing")
+
+
+def reconcile(documents, report_rows, contract_number, period_start, period_end):
+    """Return source-backed category totals/statuses, with conservative abstention.
+
+    ``documents``: list of {id, prediction:{...}, source_hash?}; duplicate id/hash
+    occurrences are skipped. A business duplicate uses contract + document number
+    + covered period/date + optional counterparty. Conflicting duplicate values
+    make both affected categories unverified. The caller must not supply labels
+    or the answer key as extracted facts.
+    """
+    target = normalize_identifier(contract_number)
+    window_start, window_end = parse_date(period_start), parse_date(period_end)
+    if not target or not window_start or not window_end or window_end < window_start:
+        raise ValueError("A valid target contract and closed date interval are required")
+
+    known = defaultdict(list)
+    uncertain = defaultdict(list)
+    global_uncertain = []
+    exclusions, duplicates = [], []
+    seen_sources, seen_business = {}, {}
+    identity_warnings = []
+
+    def abstain(doc_id, category, reason):
+        item = {"id": doc_id, "reason": reason}
+        (uncertain[category] if category else global_uncertain).append(item)
+
+    for index, document in enumerate(documents):
+        doc_id = str(document.get("id", f"document-{index}"))
+        facts = extract_facts(document)
+        category = normalize_category(facts.get("category"))
+        if document.get("error"):
+            abstain(doc_id, category, "extraction_error")
+            continue
+        source_key = ("hash", document["source_hash"]) if document.get("source_hash") else ("id", doc_id)
+        if source_key in seen_sources:
+            duplicates.append({"id": doc_id, "duplicate_of": seen_sources[source_key], "basis": source_key[0]})
+            continue
+        seen_sources[source_key] = doc_id
+
+        contract = normalize_identifier(facts.get("contract_number"))
+        if contract is None:
+            abstain(doc_id, category, "contract_missing")
+            continue
+        if contract != target:
+            exclusions.append({"id": doc_id, "reason": "different_contract"})
+            continue
+        start, end, interval_error = document_interval(facts)
+        if interval_error:
+            abstain(doc_id, category, interval_error)
+            continue
+        if end < window_start or start > window_end:
+            exclusions.append({"id": doc_id, "reason": "outside_period"})
+            continue
+        if start < window_start or end > window_end:
+            abstain(doc_id, category, "period_partially_overlaps_unallocatable_amount")
+            continue
+        if category is None:
+            abstain(doc_id, None, "category_missing_or_invalid")
+            continue
+        amount = parse_amount(facts.get("amount"))
+        if amount is None:
+            abstain(doc_id, category, "amount_missing_or_invalid")
+            continue
+        number = normalize_identifier(facts.get("doc_number"))
+        item = {"id": doc_id, "amount": amount, "category": category,
+                "period_start": start.isoformat(), "period_end": end.isoformat()}
+        if number:
+            key = (contract, number, start, end, normalize_identifier(facts.get("counterparty")))
+            previous = seen_business.get(key)
+            if previous:
+                duplicates.append({"id": doc_id, "duplicate_of": previous["id"], "basis": "business_identity"})
+                if previous["amount"] != amount or previous["category"] != category:
+                    abstain(doc_id, category, "conflicting_duplicate")
+                    abstain(previous["id"], previous["category"], "conflicting_duplicate")
+                continue
+            seen_business[key] = item
+        else:
+            # Missing number alone does not invalidate a clear payroll period.
+            # Exact-byte/file-ID duplicates are still detected; semantic duplicate
+            # coverage is explicitly reported as incomplete.
+            identity_warnings.append({"id": doc_id, "reason": "business_doc_number_missing"})
+        known[category].append(item)
+
+    rows = []
+    for report_row in report_rows:
+        category = normalize_category(report_row.get("category", report_row.get("article")))
+        reported = parse_amount(report_row.get("reported_amount", report_row.get("amount")))
+        supporting = known.get(category, [])
+        partial = sum((item["amount"] for item in supporting), Decimal("0"))
+        reasons = list(global_uncertain) + list(uncertain.get(category, []))
+        if category is None:
+            reasons.append({"reason": "report_category_missing_or_invalid"})
+        if reported is None:
+            reasons.append({"reason": "reported_amount_missing_or_invalid"})
+        if not supporting:
+            reasons.append({"reason": "no_supporting_documents"})
+        verified = not reasons
+        status = "unverified" if not verified else ("correct" if reported == partial else "incorrect")
+        rows.append({
+            "category": category,
+            "reported_amount": money_string(reported),
+            "expected_amount": money_string(partial) if verified else None,
+            "partial_amount": money_string(partial),
+            "delta": money_string(reported - partial) if verified else None,
+            "status": status,
+            "source_ids": [item["id"] for item in supporting],
+            "reasons": reasons,
+        })
+    return {
+        "rows": rows, "excluded_documents": exclusions, "duplicates": duplicates,
+        "identity_warnings": identity_warnings,
+        "limitations": [
+            "Partial missing evidence cannot always be inferred from an incomplete set; no oracle completeness flag is used.",
+            "Business duplicate identity assumes document number, contract, date/period and optional counterparty identify a document.",
+        ],
+    }
