@@ -4,7 +4,7 @@ import pytest
 
 from doccheck_backend.contracts import CheckJob, CheckResult
 from doccheck_backend.contracts.result import ResultRow
-from doccheck_backend.result_summary import build_summary
+from doccheck_backend.result_summary import build_rub_coverage, build_summary
 
 _FIXTURE = Path(__file__).resolve().parents[2] / "contracts/check-result.v1.synthetic.json"
 
@@ -120,3 +120,21 @@ def test_summary_counts_rows_and_preserves_one_issue_for_two_linked_rows(
     assert "заявление пользователя" in summary.conclusion
     assert "Первичных замечаний 2." in summary.conclusion
     assert original.delta is not None and original.delta not in summary.conclusion
+
+
+def test_rub_coverage_uses_kfz_values_and_never_counts_derived_totals(result: CheckResult) -> None:
+    original, _ = result.rows
+    result.rows.append(
+        original.model_copy(update={"id": "aggregate", "label": "Итого", "derived_mismatch": True})
+    )
+    coverage = build_rub_coverage(result)
+    assert coverage is not None
+    assert coverage.model_dump() == {
+        "total": "150.50",
+        "verified": None,
+        "discrepancy": "150.50",
+        "unverified": "0.00",
+        "shares": {"discrepancy": "100.0", "unverified": "0.0"},
+    }
+    result.rows[-1] = original.model_copy(update={"id": "same-address"})
+    assert build_rub_coverage(result) is None

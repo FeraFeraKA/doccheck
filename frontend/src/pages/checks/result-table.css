@@ -7,21 +7,20 @@
 }
 
 .result-reconciliation .result-table-pane .reconcile-filters {
-  gap: .5rem;
-  margin-block: .5rem;
+  gap: .25rem;
+  margin: .5rem 0;
 }
 
 .result-reconciliation .result-table-pane .reconcile-filters button {
-  padding: .375rem .65rem;
-  border: 1px solid var(--result-line);
+  padding: .3rem .5rem;
+  border: 1px solid transparent;
 }
 
 .result-reconciliation .result-table-pane .reconcile-filters button > span {
   margin-inline-start: .25rem;
-  padding: .075rem .25rem;
-  background: var(--result-soft);
-  border-radius: .25rem;
 }
+
+.result-reconciliation .result-table-pane .reconcile-search { margin-inline: 0; }
 
 .result-reconciliation .result-table-pane .reconcile-search input {
   min-width: 0;
@@ -29,16 +28,26 @@
 
 .result-reconciliation .result-table-pane .reconcile-table {
   width: 100%;
-  min-width: 36.25rem;
+  min-width: 660px;
 }
 
-.result-reconciliation .result-table-pane .reconcile-table tbody tr:not(.source-subrow) td:nth-child(n+2):nth-child(-n+5) {
+.result-reconciliation .result-table-pane .reconcile-table tbody tr:not(.source-subrow) td:nth-child(n+2):nth-child(-n+4) {
   white-space: nowrap;
 }
 
 .result-reconciliation .result-table-pane .reconcile-table th:first-child {
+  width: 25%;
   min-width: 10rem;
 }
+
+.result-reconciliation .kfz-result-table th:nth-child(n+2):nth-child(-n+4) { width: 13%; }
+.result-reconciliation .kfz-result-table th:nth-child(5) { width: 65px; text-align: center; }
+.result-reconciliation .kfz-result-table th:last-child { text-align: left; }
+.result-reconciliation .kfz-result-table .expected-cell small { display: block; white-space: normal; }
+.result-reconciliation .result-table-pane .kfz-result-table tbody td:nth-child(2) { background: #f1f6f4; }
+.result-reconciliation .result-table-pane .kfz-result-table tbody td:nth-child(3) { background: #e3f3ec; }
+.result-reconciliation .result-table-pane .kfz-result-table [data-selected='true'] td:nth-child(2) { background: #e8f1ed; }
+.result-reconciliation .result-table-pane .kfz-result-table [data-selected='true'] td:nth-child(3) { background: #d6ebe1; }
 
 .result-reconciliation .result-table-pane .reconcile-table tbody tr:not(.source-subrow):hover td {
   box-shadow: inset 0 0 0 1000px #16373507;
@@ -48,7 +57,7 @@
   align-items: flex-start;
   gap: .5rem;
   padding: .65rem .5rem .1rem;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .result-reconciliation .indicator-chevron {
@@ -88,17 +97,22 @@
 
 .result-reconciliation .indicator-documents {
   display: grid;
-  gap: .5rem;
+  gap: 0;
   margin: 0;
   padding: 0;
+  border: 1px solid var(--result-line);
+  border-radius: .5rem;
   list-style: none;
 }
 
-.result-reconciliation .indicator-documents > li {
-  border: 1px solid var(--result-line);
-  border-radius: .5rem;
-  padding: .625rem;
-}
+.result-reconciliation .indicator-documents > li { padding: .5rem .75rem; }
+.result-reconciliation .indicator-documents > li + li { border-top: 1px solid var(--result-line); }
+
+.result-reconciliation .indicator-component-document { text-align: start; color: var(--result-primary); }
+.result-reconciliation .indicator-component-document:hover { text-decoration: underline; }
+.result-reconciliation .indicator-component-details { margin-top: .25rem; font-size: .75rem; color: var(--result-secondary); }
+.result-reconciliation .indicator-component-details summary { cursor: pointer; }
+.result-reconciliation .indicator-component-details[open] summary { margin-bottom: .25rem; }
 
 .result-reconciliation .indicator-amount,
 .result-reconciliation .indicator-addresses button,
@@ -140,3 +154,44 @@
     padding: .75rem;
   }
 }
+
+.result-reconciliation .reconcile-table .indicator-status-cell {
+  width: 3rem;
+  text-align: center;
+}
+
+.result-reconciliation .indicator-status-cell .row-status {
+  position: relative;
+  width: 1.125rem;
+}
+
+.indicator-status-label {
+  position: absolute;
+  z-index: 2;
+  bottom: calc(100% + .25rem);
+  right: 0;
+  padding: .25rem .375rem;
+  border-radius: .25rem;
+  color: white;
+  background: #163735;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.row-status:hover .indicator-status-label,
+.row-status:focus .indicator-status-label { opacity: 1; }
+
+.result-reconciliation .reconcile-table .indicator-explanation {
+  min-width: 10rem;
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.indicator-explanation button {
+  color: var(--result-primary);
+  text-align: start;
+  margin-top: .25rem;
+}
+.indicator-explanation button:hover { text-decoration: underline; }

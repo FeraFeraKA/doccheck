@@ -24,7 +24,7 @@ test('synthetic document decisions, addresses and row links work without the doc
   await filters.getByRole('button', { name: 'Все (4)' }).click();
   const file = table.getByRole('button', { name: 'synthetic-ledger.xlsx', exact: true });
   await file.press('Enter');
-  const dialog = page.getByRole('dialog', { name: 'Источник документа' });
+  const dialog = page.getByLabel('Источник документа', { exact: true }).and(page.locator('.source-workspace-panel[open]'));
   await expect(dialog.getByText('Оригинал в готовом примере недоступен.')).toBeVisible();
   await dialog.getByRole('combobox', { name: 'Адрес доказательства' }).selectOption('amount-2');
   await expect(dialog.getByRole('paragraph').filter({ hasText: 'Лист «Синтетика», C7' })).toBeVisible();
@@ -72,7 +72,7 @@ test('stored exception without an address requests only its own original', async
   await expect(table.getByRole('link', { name: 'Синтетическая статья B' })).toHaveCount(1);
   const file = table.getByRole('button', { name: example.result.documents[3].name });
   await file.click();
-  const dialog = page.getByRole('dialog', { name: 'Источник документа' });
+  const dialog = page.getByLabel('Источник документа', { exact: true }).and(page.locator('.source-workspace-panel[open]'));
   await expect(dialog.getByText('Адрес фрагмента отсутствует.')).toBeVisible();
   await expect(dialog.getByRole('alert')).toBeVisible();
   expect([...new Set(originals)]).toEqual([`/api/v0/runs/${id}/documents/unreadable`]);
@@ -113,4 +113,50 @@ test('reading filters separate partial, pending and legacy states without changi
   await expect(partial.getByText('Прочитано частично')).toBeVisible();
   await expect(partial.getByText('Включён', { exact: true })).toBeVisible();
   await expect(table.getByText('Не удалось прочитать')).toBeVisible();
+});
+
+test('diagnostics return keyboard focus and the documents route restores selected evidence', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/checks/synthetic-example');
+  const diagnostics = page.getByRole('region', { name: 'Дополнительные проверки' });
+  const excludedDocument = diagnostics.getByRole('button', { name: 'synthetic-ledger-copy.xlsx' });
+  const source = page.getByRole('region', { name: 'Источник документа', exact: true });
+  await excludedDocument.press('Enter');
+  await expect(source.getByLabel('Документы комплекта')).toHaveValue('ledger-copy');
+  await page.keyboard.press('Escape');
+  await expect(excludedDocument).toBeFocused();
+
+  await page.goto('/checks/synthetic-example/documents?document=report&evidence=report-a');
+  const documents = source.getByLabel('Документы комплекта');
+  await expect(documents).toHaveValue('report');
+  await expect(page.getByRole('button', { name: 'Скрыть источник документа' })).toBeFocused();
+  await documents.selectOption('ledger');
+  await source.getByLabel('Адрес доказательства').selectOption('amount-2');
+  await expect(page).toHaveURL(/document=ledger&evidence=amount-2/);
+  await page.reload();
+  await expect(documents).toHaveValue('ledger');
+  await expect(source.getByLabel('Адрес доказательства')).toHaveValue('amount-2');
+  await page.keyboard.press('Escape');
+  await expect(page).toHaveURL(/\/documents$/);
+});
+
+test('a distinct primary issue remains visible beside the related file error', async ({ page }) => {
+  const id = 'diagnostic-issue';
+  const result = example.result;
+  const detail = 'Проверьте наличие читаемого скана в новом комплекте.';
+  await page.route(`**/api/v0/runs/${id}`, (route) => route.fulfill({ json: {
+    run_id: id, status: 'completed_with_issues', created_at: '2026-11-14T00:00:00Z', error: null, progress: { processed_documents: 4, total_documents: 4 },
+  } }));
+  await page.route(`**/api/v0/runs/${id}/findings`, (route) => route.fulfill({ json: {
+    ...result, run_id: id, summary: {
+      ...result.summary, primary_issues: [...result.summary.primary_issues, {
+        id: 'extra-scan-diagnostic', code: 'request_rescan', message: detail,
+        evidence_refs: [], file_error_refs: ['scan-read-error'],
+      }],
+    },
+  } }));
+  await page.goto('/checks/' + id);
+  const diagnostics = page.getByRole('region', { name: 'Дополнительные проверки' });
+  await expect(diagnostics.getByText(detail, { exact: true })).toBeVisible();
+  await expect(diagnostics.getByText('Ошибка чтения файла', { exact: true })).toBeVisible();
 });

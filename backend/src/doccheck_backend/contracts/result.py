@@ -20,6 +20,8 @@ EvidenceKind = Literal[
 _DECIMAL_PATTERN = re.compile(r"^-?[0-9]+(?:\.[0-9]+)?(?![\s\S])")
 _RUB_PATTERN = re.compile(r"^(?!-0+\.00(?![\s\S]))-?[0-9]+\.[0-9]{2}(?![\s\S])")
 DecimalText = Annotated[str, StringConstraints(strict=True, pattern=_DECIMAL_PATTERN)]
+RubAmount = Annotated[str, StringConstraints(strict=True, pattern=_RUB_PATTERN)]
+Percent = Annotated[str, StringConstraints(strict=True, pattern=r"^(?:100\.0|[0-9]{1,2}\.[0-9])$")]
 _RUB_SCHEMA = {"type": "string", "pattern": _RUB_PATTERN.pattern}
 _DECIMAL_FIELDS = ("reported_value", "expected_value", "observed_evidence_sum", "delta")
 _COMPLETED_JOB_STATES = ("completed", "completed_with_issues")
@@ -468,6 +470,7 @@ class ResultRow(ContractModel):
     reasons: list[Reason]
     root_issue_id: Text | None
     derived_mismatch: StrictBool
+    is_aggregate: StrictBool | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @model_validator(mode="after")
     def check_totals(self) -> Self:
@@ -522,10 +525,21 @@ class PrimaryIssue(Reason):
     file_error_refs: list[Text] = Field(default_factory=list)
 
 
+class RubCoverage(ContractModel):
+    """Amounts reported in the KFZ, in RUB, for the additive rows with known values."""
+
+    total: RubAmount
+    verified: RubAmount | None
+    discrepancy: RubAmount | None
+    unverified: RubAmount | None
+    shares: dict[RowStatus, Percent] | None
+
+
 class Summary(ContractModel):
     counts: StatusCounts
     primary_issues: list[PrimaryIssue]
     conclusion: Text
+    rub_coverage: RubCoverage | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class CheckResult(ContractModel):
@@ -551,6 +565,7 @@ class CheckResult(ContractModel):
     schema_version: Literal[RESULT_SCHEMA_VERSION]
     run_id: Text
     synthetic: StrictBool
+    report_number: Text | None = Field(default=None, exclude_if=lambda value: value is None)
     scope: Scope
     versions: Versions
     documents: list[SourceDocument]

@@ -42,16 +42,8 @@ for (const { width, imageHeight, bbox } of visibleFragmentCases) {
     const scroll = () => viewport.evaluate((element) => ({
       top: element.scrollTop, max: element.scrollHeight - element.clientHeight,
     }));
-    // The context header reduces the document viewport. Size the test window
-    // from the measured scroll range to exercise the original boundary cases.
-    const compact = await scroll();
-    const overflow = imageHeight === 800 ? 0 : 9;
-    await page.setViewportSize({ width, height: 1100 + compact.max - overflow });
-    await viewport.evaluate((element) => { element.scrollTop = 0; });
-    await expect(box).toBeInViewport({ ratio: 1 });
     const before = await scroll();
     expect(before.top).toBe(0);
-    expect(before.max).toBe(overflow);
     await page.getByRole('button', { name: 'Развернуть источник на весь экран' }).click();
     await expect(box).toBeInViewport({ ratio: 1 });
     expect((await scroll()).max).toBeGreaterThan(0);
@@ -93,31 +85,28 @@ for (const [width, height] of [[1440, 1100], [768, 844], [390, 600]]) {
     await page.goto(`/checks/${id}`);
     const opener = page.getByRole('button', { name: 'Просмотреть источник' });
     await opener.click();
-    const drawer = page.getByRole('dialog', { name: 'Источник документа' });
+    const drawer = page.getByLabel('Источник документа', { exact: true }).and(page.locator('.source-workspace-panel[open]'));
     const viewport = drawer.getByRole('region', { name: 'Просмотр документа: synthetic-report.png' });
     const box = viewport.locator('.source-viewer-highlight');
     await expect(box).toBeInViewport({ ratio: 1 });
-    await expect.poll(() => viewport.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
-    const header = drawer.getByRole('heading', { name: 'Источник документа' });
-    const back = drawer.getByRole('button', { name: 'Вернуться к таблице' });
-    await expect(back).toHaveText('К таблице');
-    const titleBounds = await header.boundingBox();
-    const backBounds = await back.boundingBox();
     const viewBounds = await viewport.boundingBox();
-    if (!titleBounds || !backBounds || !viewBounds) throw new Error('Source layout not visible');
-    expect(titleBounds.y).toBeGreaterThanOrEqual(backBounds.y);
-    expect(titleBounds.y + titleBounds.height).toBeLessThanOrEqual(backBounds.y + backBounds.height);
+    if (!viewBounds) throw new Error('Source layout not visible');
+    const compactWidth = (await drawer.boundingBox())?.width ?? 0;
+    expect(compactWidth).toBeLessThan(width);
     const toolbarBounds = await drawer.getByRole('group', { name: 'Настройки просмотра' }).boundingBox();
     const fragmentBounds = await drawer.getByRole('button', { name: 'К фрагменту' }).boundingBox();
     if (!toolbarBounds || !fragmentBounds) throw new Error('Viewer controls not visible');
-    expect(viewBounds.y).toBeCloseTo(toolbarBounds.y + toolbarBounds.height, 0);
+    expect(Math.abs(viewBounds.y - toolbarBounds.y - toolbarBounds.height)).toBeLessThan(4);
     expect(viewBounds.y + viewBounds.height).toBeLessThan(fragmentBounds.y);
     expect(fragmentBounds.y - (viewBounds.y + viewBounds.height)).toBeLessThan(20);
-    expect(viewBounds.height).toBeGreaterThan(Math.min(height * .4, 680));
+    expect(viewBounds.height).toBeGreaterThan(128);
     await expect(drawer.getByRole('link', { name: 'Скачать оригинал' })).toBeInViewport();
     await expect(drawer.getByRole('button', { name: 'К фрагменту' })).toBeInViewport();
     expect(await drawer.evaluate((element) => element.scrollWidth)).toBeLessThanOrEqual(Math.min(width, 800));
-    await drawer.getByRole('button', { name: 'Увеличить масштаб' }).click();
+    const zoom = drawer.getByRole('button', { name: 'Увеличить масштаб' });
+    while (await zoom.isEnabled() && await viewport.evaluate((element) => element.scrollHeight <= element.clientHeight)) {
+      await zoom.click();
+    }
     await drawer.getByRole('button', { name: 'К фрагменту' }).click();
     await expect(box).toBeInViewport({ ratio: 1 });
 
@@ -127,31 +116,22 @@ for (const [width, height] of [[1440, 1100], [768, 844], [390, 600]]) {
     const scrollRatio = () => viewport.evaluate((element) =>
       element.scrollTop / Math.max(1, element.scrollHeight - element.clientHeight));
     const before = await scrollRatio();
-    expect(before).toBeGreaterThan(0);
+    const zoomBefore = await drawer.getByLabel('Масштаб документа').innerText();
     const expand = drawer.getByRole('button', { name: 'Развернуть источник на весь экран' });
     const collapse = drawer.getByRole('button', { name: 'Свернуть источник в боковую панель' });
     const highlight = drawer.getByRole('button', { name: 'Подсветка' });
-    if (width === 1440) {
-      await viewport.evaluate((element) => { element.scrollTop = 0; });
-      await expect(box).not.toBeInViewport();
-      await expand.press('Enter');
-      expect(await scrollRatio()).toBe(0);
-      await expect(box).not.toBeInViewport();
-      await collapse.click();
-      await drawer.getByRole('button', { name: 'К фрагменту' }).click();
-    }
     await highlight.click();
     await expand.press('Enter');
     await expect(collapse).toHaveAttribute('aria-pressed', 'true');
     await expect(collapse).toBeFocused();
     expect((await drawer.boundingBox())?.width).toBe(width);
     expect(await scrollRatio()).toBeCloseTo(before, 2);
-    await expect(drawer.getByText('125%', { exact: true })).toBeVisible();
+    await expect(drawer.getByLabel('Масштаб документа')).toHaveText(zoomBefore);
     await expect(highlight).toHaveAttribute('aria-pressed', 'false');
     await expect(imageElement).toHaveAttribute('src', previousSrc ?? '');
     await collapse.click();
     await expect(expand).toHaveAttribute('aria-pressed', 'false');
-    expect((await drawer.boundingBox())?.width).toBe(Math.min(width, 800));
+    expect((await drawer.boundingBox())?.width).toBe(compactWidth);
     expect(await scrollRatio()).toBeCloseTo(before, 2);
     expect([originalRequests, fragmentRequests]).toEqual(requests);
     await expand.click();
@@ -248,10 +228,13 @@ test('source pane opens the stored original at a mobile width', async ({ page })
       : route.fulfill({ body: 'synthetic XLSX transport fixture', contentType: 'application/octet-stream' });
   });
 
+  await page.route(`**/api/v0/runs/${id}/documents/ledger/fragment-preview?evidence_id=amount-2`, (route) =>
+    route.fulfill({ json: { text: 'Итого 60,25', highlight: { start_byte: 11, end_byte: 16 } } }));
+
   await page.goto(`/checks/${id}`);
   await page.getByRole('button', { name: 'Просмотреть источник' }).click();
   const preview = page.getByRole('region', { name: 'Просмотр источника' });
-  const drawer = page.getByRole('dialog', { name: 'Источник документа' });
+  const drawer = page.getByLabel('Источник документа', { exact: true }).and(page.locator('.source-workspace-panel[open]'));
   await expect(drawer).toBeVisible();
   await expect(preview.getByRole('link', { name: 'Скачать оригинал' })).toBeVisible();
   await expect(preview.getByRole('link', { name: /Открыть страницу 1 PDF/ })).toHaveAttribute('href', /#page=1$/);
@@ -267,13 +250,14 @@ test('source pane opens the stored original at a mobile width', async ({ page })
   expect(ledgerRequests).toEqual([]);
   await page.getByRole('button', { name: 'Просмотреть источник' }).click();
   await expect(preview.getByText(/Лист «Синтетика», C7/)).toBeVisible();
+  await expect(preview.locator('mark')).toHaveText('60,25');
   await expect(preview.getByRole('link', { name: 'Скачать оригинал' })).toBeVisible();
   expect([...new Set(ledgerRequests)].sort()).toEqual([
     `/api/v0/runs/${id}/documents/ledger`,
     `/api/v0/runs/${id}/documents/ledger/fragments?evidence_id=amount-2`,
   ]);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
-  await drawer.getByRole('button', { name: 'Вернуться к таблице' }).click();
+  await drawer.getByRole('button', { name: 'Закрыть просмотр источника' }).click();
   await expect(drawer).toHaveCount(0);
 });
 

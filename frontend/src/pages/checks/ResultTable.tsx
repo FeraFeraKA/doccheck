@@ -1,6 +1,6 @@
 import { Fragment } from 'react';
 import type { Ref } from 'react';
-import { formatDecimal, statusLabels } from './reviewResult';
+import { formatMeasure, rowExplanation, statusLabels } from './reviewResult';
 import type { ReviewResult } from './reviewResult';
 import './result-table.css';
 
@@ -28,7 +28,7 @@ interface ResultTableProps {
   onQueryChange: (value: string) => void;
   onReset: () => void;
   onToggle: (id: string) => void;
-  onSelectSource: (rowId: string, evidenceId: string) => void;
+  onSelectSource: (rowId: string, evidenceId: string, trigger: HTMLElement) => void;
 }
 
 export function ResultTable({
@@ -55,10 +55,11 @@ export function ResultTable({
         {query && <button type="button" aria-label="Очистить поиск" onClick={() => onQueryChange('')}>×</button>}
       </div>
       <div ref={tableScroll} className="reconcile-table-scroll" role="region" aria-label="Таблица показателей" tabIndex={0}>
-        <table className="reconcile-table" aria-label="Показатели КФЗ">
+        <table className="reconcile-table kfz-result-table" aria-label="Показатели КФЗ">
           <thead><tr>
-            <th scope="col">Показатель</th><th scope="col">Ед. изм.</th><th scope="col">В отчёте</th>
-            <th scope="col">По документам</th><th scope="col">Разница</th><th scope="col">Статус</th>
+            <th scope="col">Показатель КФЗ</th><th scope="col">В КФЗ</th>
+            <th scope="col">Ожидаемо</th><th scope="col">Разница Δ</th><th scope="col">Статус</th>
+            <th scope="col">Пояснение</th>
           </tr></thead>
           <tbody>{rows.map((row) => {
             const selected = row.id === selectedId;
@@ -82,53 +83,71 @@ export function ResultTable({
                       onClick={() => onToggle(row.id)}
                     >
                       <span className="indicator-chevron" aria-hidden="true">›</span>
-                      <span className="row-status" data-status={row.status} aria-hidden="true">
-                        {row.status === 'verified' ? '✓' : row.status === 'discrepancy' ? '!' : '–'}
-                      </span>
-                      {row.label}
+                      <span>{row.label}{row.unit !== 'RUB' && <small className="ml-1">({row.unit})</small>}</span>
                     </button>
                     <span className="indicator-meta">
                       {sourceDocuments.size ? `${sourceDocuments.size} док.` : 'Нет источника суммы'}
                     </span>
                   </td>
-                  <td>{row.unit}</td>
-                  <td>{formatDecimal(row.reported_value)}</td>
+                  <td>{formatMeasure(row.reported_value, row.unit)}</td>
                   <td className="expected-cell">
-                    {formatDecimal(row.expected_value)}
+                    {formatMeasure(row.expected_value, row.unit)}
                     {row.expected_value === null && row.observed_evidence_sum !== null && (
-                      <p className="checks-caption">Частичная сумма: {formatDecimal(row.observed_evidence_sum)} {row.unit}</p>
+                      <small className="checks-caption">Частичная сумма: {formatMeasure(row.observed_evidence_sum, row.unit)}</small>
                     )}
                   </td>
-                  <td className="difference-cell">{formatDecimal(row.delta)}</td>
-                  <td><span className="checks-status" data-status={row.status}>{statusLabels[row.status]}</span></td>
+                  <td className="difference-cell">{formatMeasure(row.delta, row.unit)}</td>
+                  <td className="indicator-status-cell"><span className="row-status" data-status={row.status}
+                    role="img" aria-label={statusLabels[row.status]} tabIndex={0} title={statusLabels[row.status]}>
+                    <span aria-hidden="true">{row.status === 'verified' ? '✓' : row.status === 'discrepancy' ? '⚠' : '?'}</span>
+                    <span className="indicator-status-label" aria-hidden="true">{statusLabels[row.status]}</span>
+                  </span></td>
+                  <td className="indicator-explanation">
+                    <p>{rowExplanation(row)}</p>
+                    {(components.length > 0 || row.reasons.length > 1 || row.completeness.reason !== rowExplanation(row)) &&
+                      <button type="button" aria-expanded={isExpanded} aria-controls={isExpanded ? detailsId : undefined}
+                        onClick={() => onToggle(row.id)}>
+                        {components.length ? 'Как рассчитано' : 'Основание проверки'}
+                      </button>}
+                  </td>
                 </tr>
                 {isExpanded && <tr className="source-subrow"><td colSpan={6}>
                   <div id={detailsId} role="region" aria-label={`Подробности: ${row.label}`} className="indicator-details">
                     {row.calculation?.formula && <p>{row.calculation.formula}</p>}
-                    <p>Основание полноты: {row.completeness.reason}</p>
-                    {row.reasons.map((reason, index) => <p key={`${reason.code}:${index}`}>{reason.message}</p>)}
+                    <p><strong>{statusLabels[row.status]}.</strong>{' '}
+                      {[...new Set([rowExplanation(row), ...row.reasons.map(({ message }) => message),
+                        row.completeness.reason])].join(' ')}
+                    </p>
                     {components.length === 0 ? <p>Нет подтверждённых слагаемых.</p> :
                       <ol className="indicator-documents" aria-label={`Слагаемые показателя: ${row.label}`}>
                         {components.map((component) => <li key={component.amount_refs[0]}>
                           <div className="indicator-amount">
-                            <span>{component.relation_reason}</span>
-                            <strong>{formatDecimal(component.amount)} {row.unit}</strong>
+                            {component.amount_refs[0] && <button type="button" className="indicator-component-document"
+                              onClick={(event) => onSelectSource(row.id, component.amount_refs[0], event.currentTarget)}>
+                              {documentsById.get(evidenceById.get(component.amount_refs[0])?.document_id ?? '')?.name
+                                ?? 'Источник суммы'}
+                            </button>}
+                            <strong>{formatMeasure(component.amount, row.unit)}</strong>
                           </div>
-                          <ul className="indicator-addresses">
-                            {evidenceFields.flatMap(([field, role]) => (component[field] ?? []).map((id) => {
-                              const item = evidenceById.get(id);
-                              const document = item && documentsById.get(item.document_id);
-                              return <li key={`${field}:${id}`}>
-                                {item && document ? <button
-                                  type="button" aria-pressed={selected && selectedEvidenceId === id}
-                                  onClick={() => onSelectSource(row.id, id)}
-                                >
-                                  <span>{role} · {document.name} · {formatAddress(item.locator)}</span>
-                                  <span aria-hidden="true">›</span>
-                                </button> : <span>{role} · Адрес источника недоступен.</span>}
-                              </li>;
-                            }))}
-                          </ul>
+                          <details className="indicator-component-details">
+                            <summary>Адреса и основание</summary>
+                            <p>{component.relation_reason}</p>
+                            <ul className="indicator-addresses">
+                              {evidenceFields.flatMap(([field, role]) => (component[field] ?? []).map((id) => {
+                                const item = evidenceById.get(id);
+                                const document = item && documentsById.get(item.document_id);
+                                return <li key={`${field}:${id}`}>
+                                  {item && document ? <button
+                                    type="button" aria-pressed={selected && selectedEvidenceId === id}
+                                    onClick={(event) => onSelectSource(row.id, id, event.currentTarget)}
+                                  >
+                                    <span>{role} · {document.name} · {formatAddress(item.locator)}</span>
+                                    <span aria-hidden="true">›</span>
+                                  </button> : <span>{role} · Адрес источника недоступен.</span>}
+                                </li>;
+                              }))}
+                            </ul>
+                          </details>
                         </li>)}
                       </ol>}
                   </div>

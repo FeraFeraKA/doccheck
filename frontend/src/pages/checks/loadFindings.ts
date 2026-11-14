@@ -1,6 +1,6 @@
 import { HttpError } from '../../shared/api/requestJson';
 import { documentParseStatuses } from './reviewResult';
-import type { DocumentParseStatus, ReviewResult } from './reviewResult';
+import type { DocumentParseStatus, ReviewResult, RubCoverage } from './reviewResult';
 
 type Dict = Record<string, unknown>;
 type Read<T> = (value: unknown) => T;
@@ -211,6 +211,28 @@ function row(value: unknown): Row {
   };
 }
 
+export function readRubCoverage(value: unknown): ReviewResult['summary']['rubCoverage'] {
+  if (value == null) return undefined;
+  const item = record(value);
+  const shareValues = item.shares == null ? null : record(item.shares);
+  const shares: NonNullable<RubCoverage['shares']> = {};
+  if (shareValues) {
+    for (const status of ['verified', 'discrepancy', 'unverified'] as const) {
+      if (shareValues[status] === undefined) continue;
+      const share = decimal(shareValues[status], '%');
+      if (Number(share) < 0 || Number(share) > 100) throw new InvalidFindingsResponse();
+      shares[status] = share;
+    }
+  }
+  return {
+    total: decimal(item.total, 'RUB'),
+    verified: nullableDecimal(item.verified, 'RUB'),
+    discrepancy: nullableDecimal(item.discrepancy, 'RUB'),
+    unverified: nullableDecimal(item.unverified, 'RUB'),
+    shares: shareValues ? shares : null,
+  };
+}
+
 function decodeFindings(value: unknown, runId: string): RunFindings {
   const findings = record(value);
   if (findings.schema_version !== 'doccheck-check-result/1'
@@ -225,6 +247,7 @@ function decodeFindings(value: unknown, runId: string): RunFindings {
     runId,
     synthetic: findings.synthetic,
     result: {
+      ...(findings.report_number == null ? {} : { reportNumber: text(findings.report_number) }),
       scope: {
         contract_number: text(scope.contract_number),
         period_start: date(scope.period_start),
@@ -242,6 +265,7 @@ function decodeFindings(value: unknown, runId: string): RunFindings {
       }),
       rows: list(findings.rows, row),
       summary: {
+        ...(summary.rub_coverage == null ? {} : { rubCoverage: readRubCoverage(summary.rub_coverage) }),
         counts: {
           verified: integer(counts.verified, 0),
           discrepancy: integer(counts.discrepancy, 0),
