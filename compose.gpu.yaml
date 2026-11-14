@@ -13,8 +13,14 @@ services:
       HF_HUB_DISABLE_TELEMETRY: "1"
       HF_HOME: /tmp/huggingface
       DOCCHECK_QWEN_SNAPSHOT_DIR: /source
+      DOCCHECK_LORA_FILENAME: "${DOCCHECK_LORA_FILENAME:-0000100_adapters.safetensors}"
     volumes:
       - qwen-base:/models/qwen
+      - type: bind
+        source: "${DOCCHECK_LORA_DIR:-./data/models/lora}"
+        target: /models/lora
+        bind:
+          create_host_path: true
       - type: bind
         source: "${DOCCHECK_QWEN_SNAPSHOT_DIR:-./data/models/base}"
         target: /source
@@ -32,7 +38,7 @@ services:
       target: document-runtime
     environment:
       DOCCHECK_QWEN_MODEL_DIR: /models/qwen
-      DOCCHECK_QWEN_ADAPTER_PATH: /models/lora/${DOCCHECK_LORA_FILENAME:-adapters.safetensors}
+      DOCCHECK_QWEN_ADAPTER_PATH: /models/lora/${DOCCHECK_LORA_FILENAME:-0000100_adapters.safetensors}
     command: ["python", "-m", "doccheck_backend.run_worker", "--v32", "--require-cuda"]
     gpus:
       - driver: nvidia
@@ -44,7 +50,7 @@ services:
         target: /models/lora
         read_only: true
         bind:
-          create_host_path: false
+          create_host_path: true
     depends_on:
       model-prepare:
         condition: service_completed_successfully
