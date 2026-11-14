@@ -106,6 +106,7 @@ def test_simple_scan_exposes_only_unambiguous_ruble_amounts(monkeypatch, unit_li
         ([_line("руб.", 70)], [], False),
         ([_line("Суммы КФЗ: руб.", 70)], [], True),
         ([_line("Суммы КФЗ: руб.", 70)], [_line("Код 1000", 10)], True),
+        ([_line("Суммы КФЗ: руб.", 70)], [_line("Период 01 / 02", 10)], True),
         ([_line("Суммы КФЗ: руб.", 70)], [_line("Оплата труда AcT", 10)], True),
         ([_line("Суммы КФЗ: руб.", 70)], [_line("Оплата труда", 10), _line("RUB", 40)], True),
         ([_line("Суммы: тыс. руб.", 70)], [], False),
@@ -122,6 +123,19 @@ def test_simple_scan_exposes_only_unambiguous_ruble_amounts(monkeypatch, unit_li
         ([_line("Суммы КФЗ: руб.", 70)], [_line("Оплата труда", 10), _line("xYz", 40)], False),
         ([_line("Суммы КФЗ: руб.", 70)], [_line("Оплата труда", 10), _line("AUD", 40, 15)], False),
         ([_line("Суммы КФЗ: руб.", 70)], [_line("Оплата труда", 10), _line("код AUD", 40)], False),
+        ([_line("Суммы КФЗ: руб.", 70)], [_line("Оплата труда USD/hour", 10)], False),
+        ([_line("Суммы КФЗ: руб.", 70)], [_line("Оплата труда CAD/hr", 10)], False),
+        ([_line("Суммы КФЗ: руб.", 70)], [_line("Оплата труда: руб./час", 10)], False),
+        ([_line("Суммы КФЗ: руб.", 70)], [_line("Оплата труда: руб.／час", 10)], False),
+        ([_line("Суммы КФЗ: руб.", 70)], [_line("Оплата труда: USD∕hour", 10)], False),
+        ([_line("Суммы КФЗ: руб.", 70)], [_line("Оплата труда: RUB/hour", 10)], False),
+        ([_line("Суммы КФЗ: руб.", 70)], [_line("Оплата труда: долл./час", 10)], False),
+        ([_line("Суммы КФЗ: руб.", 70)], [_line("Оплата труда: $ / час", 10)], False),
+        ([_line("Суммы КФЗ: руб.", 70)], [_line("Оплата труда U?D/hour", 10)], False),
+        ([_line("Суммы КФЗ: руб.", 70)], [_line("Оплата труда U S D / hour", 10)], False),
+        ([_line("Суммы КФЗ: руб.", 70)], [_line("Оплата труда $ /", 10)], False),
+        ([_line("Суммы КФЗ: руб.", 70)], [_line("Оплата труда АUD/час", 10)], False),
+        ([_line("Суммы КФЗ: руб.", 70)], [_line("Оплата труда: USD/?", 10)], False),
         ([_line("Суммы КФЗ: руб.", 70)], [_line("Оплата труда: XYZ", 10)], False),
         ([_line("Суммы КФЗ: руб.", 70)], [_line("Оплата труда: фунты", 10)], False),
         ([_line("Суммы КФЗ: руб.", 70)], [_line("Страховые взносы: коп.", 10)], False),
@@ -312,6 +326,19 @@ def test_real_ocr_detects_code_on_separate_header_line(currency):
     assert not scanned_report._confirmed_rubles([_line("Суммы КФЗ: руб.", 5)], lines)
 
 
+@pytest.mark.parametrize("rate", ["USD/hour", "CAD/hr", "руб./час"])
+def test_real_ocr_detects_rate_with_slash(rate):
+    require_raster_ocr()
+    image = Image.new("RGB", (800, 200), "white")
+    draw = ImageDraw.Draw(image)
+    font = ImageFont.truetype("DejaVuSans.ttf", 36)
+    draw.text((30, 30), "Оплата труда", fill="black", font=font)
+    draw.text((30, 100), rate, fill="black", font=font)
+    lines = scanned_report.recognize_lines(image, mode=6)
+    assert any(scanned_report._UNIT_RATE.search(line.text) for line in lines)
+    assert not scanned_report._confirmed_rubles([_line("Суммы КФЗ: руб.", 5)], lines)
+
+
 def test_real_ocr_reads_an_explicit_ruble_multilevel_report(tmp_path):
     require_raster_ocr()
     period = ("2031-01-01", "2031-03-31")
@@ -340,7 +367,12 @@ def test_real_ocr_reads_an_explicit_ruble_multilevel_report(tmp_path):
     }
 
 
-def test_real_ocr_split_currency_remains_unverified_in_result(tmp_path):
+@pytest.mark.parametrize(
+    ("label", "position"),
+    [("AUD", (100, 420)), ("USD/hour", (620, 289))],
+    ids=["split-code", "rate-in-0200"],
+)
+def test_real_ocr_conflicting_header_remains_unverified_in_result(tmp_path, label, position):
     require_raster_ocr()
     period = ("2031-01-01", "2031-03-31")
     contract = "SYN-10"
@@ -353,8 +385,11 @@ def test_real_ocr_split_currency_remains_unverified_in_result(tmp_path):
     with Image.open(path) as original:
         image = original.copy()
     ImageDraw.Draw(image).text(
-        (100, 420), "AUD", fill="black", font=ImageFont.truetype("DejaVuSans.ttf", 30)
+        position, label, fill="black", font=ImageFont.truetype("DejaVuSans.ttf", 30)
     )
+    _, _, ys = scanned_report._table_rules(image)
+    header_lines = scanned_report.recognize_lines(image.crop((0, ys[0], image.width, ys[-2])))
+    assert any(label.upper() in line.text.upper().replace(" ", "") for line in header_lines)
     reading = scanned_report.read_report_row(
         image,
         1,

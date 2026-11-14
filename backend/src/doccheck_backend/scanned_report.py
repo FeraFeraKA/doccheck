@@ -39,8 +39,8 @@ _MONEY = re.compile(r"-?(?:[0-9]+|[0-9]{1,4}(?: [0-9]{3})+)[,.][0-9]{2}")
 _QUANTITY = re.compile(r"-?[0-9]+(?:[,.][0-9]+)?")
 _RUBLE_UNIT = re.compile(r"(?<!\w)(?:руб(?:л(?:ей|я|ь|ях|и)?)?\.?|RUB|RUR|₽)(?!\w)", re.I)
 _OTHER_CURRENCY = re.compile(
-    r"(?<![A-Za-z0-9/-])(?:USD|EUR|CNY|GBP|JPY|KZT|BYN|CHF|TRY|AZN|AMD|UZS|UAH|CAD|INR)"
-    r"(?![A-Za-z0-9/-])|(?<!\w)(?:доллар\w*|евро|юан\w*)(?!\w)|[$€£¥]",
+    r"(?<![A-Za-z0-9-])(?:USD|EUR|CNY|GBP|JPY|KZT|BYN|CHF|TRY|AZN|AMD|UZS|UAH|CAD|INR)"
+    r"(?![A-Za-z0-9-])|(?<!\w)(?:доллар\w*|евро|юан\w*)(?!\w)|[$€£¥]",
     re.I,
 )
 _UNKNOWN_UNIT_CODE = re.compile(
@@ -52,7 +52,7 @@ _UNKNOWN_UNIT_WORD = re.compile(
     r"[^\W\d_]{2,}(?!\w)",
     re.I,
 )
-_UPPERCASE_UNIT_CODE = re.compile(r"(?<![A-Za-z0-9/-])(?!(?:RUB|RUR)\b)[A-Z]{3}(?![A-Za-z0-9/-])")
+_UPPERCASE_UNIT_CODE = re.compile(r"(?<![A-Za-z0-9-])(?!(?:RUB|RUR)\b)[A-Z]{3}(?![A-Za-z0-9-])")
 _STANDALONE_UNIT_CODE = re.compile(
     r"\s*[(\[]?\s*(?!(?:RUB|RUR)\b)[A-Za-z]{3}\s*[.,:;)\]]*\s*", re.I
 )
@@ -62,6 +62,12 @@ _OTHER_SCALE = re.compile(
 )
 _UNIT_MULTIPLIER = re.compile(r"(?<!\d)(?:1000|1[ \u00a0]000)(?![\d.,])")
 _RUBLE_RATE = re.compile(r"(?:руб\.?|RUB|₽)\s*/\s*\w+", re.I)
+_UNIT_RATE = re.compile(
+    r"(?<![\w-])(?:[A-Za-zА-Яа-яЁё?]{3,7}\.?|[$€£¥₽])\s*/\s*[A-Za-zА-Яа-яЁё?]+",
+    re.I,
+)
+_AMBIGUOUS_SLASH = re.compile(r"(?<!\d)/|/(?!\d)")
+_UNIT_SLASHES = str.maketrans({"／": "/", "⁄": "/", "∕": "/", "\\": "/"})
 _UNIT_CONTEXT = re.compile(
     r"\b(?:сумм\w*|затрат\w*|расход\w*|стоимост\w*|оплат\w*|взнос\w*|"
     r"единиц\w*|валют\w*|денежн\w*|итог\w*|показател\w*|ед\.?\s*изм\w*)\b",
@@ -227,8 +233,14 @@ def _confirmed_rubles(header: Sequence[OcrLine], table_header: Sequence[OcrLine]
     """Require an explicit unit for report values and veto conflicting markers."""
     # OCR can split a heading and its unit into separate lines. The whole table
     # heading must be checked, not just lines containing a label such as "cost".
-    if any(_STANDALONE_UNIT_CODE.fullmatch(line.text) for line in (*header, *table_header)) or any(
-        _UPPERCASE_UNIT_CODE.search(line.text) for line in table_header
+    if any(
+        _STANDALONE_UNIT_CODE.fullmatch(line.text)
+        or _UNIT_RATE.search(line.text.translate(_UNIT_SLASHES))
+        for line in (*header, *table_header)
+    ) or any(
+        _UPPERCASE_UNIT_CODE.search(line.text)
+        or _AMBIGUOUS_SLASH.search(re.sub(r"\s*/\s*", "/", line.text.translate(_UNIT_SLASHES)))
+        for line in table_header
     ):
         return False
     declarations = [line for line in (*header, *table_header) if _unit_declaration(line)]
