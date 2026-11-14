@@ -26,6 +26,7 @@ from doccheck_backend.contracts.result import (
     FileError,
     Issue,
     Period,
+    PrimaryIssue,
     Reason,
     ResultRow,
     Scope,
@@ -37,6 +38,7 @@ from doccheck_backend.contracts.result import (
 from doccheck_backend.native_observations import Observation
 from doccheck_backend.native_reader import read_native_document
 from doccheck_backend.run_worker import StoredRun
+from doccheck_backend.v32_report_model import read_report_with_model
 
 _MODEL_DIGEST = "d8b0f5e9760cd1682034f292d7ef72ec46f432149be0df7574bf2d6e92e38c04"
 _VERSION = "e2e-v32-20261114"
@@ -407,6 +409,31 @@ def _bind_component(
     ), evidence
 
 
+def _report_model_warning(
+    scope: Scope, prediction: dict[str, str | None] | None
+) -> PrimaryIssue | None:
+    if prediction is None:
+        return PrimaryIssue(
+            id="report-model-unavailable",
+            code="v32_report_model_unavailable",
+            message=(
+                "Модель не вернула читаемые реквизиты КФЗ. Использованы данные из исходного файла."
+            ),
+            evidence_refs=[],
+        )
+    if any(
+        (prediction[field] or "").strip() != getattr(scope, field)
+        for field in ("contract_number", "period_start", "period_end")
+    ):
+        return PrimaryIssue(
+            id="report-model-unconfirmed",
+            code="v32_report_model_unconfirmed",
+            message="Модель не подтвердила реквизиты КФЗ. Использованы данные из исходного файла.",
+            evidence_refs=[],
+        )
+    return None
+
+
 def process(run: StoredRun, upload_folder: Path) -> CheckJob:
     """Process an addressed report and anchor v3.2 findings to saved originals."""
     from bench.e2e_v32_20261114 import decision_rules, document_identity
@@ -456,11 +483,39 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
         else:
             v32.verify_source(report_entry)
             native_report = read_native_document(report_path, "pdf")
+            if any(
+                item.code == "encrypted_pdf"
+                or (item.code == "native_read_error" and item.page is None)
+                for item in native_report.issues
+            ):
+                return _failure(run, "v32_report_unreadable", "Не удалось прочитать PDF КФЗ.")
+            try:
+                has_raster, model_report = read_report_with_model(
+                    report_path, v32.runtime, v32.MODEL, pdf=True
+                )
+                v32.verify_source(report_entry)
+            except (OSError, ValueError):
+                return _failure(
+                    run, "v32_report_unreadable", "Не удалось подготовить страницы КФЗ."
+                )
+            if has_raster:
+                if model_report is None:
+                    return _failure(
+                        run,
+                        "v32_pdf_scan_unreadable",
+                        "Модель не смогла прочитать скан КФЗ. Проверьте оригинал.",
+                    )
+                return _failure(
+                    run,
+                    "v32_pdf_scan_scope_unconfirmed",
+                    "Модель вернула предварительное чтение скана КФЗ. Реквизиты и суммы требуют "
+                    "подтверждения по оригиналу.",
+                )
             if native_report.issues or not native_report.observations:
                 return _failure(
                     run,
                     "v32_pdf_scope_unavailable",
-                    "Для PDF КФЗ нужны адресуемые реквизиты и суммы. Скан требует OCR.",
+                    "Для PDF КФЗ нужны адресуемые реквизиты и суммы.",
                 )
             parsed = _read_pdf_report(report, native_report.observations, decision_rules)
             if parsed is None:
@@ -470,6 +525,9 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
                     "Не удалось однозначно определить договор, период и суммы в PDF КФЗ.",
                 )
             inferred, report_evidence = parsed
+        if report.format == "xlsx":
+            _, model_report = read_report_with_model(report_path, v32.runtime, v32.MODEL, pdf=False)
+        report_warning = _report_model_warning(inferred, model_report)
         scope = requested_scope or inferred
         if (scope.contract_number, scope.period_start, scope.period_end) != (
             inferred.contract_number,
@@ -710,7 +768,7 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
         rows=rows,
         summary=Summary(
             counts=StatusCounts(verified=0, discrepancy=0, unverified=len(rows)),
-            primary_issues=[],
+            primary_issues=[report_warning] if report_warning else [],
             conclusion="Полнота комплекта не установлена. Проверьте доступные подтверждения.",
         ),
     )

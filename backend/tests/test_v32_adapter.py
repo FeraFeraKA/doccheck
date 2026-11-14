@@ -61,7 +61,7 @@ def uploaded_files(tmp_path):
     ]
 
 
-def _stub_ollama(monkeypatch, amount):
+def _stub_ollama(monkeypatch, amount, report_requests=None):
     monkeypatch.syspath_prepend(Path(__file__).resolve().parents[2])
     from bench.e2e_v32_20261114 import run as v32
 
@@ -81,6 +81,25 @@ def _stub_ollama(monkeypatch, amount):
         if path == "/api/ps":
             return {"models": []}
         assert path == "/api/chat"
+        if (
+            "evidence_quote" in body["format"]["properties"]
+            and "doc_number" not in (body["format"]["properties"])
+        ):
+            if report_requests is not None:
+                report_requests.append(body)
+            return {
+                "message": {
+                    "content": json.dumps(
+                        {
+                            "contract_number": "E2E-31",
+                            "period_start": "2027-02-01",
+                            "period_end": "2027-03-31",
+                            "evidence_quote": "Договор № E2E-31",
+                        },
+                        ensure_ascii=False,
+                    )
+                }
+            }
         assert "E2E-31" in body["messages"][0]["content"]
         response = {
             "doc_number": "ACT-31",
@@ -104,7 +123,7 @@ def test_worker_adapter_infers_scope_and_anchors_partial_sum(uploaded_files, tmp
     run = StoredRun(uuid4(), None, uploaded_files)
     job = process(run, tmp_path)
 
-    assert calls == ["/api/tags", "/api/chat", "/api/ps"]
+    assert calls == ["/api/tags", "/api/chat", "/api/chat", "/api/ps"]
     assert job.status == "completed"
     result = job.result
     assert result.run_id == str(run.id)
@@ -143,7 +162,7 @@ def test_corrupt_primary_reports_technical_issue(uploaded_files, tmp_path, monke
     calls = _stub_ollama(monkeypatch, "1172.70")
     Path(tmp_path / uploaded_files[1]["id"]).write_bytes(b"malformed")
     job = process(StoredRun(uuid4(), None, uploaded_files), tmp_path)
-    assert calls == ["/api/tags"]
+    assert calls == ["/api/tags", "/api/chat"]
     assert job.status == "completed_with_issues"
     assert job.result.documents[1].errors
     assert job.result.rows[0].observed_evidence_sum is None
@@ -194,7 +213,7 @@ def test_identity_conflict_removes_candidate_sum(uploaded_files, tmp_path, monke
     monkeypatch.setattr(v32.runtime, "api", differing_totals)
     result = process(StoredRun(uuid4(), None, uploaded_files), tmp_path).result
 
-    assert calls.count("/api/chat") == 2
+    assert calls.count("/api/chat") == 3
     assert result.rows[0].observed_evidence_sum is None
     assert any(reason.code == "source_identity_conflict" for reason in result.rows[0].reasons)
     assert all(
@@ -301,7 +320,7 @@ def test_same_native_identity_is_quarantined_before_model_dedup(
 
     monkeypatch.setattr(v32.runtime, "api", model_disagrees_on_issuer)
     result = process(StoredRun(uuid4(), None, uploaded_files), tmp_path).result
-    assert calls.count("/api/chat") == 2
+    assert calls.count("/api/chat") == 3
     assert result.rows[0].observed_evidence_sum is None
     assert all(
         file.decision.reason_code == "source_identity_conflict" for file in result.documents[1:]
@@ -322,7 +341,7 @@ def test_partial_native_read_reports_file_error(uploaded_files, tmp_path, monkey
     primary["sha256"] = sha256(path.read_bytes()).hexdigest()
 
     job = process(StoredRun(uuid4(), None, uploaded_files), tmp_path)
-    assert calls == ["/api/tags"]
+    assert calls == ["/api/tags", "/api/chat"]
     assert job.status == "completed_with_issues"
     assert job.result.documents[1].decision.state == "parse_error"
     assert job.result.documents[1].errors
@@ -437,7 +456,7 @@ def test_xlsx_primary_anchors_known_total_and_month(uploaded_files, tmp_path, mo
     monkeypatch.setattr(v32.runtime, "api", predict_payroll)
     result = process(StoredRun(uuid4(), None, uploaded_files), tmp_path).result
 
-    assert calls == ["/api/tags", "/api/chat", "/api/ps"]
+    assert calls == ["/api/tags", "/api/chat", "/api/chat", "/api/ps"]
     assert result.rows[0].observed_evidence_sum == "1172.70"
     evidence = {item.kind: item for item in result.evidence}
     assert evidence["amount"].locator.range == "C8"
@@ -445,20 +464,71 @@ def test_xlsx_primary_anchors_known_total_and_month(uploaded_files, tmp_path, mo
     assert evidence["period"].normalized_value.end == "2027-02-28"
 
 
-def test_raster_pdf_report_requires_addressed_scope(uploaded_files, tmp_path, monkeypatch):
-    from test_native_pdf import _write_pdf
+@pytest.mark.parametrize("mixed", [False, True])
+def test_raster_pdf_report_sends_images_without_unverified_evidence(
+    uploaded_files, tmp_path, monkeypatch, mixed
+):
+    from PIL import Image
+    from pypdf import PdfWriter
 
-    calls = _stub_ollama(monkeypatch, "1172.70")
+    requests = []
+    calls = _stub_ollama(monkeypatch, "1172.70", requests)
     report = uploaded_files[0]
     path = tmp_path / report["id"]
-    _write_pdf(path, [b"0 0 10 10 re f"])
+    scan = tmp_path / "scan.pdf"
+    Image.new("RGB", (100, 120), "lightgray").save(scan, "PDF")
+    with PdfWriter() as writer:
+        if mixed:
+            native = tmp_path / "native.pdf"
+            _write_text_pdf(
+                native, ["Договор № DIFFERENT-2028.", "Период: 2028-04-01 — 2028-06-30."]
+            )
+            writer.append(native)
+        writer.append(scan)
+        writer.write(path)
     report.update(format="pdf", name="report.pdf", sha256=sha256(path.read_bytes()).hexdigest())
 
     job = process(StoredRun(uuid4(), None, uploaded_files), tmp_path)
 
-    assert calls == ["/api/tags"]
+    assert calls == ["/api/tags", "/api/chat"]
+    (request,) = requests
+    (message,) = request["messages"]
+    (image,) = message["images"]
+    assert image.startswith("iVBOR")
+    assert ("DIFFERENT-2028" in message["content"]) == mixed
+    assert "3 этап, 2026" not in message["content"]
+    page = 2 if mixed else 1
+    assert f"Страница {page}: изображение № 1." in message["content"]
     assert job.status == "failed"
-    assert job.error.code == "v32_pdf_scope_unavailable"
+    assert job.error.code == "v32_pdf_scan_scope_unconfirmed"
+    assert job.result is None
+
+
+def test_raster_pdf_model_without_reading_has_distinct_failure(
+    uploaded_files, tmp_path, monkeypatch
+):
+    from bench.e2e_v32_20261114 import run as v32
+    from PIL import Image
+
+    _stub_ollama(monkeypatch, "1172.70")
+    request = v32.runtime.api
+
+    def respond(path, body=None, timeout=600):
+        if path == "/api/chat":
+            assert body["messages"][0]["images"]
+            return {"message": {"content": "{}"}}
+        return request(path, body, timeout)
+
+    monkeypatch.setattr(v32.runtime, "api", respond)
+    report = uploaded_files[0]
+    path = tmp_path / report["id"]
+    Image.new("RGB", (100, 120), "white").save(path, "PDF")
+    report.update(format="pdf", name="report.pdf", sha256=sha256(path.read_bytes()).hexdigest())
+
+    job = process(StoredRun(uuid4(), None, uploaded_files), tmp_path)
+
+    assert job.status == "failed"
+    assert job.error.code == "v32_pdf_scan_unreadable"
     assert job.result is None
 
 
@@ -473,7 +543,7 @@ def test_png_model_quote_never_becomes_source_address(uploaded_files, tmp_path, 
     request = v32.runtime.api
 
     def predict_scan(path, body=None, timeout=600):
-        if path == "/api/chat":
+        if path == "/api/chat" and "doc_number" in body["format"]["properties"]:
             assert body["messages"][0]["images"]
             body["messages"][0]["content"] += "E2E-31"
         return request(path, body, timeout)
@@ -481,7 +551,7 @@ def test_png_model_quote_never_becomes_source_address(uploaded_files, tmp_path, 
     monkeypatch.setattr(v32.runtime, "api", predict_scan)
     job = process(StoredRun(uuid4(), None, uploaded_files), tmp_path)
 
-    assert calls == ["/api/tags", "/api/chat", "/api/ps"]
+    assert calls == ["/api/tags", "/api/chat", "/api/chat", "/api/ps"]
     assert job.status == "completed"
     assert job.result.documents[1].decision.state == "needs_review"
     assert job.result.rows[0].observed_evidence_sum is None
@@ -491,46 +561,67 @@ def test_png_model_quote_never_becomes_source_address(uploaded_files, tmp_path, 
 def test_native_pdf_kfz_binds_report_and_retains_docx_primary(
     uploaded_files, tmp_path, monkeypatch
 ):
-    from doccheck_backend.contracts.locators import PageLocator
-    from doccheck_backend.native_observations import NativeDocument, Observation
-    from doccheck_backend.v32_adapter import read_native_document
-
-    calls = _stub_ollama(monkeypatch, "1172.70")
+    requests = []
+    calls = _stub_ollama(monkeypatch, "1172.70", requests)
     report = uploaded_files[0]
     path = tmp_path / report["id"]
-    path.write_bytes(b"%PDF-1.4 input addressed by stubbed native reader")
+    _write_text_pdf(
+        path,
+        [
+            "Договор № E2E-31.",
+            "Период: 2027-02-01 — 2027-03-31.",
+            "Общехозяйственные расходы: 1 250,50 руб.",
+        ],
+    )
     report.update(format="pdf", name="report.pdf", sha256=sha256(path.read_bytes()).hexdigest())
 
-    # The native PDF reader and rendering are tested independently against real PDF
-    # files. Here only its addressed observations and the model response are injected.
-    observations = NativeDocument(
-        observations=tuple(
-            Observation(text, PageLocator(kind="page", page=1, line=index))
-            for index, text in enumerate(
-                [
-                    "Договор № E2E-31.",
-                    "Период: 2027-02-01 — 2027-03-31.",
-                    "Общехозяйственные расходы: 1 250,50 руб.",
-                ],
-                1,
-            )
-        )
-    )
-
-    def read(path, kind):
-        return observations if kind == "pdf" else read_native_document(path, kind)
-
-    monkeypatch.setattr("doccheck_backend.v32_adapter.read_native_document", read)
     job = process(StoredRun(uuid4(), None, uploaded_files), tmp_path)
 
-    assert calls == ["/api/tags", "/api/chat", "/api/ps"]
+    assert calls == ["/api/tags", "/api/chat", "/api/chat", "/api/ps"]
+    (request,) = requests
+    (message,) = request["messages"]
+    assert "извлечённый текст" in message["content"]
+    assert "E2E-31" in message["content"]
+    assert "images" not in message
     assert job.status == "completed"
     assert job.result.scope.period_end == "2027-03-31"
+    assert job.result.summary.primary_issues == []
     (row,) = job.result.rows
     assert (row.reported_value, row.observed_evidence_sum) == ("1250.50", "1172.70")
     source = next(item for item in job.result.evidence if item.kind == "reported_value")
-    assert source.locator.line == 3
+    assert source.locator.page == 1 and source.locator.fragment_id is not None
     assert source.document_id == report["id"]
+
+
+def test_native_xlsx_kfz_model_disagreement_keeps_native_scope(
+    uploaded_files, tmp_path, monkeypatch
+):
+    requests = []
+    _stub_ollama(monkeypatch, "1172.70", requests)
+    from bench.e2e_v32_20261114 import run as v32
+
+    request = v32.runtime.api
+
+    def wrong_report(path, body=None, timeout=600):
+        response = request(path, body, timeout)
+        if path == "/api/chat" and "doc_number" not in body["format"]["properties"]:
+            payload = json.loads(response["message"]["content"])
+            payload["period_end"] = "2050-09-21"
+            response["message"]["content"] = json.dumps(payload)
+        return response
+
+    monkeypatch.setattr(v32.runtime, "api", wrong_report)
+    job = process(StoredRun(uuid4(), None, uploaded_files), tmp_path)
+
+    (request_body,) = requests
+    (message,) = request_body["messages"]
+    assert "КФЗ" in message["content"] and "E2E-31" in message["content"]
+    assert "images" not in message
+    assert job.status == "completed"
+    assert job.result.scope.period_end == "2027-03-31"
+    assert job.result.rows[0].reported_value == "1250.50"
+    (warning,) = job.result.summary.primary_issues
+    assert warning.code == "v32_report_model_unconfirmed"
 
 
 def _write_text_pdf(path, lines):
