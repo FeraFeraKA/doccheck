@@ -18,7 +18,7 @@ def _stream(data, extra=b""):
     )
 
 
-def _write_pdf(path, streams, *, attrs=b"", form=None, font=b"Courier"):
+def _write_pdf(path, streams, *, attrs=b"", form=None, font=b"Courier", cmap=None):
     page_part = b" ".join(f"{index} 0 R".encode() for index in range(4, 4 + len(streams)))
     objects = [
         b"<< /Type /Catalog /Pages 2 0 R >>",
@@ -26,6 +26,9 @@ def _write_pdf(path, streams, *, attrs=b"", form=None, font=b"Courier"):
         b"<< /Type /Font /Subtype /Type1 /BaseFont /" + font + b" >>",
     ]
     first_stream = 4 + len(streams)
+    if cmap is not None:
+        cmap_index = first_stream + len(streams) + int(form is not None)
+        objects[2] = objects[2][:-2] + f"/ToUnicode {cmap_index} 0 R >>".encode()
     resources = b"/Font << /F1 3 0 R >>"
     if form is not None:
         resources += f" /XObject << /FormA {first_stream + len(streams)} 0 R >>".encode()
@@ -41,6 +44,8 @@ def _write_pdf(path, streams, *, attrs=b"", form=None, font=b"Courier"):
     objects.extend(_stream(data) for data in streams)
     if form is not None:
         objects.append(form)
+    if cmap is not None:
+        objects.append(_stream(cmap))
 
     data = bytearray(b"%PDF-1.4\n")
     offsets = []

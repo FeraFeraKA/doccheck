@@ -534,8 +534,6 @@ def test_native_pdf_kfz_binds_report_and_retains_docx_primary(
 
 
 def _write_text_pdf(path, lines):
-    from pypdf import PdfReader, PdfWriter
-    from pypdf.generic import DecodedStreamObject, NameObject
     from test_native_pdf import _write_pdf
 
     codes = {character: code for code, character in enumerate(sorted(set("".join(lines))), 32)}
@@ -547,24 +545,16 @@ def _write_text_pdf(path, lines):
         )
         + b" ET"
     )
-    _write_pdf(path, [text])
-    writer = PdfWriter(clone_from=PdfReader(path))
-    cmap = DecodedStreamObject()
     mapping = "\n".join(f"<{code:02x}> <{ord(character):04x}>" for character, code in codes.items())
-    cmap.set_data(
-        (
-            "/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n"
-            "/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def\n"
-            "/CMapName /TestUCS def\n/CMapType 2 def\n"
-            "1 begincodespacerange\n<00> <ff>\nendcodespacerange\n"
-            f"{len(codes)} beginbfchar\n{mapping}\nendbfchar\n"
-            "endcmap\nCMapName currentdict /CMap defineresource pop\nend\nend\n"
-        ).encode()
-    )
-    writer.pages[0]["/Resources"]["/Font"]["/F1"][NameObject("/ToUnicode")] = writer._add_object(
-        cmap
-    )
-    writer.write(path)
+    cmap = (
+        "/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n"
+        "/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def\n"
+        "/CMapName /TestUCS def\n/CMapType 2 def\n"
+        "1 begincodespacerange\n<00> <ff>\nendcodespacerange\n"
+        f"{len(codes)} beginbfchar\n{mapping}\nendbfchar\n"
+        "endcmap\nCMapName currentdict /CMap defineresource pop\nend\nend\n"
+    ).encode()
+    _write_pdf(path, [text], cmap=cmap)
 
 
 @pytest.mark.parametrize("duplicate", [False, True])
@@ -591,7 +581,7 @@ def test_pdf_report_requires_exact_unambiguous_row_labels(
 
     if duplicate:
         assert job.status == "failed" and job.result is None
-        assert job.error.code == "v32_pdf_scope_unavailable"
+        assert job.error.code == "v32_pdf_scope_ambiguous"
     else:
         assert job.status == "completed"
         by_label = {row.label: row for row in job.result.rows}
