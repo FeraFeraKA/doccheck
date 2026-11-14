@@ -140,10 +140,16 @@ test('reading filters separate partial, pending and legacy states without changi
     ...example.result, run_id: id, documents: [
       { ...report, parse_status: undefined }, { ...included, parse_status: 'partial', errors: [
         { id: 'partial-sheet', code: 'partial_sheet', message: 'Часть листа недоступна.' },
-      ] },
+      ], decision: { ...included.decision, message: 'Учтены только подтверждённые строки.', evidence_refs: ['report-a', 'report-a'] } },
       duplicate, broken, pending, legacyWithError,
     ],
   } }));
+  await page.route(`**/api/v0/runs/${id}/documents/report`, (route) =>
+    route.fulfill({ body: '%PDF-1.4 synthetic original', contentType: 'application/octet-stream' }));
+  await page.route(`**/api/v0/runs/${id}/documents/report/fragments?evidence_id=report-a`, (route) =>
+    route.fulfill({ json: example.result.evidence[0] }));
+  await page.route(`**/api/v0/runs/${id}/documents/report/page-preview?*`, (route) =>
+    route.fulfill({ status: 404 }));
 
   await page.goto(`/checks/${id}/documents`);
   const filters = page.getByRole('group', { name: 'Статус файла' });
@@ -155,9 +161,18 @@ test('reading filters separate partial, pending and legacy states without changi
   await filters.getByRole('button', { name: 'Исключены (4)' }).click();
   await expect(table.getByText('Чтение не указано')).toHaveCount(0);
   await expect(table.getByText('Ожидает чтения')).toHaveCount(0);
-  const partial = table.getByRole('row').filter({ hasText: included.name });
+  const partial = table.getByRole('row').filter({ has: page.getByRole('button', { name: included.name, exact: true }) });
   await expect(partial.getByText('Прочитано частично')).toBeVisible();
   await expect(partial.getByText('Часть листа недоступна.')).toBeVisible();
+  await expect(partial.getByText('Учтены только подтверждённые строки.')).toBeVisible();
+  const sources = partial.getByRole('list', { name: 'Источники решения' });
+  await expect(sources.getByRole('button')).toHaveCount(1);
+  await sources.getByRole('button', { name: 'synthetic-report.pdf · Страница 1' }).click();
+  await expect(page).toHaveURL(/filter=excluded&document=report&evidence=report-a$/);
+  const viewer = page.getByRole('region', { name: 'Просмотр источника', exact: true });
+  await expect(viewer.getByText('Страница 1', { exact: true })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(sources.getByRole('button')).toBeFocused();
   const legacyError = table.getByRole('row').filter({ hasText: legacyWithError.name });
   await expect(legacyError.getByText('Требует проверки', { exact: true })).toBeVisible();
   await expect(legacyError.getByText(legacyWithError.errors[0].message)).toBeVisible();

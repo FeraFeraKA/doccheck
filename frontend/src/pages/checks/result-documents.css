@@ -132,3 +132,11 @@
   overflow-wrap: anywhere;
 }
 .result-document-messages.document-status-message { margin-top: .25rem; }
+.document-status-sources { margin-top: .25rem; }
+.checks-content .document-status-sources button {
+  border: 0;
+  padding: 0;
+  text-align: start;
+  text-decoration: underline;
+  color: var(--ui-primary);
+}

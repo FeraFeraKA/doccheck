@@ -144,6 +144,10 @@ for (const width of [390, 768]) {
 
     await docPicker.selectOption('ledger');
     await expect(docPicker).toHaveValue('ledger');
+    await expect(rule).toBeVisible();
+    await rule.click();
+    await expect(drawer.getByText(example.result.rows[0].calculation.formula, { exact: true })).toBeVisible();
+    await source.click();
     await expect(drawer.getByRole('link', { name: 'Скачать оригинал' })).toBeVisible();
     expect(originals).toContain('ledger');
     await docPicker.selectOption('report');

@@ -4,6 +4,7 @@ import { Link, useLocation, useNavigate, useNavigationType, useSearchParams } fr
 import { FileTypeIcon } from './FileTypeIcon';
 import { SourceWorkspace, useSourceWorkspace } from './SourceWorkspace';
 import { WorkspaceIcon } from './WorkspaceIcon';
+import { formatLocation } from './reviewResult';
 import type { DocumentParseStatus, ReviewResult } from './reviewResult';
 import './result-documents.css';
 
@@ -166,6 +167,8 @@ function DocumentTable({ documents, filtered, result, runPath, evidenceByDocumen
   rowsByDocument: Map<string, ReviewResult['rows']>;
   source: ReturnType<typeof useSourceWorkspace>;
 }) {
+  const evidenceById = new Map(result.evidence.map((item) => [item.id, item]));
+  const namesById = new Map(result.documents.map(({ id, name }) => [id, name]));
   return <div className="result-document-scroll" role="region" aria-label="Таблица документов" tabIndex={0}>
     <table className="result-document-table">
       <thead><tr>
@@ -178,8 +181,14 @@ function DocumentTable({ documents, filtered, result, runPath, evidenceByDocumen
         const contract = report ? result.scope.contract_number : oneText(metadata, 'contract');
         const { decision, parse_status: parseStatus, errors } = document;
         const exception = isExceptionDocument(document);
-        const messages = new Set(errors.map(({ message }) => message));
-        if (decision.state !== 'include') messages.add(decision.message);
+        const messages = new Set(errors.map(({ message }) => message.trim()).filter(Boolean));
+        if (exception && decision.message.trim()) messages.add(decision.message.trim());
+        const decisionSources = exception ? [...new Set(decision.evidence_refs)].flatMap((id) => {
+          const evidence = evidenceById.get(id);
+          if (!evidence) return [];
+          const name = namesById.get(evidence.document_id);
+          return name ? [{ id, label: `${name} · ${formatLocation(evidence.locator)}` }] : [];
+        }) : [];
         const readingStatus = parseStatus === undefined ? 'Чтение не указано' : readingLabels[parseStatus];
         return <tr key={document.id} data-selected={source.open && source.documentId === document.id}
           onClick={(event) => {
@@ -208,6 +217,11 @@ function DocumentTable({ documents, filtered, result, runPath, evidenceByDocumen
             </span>}
             {messages.size > 0 && <ul className="result-document-messages document-status-message">
               {[...messages].map((message) => <li key={message}>{message}</li>)}
+            </ul>}
+            {decisionSources.length > 0 && <ul className="result-document-messages document-status-sources" aria-label="Источники решения">
+              {decisionSources.map(({ id, label }) => <li key={id}>
+                <button type="button" onClick={(event) => source.openEvidence(id, event.currentTarget)}>{label}</button>
+              </li>)}
             </ul>}
           </td>
           <td>{related.length ? <ul className="result-document-messages">
