@@ -1,5 +1,7 @@
 # DocCheck
 
+**[Открыть DocCheck онлайн](https://responses-determined-prison-utilities.trycloudflare.com/checks/new)**
+
 DocCheck помогает бухгалтеру сверять карточку фактических затрат (КФЗ) с первичными документами. В результате видны суммы по статьям, расхождения и ссылки на источники.
 
 Проект команды «Буткемперы», хакатон МФТИ, трек 5.
@@ -26,9 +28,7 @@ docker compose -f compose.yaml -f compose.gpu.yaml up --build --wait --wait-time
 ## Документация
 
 - [Как проходит сверка](docs/case/README.md)
-- [Демо и запуск без Docker](docs/demo-runbook.md)
+- [Как показать DocCheck](docs/demo-runbook.md)
 - [Два учебных сценария](docs/case/use-cases.md)
 - [План пилота в вузе](docs/pilot-roadmap.md)
 - [Архитектура](docs/architecture.md), [контракты](contracts/README.md), [работа с данными](docs/data-policy.md) и [участие в разработке](CONTRIBUTING.md)
-
-> **Запуск без модели.** После настройки `.env` выполните `docker compose up --build --wait` и откройте [готовый учебный пример](http://127.0.0.1:8080/checks/synthetic-example). Загруженные документы останутся в очереди до запуска обработчика. Для остановки выполните `docker compose down`.
