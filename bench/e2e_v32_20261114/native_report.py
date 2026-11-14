@@ -33,6 +33,8 @@ def evaluate_cell(cells, address, stack=()):
     cell = cells.get(address)
     if not cell:
         raise ValueError(f"Missing numeric cell {address}")
+    if cell.get("type") in {"b", "e"}:
+        raise ValueError(f"Boolean or error in monetary cell {address}")
     expression = cell.get("formula")
     if not expression:
         value = parse_amount(cell.get("value"))
@@ -84,12 +86,15 @@ def read_native_report(path):
         xml = ET.fromstring(archive.read(worksheet_path))
     cells = {}
     for cell in xml.findall("x:sheetData/x:row/x:c", NS):
+        cell_type = cell.get("t")
         value = cell.findtext("x:v", namespaces=NS)
-        if cell.get("t") == "s" and value is not None:
+        if cell_type == "s" and value is not None:
             value = shared[int(value)]
-        elif cell.get("t") == "inlineStr":
+        elif cell_type == "inlineStr":
             value = "".join(cell.find("x:is", NS).itertext())
-        cells[cell.get("r")] = {"value": value, "formula": cell.findtext("x:f", namespaces=NS)}
+        cells[cell.get("r")] = {
+            "type": cell_type, "value": value, "formula": cell.findtext("x:f", namespaces=NS)
+        }
     text = lambda address: str(cells.get(address, {}).get("value") or "").strip()
     if text("B6") != "Статья затрат" or text("C6") != "Отчетная сумма, руб.":
         raise ValueError("Unsupported report table headers")

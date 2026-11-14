@@ -1,6 +1,7 @@
 """Translate the bounded v3.2 workflow into the saved result contract."""
 
 import re
+from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
@@ -48,7 +49,17 @@ _ARTICLES = {
 _CONTRACT = re.compile(r"^Договор\s*№\s*(\S+?)\.?$", re.IGNORECASE)
 _DATE = re.compile(r"(?<!\d)(?:\d{4}-\d{2}-\d{2}|\d{2}\.\d{2}\.\d{4})(?!\d)")
 _PERIOD = re.compile(r"^Период\b", re.IGNORECASE)
-_TOTAL = re.compile(r"\b(?:итого|всего|итоговая сумма)\b", re.IGNORECASE)
+_TOTAL_CANDIDATE = re.compile(
+    r"\b(?:итого|всего|итоговая\s+сумма|стоимость\s+(?:услуг|работ|оказанных|выполненных))\b",
+    re.IGNORECASE,
+)
+_CURRENT_TOTAL = re.compile(
+    r"^(?:итого\s+|итоговая\s+)?стоимость\s+"
+    r"(?:(?:оказанных|выполненных)(?:\s+в\s+этом\s+периоде)?\s+)?(?:услуг|работ)"
+    r"\s*:\s*\d[\d \u00a0\u2009\u202f]*(?:[.,]\d{1,2})?\s*(?:руб\.?|₽)"
+    r"(?:\.?\s+без\s+НДС)?\.?$",
+    re.IGNORECASE,
+)
 _MAX_EXPANDED_OFFICE_BYTES = 128 * 1024**2
 _IDENTITY_CONFLICTS = {
     "conflicting_duplicate",
@@ -174,7 +185,12 @@ def _same_period(
 
 
 def _bind_component(
-    file: InputFile, path: Path, extraction: dict, category: str, scope: Scope, decision_rules
+    file: InputFile,
+    observations: tuple[Observation, ...],
+    extraction: dict,
+    category: str,
+    scope: Scope,
+    decision_rules,
 ) -> tuple[Component, list[Evidence]] | None:
     prediction = extraction["prediction"]
     allocation = extraction.get("category_evidence", {})
@@ -187,16 +203,13 @@ def _bind_component(
         and category in entry.get("positive_categories", ())
         and entry.get("text")
     }
-    observations = read_native_document(path, "docx").observations
     amount = decision_rules.parse_amount(prediction.get("amount"))
     if amount is None or amount != amount.quantize(Decimal("0.01")):
         return None
     start, end, issue = decision_rules.document_interval(prediction)
     if issue or start is None or end is None:
         return None
-    amount_slots = [
-        item for item in observations if _TOTAL.search(item.raw_text) and item.amount is not None
-    ]
+    amount_slots = [item for item in observations if _TOTAL_CANDIDATE.search(item.raw_text)]
     contract_slots = [item for item in observations if _CONTRACT.fullmatch(item.raw_text.strip())]
     period_slots = [item for item in observations if _PERIOD.match(item.raw_text.strip())]
     article_slots = [
@@ -205,6 +218,7 @@ def _bind_component(
     groups = (amount_slots, contract_slots, period_slots, article_slots)
     if (
         len(amount_slots) != 1
+        or not _CURRENT_TOTAL.fullmatch(amount_slots[0].raw_text.strip())
         or amount_slots[0].amount != amount
         or not all(groups)
         or not all(_same_contract(item, scope.contract_number) for item in contract_slots)
@@ -248,7 +262,7 @@ def _bind_component(
 
 def process(run: StoredRun, upload_folder: Path) -> CheckJob:
     """Process the supported XLSX case and anchor v3.2 findings to saved originals."""
-    from bench.e2e_v32_20261114 import decision_rules
+    from bench.e2e_v32_20261114 import decision_rules, document_identity
     from bench.e2e_v32_20261114 import run as v32
 
     files = {item.id: item for item in map(InputFile.from_manifest, run.documents)}
@@ -296,6 +310,7 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
 
         documents, extractions, hashes = {}, [], {report.digest: report.id}
         previous = {}
+        observations_by_id = {}
         artifact_root = v32.runtime.ART
         try:
             v32.runtime.ART = folder / "runtime"
@@ -315,11 +330,18 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
                 if file.format == "docx" and _safe_office(source_path):
                     entry = file.v32_entry(folder, "primary")
                     copyfile(source_path, entry["path"])
-                    extracted = v32.extract_primary(entry, previous)
-                    if not extracted.get("error"):
-                        extractions.append(extracted)
-                        continue
-                    message = "Не удалось извлечь данные из первичного документа."
+                    native = read_native_document(Path(entry["path"]), "docx")
+                    if any(issue.code == "native_read_error" for issue in native.issues):
+                        message = "Структуру исходного документа не удалось прочитать полностью."
+                    else:
+                        extracted = v32.extract_primary(entry, previous)
+                        if not extracted.get("error"):
+                            # The configured model schema supplies no counterparty proof.
+                            extracted["prediction"].pop("counterparty", None)
+                            observations_by_id[file.id] = native.observations
+                            extractions.append(extracted)
+                            continue
+                        message = "Не удалось извлечь данные из первичного документа."
                 else:
                     message = "Адаптер ожидает читаемую первичку DOCX."
                 documents[file.id] = _document(
@@ -332,12 +354,36 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
             **scope.model_dump(include={"contract_number", "period_start", "period_end"}),
             "stage": prediction["stage"],
         }
+        # Check all non-byte-duplicate candidates before v3.2 can collapse them
+        # using model totals. The identity number and both scope fields come from
+        # the submitted file, and no issuer distinction is assumed for this slice.
+        identity_groups = defaultdict(list)
+        for entry in extractions:
+            number = document_identity.validate_number_evidence(entry)["number"]
+            observations = observations_by_id[entry["id"]]
+            contracts = [
+                match[1]
+                for item in observations
+                if (match := _CONTRACT.fullmatch(item.raw_text.strip()))
+            ]
+            periods = [
+                tuple(decision_rules.parse_date(part) for part in _DATE.findall(item.raw_text))
+                for item in observations
+                if _PERIOD.match(item.raw_text.strip())
+            ]
+            if number and len(set(contracts)) == len(set(periods)) == 1:
+                period = periods[0]
+                if len(period) == 2 and all(period):
+                    identity_groups[number, contracts[0], period].append(entry["id"])
+        native_conflicts = {
+            file_id for group in identity_groups.values() if len(group) > 1 for file_id in group
+        }
         comparison = v32.compare(
             {"scope": benchmark_scope, "completeness": {"status": "unknown", "basis": "worker"}},
             extracted_report,
             extractions,
         )
-        conflicted_sources = {
+        conflicted_sources = native_conflicts | {
             reason["id"]
             for row in comparison["rows"]
             for reason in row["reasons"]
@@ -358,7 +404,7 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
                 file = files[file_id]
                 bound = _bind_component(
                     file,
-                    Path(by_id[file_id]["path"]),
+                    observations_by_id[file_id],
                     by_id[file_id],
                     category,
                     scope,

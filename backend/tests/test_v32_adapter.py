@@ -7,7 +7,9 @@ from uuid import uuid4
 
 import pytest
 from docx import Document
-from openpyxl import Workbook
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
+from openpyxl import Workbook, load_workbook
 
 from doccheck_backend.run_worker import StoredRun
 from doccheck_backend.v32_adapter import process
@@ -194,3 +196,117 @@ def test_identity_conflict_removes_candidate_sum(uploaded_files, tmp_path, monke
     assert result.rows[0].observed_evidence_sum is None
     assert any(reason.code == "source_identity_conflict" for reason in result.rows[0].reasons)
     assert all(file.decision.state == "needs_review" for file in result.documents[1:])
+
+
+@pytest.mark.parametrize(
+    ("cell", "formula", "invalid"),
+    [("C7", None, True), ("D7", "=D7", True), ("D7", "=SUM(D7:D7)", "#DIV/0!")],
+)
+def test_xlsx_nonmoney_cells_are_rejected(
+    uploaded_files, tmp_path, monkeypatch, cell, formula, invalid
+):
+    calls = _stub_ollama(monkeypatch, "1172.70")
+    report = uploaded_files[0]
+    path = tmp_path / report["id"]
+    with path.open("rb") as source:
+        book = load_workbook(source)
+    book.active[cell] = invalid
+    if formula:
+        book.active["C7"] = formula
+    book.save(path)
+    report["sha256"] = sha256(path.read_bytes()).hexdigest()
+
+    job = process(StoredRun(uuid4(), None, uploaded_files), tmp_path)
+    assert calls == ["/api/tags"]
+    assert job.status == "failed" and job.result is None
+
+
+@pytest.mark.parametrize(
+    ("line", "extra"),
+    [
+        (
+            "Итого оплачено ранее: 1 172,70 руб.",
+            "Стоимость оказанных в этом периоде услуг: 2 304,00 руб.",
+        ),
+        ("Итого стоимость услуг: 1 172,70 руб.", "Итого с НДС: 1 300,00 руб., НДС 127,30 руб."),
+    ],
+)
+def test_unbound_or_ambiguous_service_total_remains_unknown(
+    uploaded_files, tmp_path, monkeypatch, line, extra
+):
+    _stub_ollama(monkeypatch, "1172.70")
+    primary = uploaded_files[1]
+    path = tmp_path / primary["id"]
+    act = Document(path)
+    act.paragraphs[4].text = line
+    act.add_paragraph(extra)
+    act.save(path)
+    primary["sha256"] = sha256(path.read_bytes()).hexdigest()
+    result = process(StoredRun(uuid4(), None, uploaded_files), tmp_path).result
+    assert result.rows[0].observed_evidence_sum is None
+    assert result.documents[1].decision.state == "needs_review"
+
+
+@pytest.mark.parametrize(
+    ("reverse", "different_totals"), [(False, False), (False, True), (True, True)]
+)
+def test_same_native_identity_is_quarantined_before_model_dedup(
+    uploaded_files, tmp_path, monkeypatch, reverse, different_totals
+):
+    original = uploaded_files[1]
+    clone_id = uuid4().hex
+    path = tmp_path / clone_id
+    act = Document(tmp_path / original["id"])
+    act.add_paragraph("Изменённое примечание.")
+    if different_totals:
+        act.paragraphs[4].text = "Итого стоимость услуг: 1 050,70 руб."
+    act.save(path)
+    uploaded_files.append(
+        {
+            **original,
+            "id": clone_id,
+            "name": "other.docx",
+            "sha256": sha256(path.read_bytes()).hexdigest(),
+        }
+    )
+    if reverse:
+        uploaded_files[1:] = uploaded_files[:0:-1]
+    calls = _stub_ollama(monkeypatch, "1172.70")
+    from bench.e2e_v32_20261114 import run as v32
+
+    request = v32.runtime.api
+
+    def model_disagrees_on_issuer(path, body=None, timeout=600):
+        response = request(path, body, timeout)
+        if path == "/api/chat" and not different_totals:
+            payload = json.loads(response["message"]["content"])
+            payload["counterparty"] = str(calls.count("/api/chat"))
+            response["message"]["content"] = json.dumps(payload)
+        return response
+
+    monkeypatch.setattr(v32.runtime, "api", model_disagrees_on_issuer)
+    result = process(StoredRun(uuid4(), None, uploaded_files), tmp_path).result
+    assert calls.count("/api/chat") == 2
+    assert result.rows[0].observed_evidence_sum is None
+    assert all(file.decision.state == "needs_review" for file in result.documents[1:])
+
+
+def test_partial_native_read_reports_file_error(uploaded_files, tmp_path, monkeypatch):
+    calls = _stub_ollama(monkeypatch, "1172.70")
+    primary = uploaded_files[1]
+    path = tmp_path / primary["id"]
+    act = Document(path)
+    table = act.add_table(rows=1, cols=1)
+    tr_pr = table.rows[0]._tr.get_or_add_trPr()
+    grid_before = OxmlElement("w:gridBefore")
+    grid_before.set(qn("w:val"), "malformed")
+    tr_pr.append(grid_before)
+    act.save(path)
+    primary["sha256"] = sha256(path.read_bytes()).hexdigest()
+
+    job = process(StoredRun(uuid4(), None, uploaded_files), tmp_path)
+    assert calls == ["/api/tags"]
+    assert job.status == "completed_with_issues"
+    assert job.result.documents[1].decision.state == "parse_error"
+    assert job.result.documents[1].errors
+    assert job.result.rows[0].observed_evidence_sum is None
