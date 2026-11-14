@@ -51,8 +51,9 @@ for (const width of [320, 390]) {
     await page.goto('/checks');
     await page.getByRole('link', { name: 'Синтетическая сверка', exact: true }).click();
 
-    await expect(page.getByText('Расхождения: 1', { exact: true })).toBeInViewport({ ratio: 1 });
-    await expect(page.getByRole('heading', { name: 'Показатели' })).toBeVisible();
+    const summary = page.getByRole('region', { name: 'Заключение по проверке' });
+    await expect(summary.getByText('Расхождения: 1', { exact: true })).toBeInViewport({ ratio: 1 });
+    await expect(page.getByRole('heading', { name: 'Показатели отчёта' })).toBeVisible();
     await expect(page.getByRole('link', { name: 'Исключения' })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
   });
@@ -155,7 +156,6 @@ test('the synthetic conclusion shows XLSX export as unavailable', async ({ page 
   await page.route('**/api/v0/runs', (route) => route.fulfill({ json: { items: [], next_cursor: null } }));
   await page.goto('/checks');
   await page.getByRole('link', { name: 'Синтетическая сверка', exact: true }).click();
-  await page.getByRole('link', { name: 'Заключение' }).click();
 
   const download = page.getByRole('button', { name: 'Скачать XLSX' });
   await expect(download).toBeVisible();
@@ -261,7 +261,8 @@ test('the finished check loads stored findings and can retry without repeating s
   const zero = page.getByRole('row').filter({ hasText: 'Синтетическая статья B' });
   await expect(zero.getByRole('cell', { name: '0,00', exact: true })).toBeVisible();
   await zero.getByRole('button').click();
-  await expect(page.getByText('Источник статьи B не прочитан')).toBeVisible();
+  const reconciliation = page.getByRole('region', { name: 'Рабочее место сверки' });
+  await expect(reconciliation.getByText('Источник статьи B не прочитан')).toBeVisible();
   await expect(page.getByText(/Ошибка чтения файла/)).toBeVisible();
   await page.getByRole('link', { name: 'Исключения' }).click();
   await expect(page.getByText('Ошибка чтения', { exact: true })).toBeVisible();
@@ -288,7 +289,8 @@ test('a non-synthetic saved result with no rows has an explicit empty state', as
   } }));
 
   await page.goto('/checks/empty-run');
-  await expect(page.getByText('Показатели отсутствуют.', { exact: true })).toBeVisible();
+  const results = page.getByRole('region', { name: 'Заключение по проверке' });
+  await expect(results.getByText('Показатели отсутствуют.', { exact: true })).toBeVisible();
   await expect(page.getByText('Синтетический результат · сохранённая проверка')).toHaveCount(0);
   await expect(page.getByRole('table')).toHaveCount(0);
 });
@@ -358,6 +360,7 @@ test('the selected stored evidence opens its own original and address', async ({
     '/api/v0/runs/run-with-source/documents/report/fragments?evidence_id=report-a',
   ]));
 
+  await page.getByRole('button', { name: 'Закрыть просмотр источника' }).click();
   await page.getByLabel('Доказательство').selectOption('amount-1');
   await expect(preview).toHaveCount(0);
   await open.click();
