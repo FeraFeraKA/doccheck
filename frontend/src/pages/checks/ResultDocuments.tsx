@@ -102,7 +102,7 @@ export function ResultDocuments({
     {exceptions && synthetic && <p role="status" className="checks-caption">
       Действия бухгалтера недоступны в синтетическом режиме.
     </p>}
-    <div className="result-document-filters" role="group" aria-label="Состояние файла">
+    <div className="result-document-filters" role="group" aria-label="Статус файла">
       {([['all', 'Все'], ...filters] as const).map(([value, label]) => (
         <button type="button" key={value} aria-pressed={filter === value}
           onClick={() => setFilter(value)}>
@@ -145,7 +145,7 @@ export function ResultDocuments({
           </tr>;
         })}
         {visible.length === 0 && <tr><td colSpan={exceptions ? 5 : 6}>
-          <p role="status">{filter !== 'all' ? 'Документов в этом состоянии нет.'
+          <p role="status">{filter !== 'all' ? 'Документов с этим статусом нет.'
             : exceptions ? 'Исключений нет.' : 'Документы отсутствуют.'}</p>
         </td></tr>}
         </tbody>

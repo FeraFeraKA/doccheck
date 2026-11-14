@@ -16,15 +16,16 @@ test('the accountant opens the synthetic reconciliation and sees discrepancies a
   await expect(page.getByRole('navigation', { name: 'Основная навигация' })
     .getByRole('link', { name: 'Новая проверка' })).toHaveAttribute('aria-current', 'page');
   await expect(page.getByRole('link', { name: 'Журнал действий' })).toHaveCount(0);
-  await expect(page.getByText('Добавьте отчёт и подтверждающие документы для сверки.')).toBeVisible();
+  await expect(page.getByText('Добавьте КФЗ и первичные документы.')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Отправить на проверку' })).toBeDisabled();
   await page.getByRole('link', { name: 'Открыть готовый синтетический результат' }).click();
 
   const discrepancy = page.getByRole('row').filter({ hasText: 'Синтетическая статья A' });
   await expect(discrepancy.getByRole('cell', { name: 'Расхождение', exact: true })).toBeVisible();
   await expect(discrepancy.getByRole('cell', { name: '30,00', exact: true })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Возможные причины расхождений' })).toBeVisible();
-  await expect(page.getByText(/В этом примере таких гипотез нет/)).toBeVisible();
+  const unverified = page.getByRole('region', { name: 'Недостаточно подтверждений' });
+  await expect(unverified).toContainText('Синтетическая статья B');
+  await expect(unverified).not.toContainText('Синтетическая статья A');
 
   const row = page.getByRole('row').filter({ hasText: 'Синтетическая статья B' });
   await expect(row.getByRole('cell', { name: '0,00', exact: true })).toBeVisible();
@@ -261,6 +262,8 @@ test('the finished check loads stored findings and can retry without repeating s
   await expect(page.getByText('Синтетический результат · сохранённая проверка')).toBeVisible();
   const partial = page.getByRole('row').filter({ hasText: 'Синтетическая статья A' });
   await expect(partial.getByText('Частичная сумма: 60,25 RUB')).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Недостаточно подтверждений' }))
+    .toContainText('Частичная сумма: 60,25 RUB');
   await expect(partial.getByRole('cell', { name: '—', exact: true })).toBeVisible();
   await expect(partial.getByRole('cell', { name: 'Не проверен', exact: true })).toBeVisible();
   await page.getByLabel('Доказательство').selectOption('amount-1');
@@ -278,6 +281,33 @@ test('the finished check loads stored findings and can retry without repeating s
   await expect(page.getByText('Ошибка чтения', { exact: true })).toBeVisible();
   expect(statusCalls).toBe(1);
   expect(findingsCalls).toBe(2);
+});
+
+test('a complete document sum stays complete when the reported amount is missing', async ({ page }) => {
+  const id = 'missing-reported-amount';
+  const [first, ...rest] = example.result.rows;
+  await page.route(`**/api/v0/runs/${id}`, (route) => route.fulfill({ json: {
+    run_id: id, status: 'completed_with_issues', created_at: '2026-11-13T12:00:00Z', error: null,
+    progress: { processed_documents: 4, total_documents: 4 },
+  } }));
+  await page.route(`**/api/v0/runs/${id}/findings`, (route) => route.fulfill({ json: {
+    ...example.result, run_id: id,
+    rows: [{
+      ...first, reported_value: null, reported_evidence_refs: [], delta: null, status: 'unverified',
+      reasons: [{ code: 'missing_reported_value', message: 'Нет суммы в КФЗ', evidence_refs: [] }],
+      root_issue_id: null,
+    }, ...rest],
+    summary: {
+      ...example.result.summary, counts: { verified: 0, discrepancy: 0, unverified: 2 },
+      primary_issues: example.result.summary.primary_issues.filter((issue) => issue.id !== 'issue-a'),
+    },
+  } }));
+
+  await page.goto(`/checks/${id}`);
+  const unverified = page.getByRole('region', { name: 'Недостаточно подтверждений' });
+  await expect(unverified.getByText('Нет суммы в КФЗ')).toBeVisible();
+  await expect(unverified.getByText('Сумма по документам: 120,50 RUB')).toBeVisible();
+  await expect(unverified.getByText(/Частичная сумма/)).toHaveCount(0);
 });
 
 test('a non-synthetic saved result with no rows has an explicit empty state', async ({ page }) => {

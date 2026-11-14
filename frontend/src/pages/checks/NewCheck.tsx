@@ -131,7 +131,7 @@ export function NewCheck() {
   return (
     <div className="upload-page">
       <h1>Новая проверка</h1>
-      <p className="upload-intro">Добавьте отчёт и подтверждающие документы для сверки.</p>
+      <p className="upload-intro">Добавьте КФЗ и первичные документы.</p>
       {publicDemo ? (
         <section className="upload-card upload-public-notice mt-6">
           <h2>Загрузка доступна в локальной установке</h2>
@@ -151,7 +151,6 @@ export function NewCheck() {
         <Link className="workspace-button workspace-button-outline upload-example" to={demoRunPath}>
           Открыть готовый синтетический результат
         </Link>
-        {!publicDemo && !canStart && <span>Добавьте КФЗ и первичные документы</span>}
       </div>
       {submitError && <p className="upload-validation" role="alert">{submitError}</p>}
       {isSending && <p role="status">Отправляем пакет…</p>}
