@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { DocumentSourcePreview } from './DocumentSourcePreview';
 import type { DocumentImageView } from './DocumentSourcePreview';
@@ -78,11 +78,11 @@ export function useSourceWorkspace({
     requestAnimationFrame(() => target?.focus({ preventScroll: !window.matchMedia('(max-width: 700px)').matches }));
   }
 
-  function clear() {
+  const clear = useCallback(() => {
     setOpen(false);
     setSelection(undefined);
     trigger.current = null;
-  }
+  }, []);
 
   function selectEvidence(evidenceId: string) {
     const source = evidenceById.get(evidenceId);

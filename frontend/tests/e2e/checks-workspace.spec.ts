@@ -193,7 +193,7 @@ test('documents and the direct stored conclusion download XLSX for the same run'
   await expect(button).toHaveCount(0);
   await page.getByRole('navigation', { name: 'Разделы проверки' }).getByRole('link', { name: 'Документы' }).click();
   await expect(page).toHaveURL(`/checks/${runId}/documents`);
-  await expect(page.getByRole('region', { name: 'Документы' }).getByRole('button', { name: 'Скачать XLSX' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Скачать XLSX' })).toBeVisible();
   await button.click();
   await expect(page.getByRole('alert')).toHaveText('Не удалось скачать XLSX. Повторите попытку.');
 

@@ -11,6 +11,9 @@ test('the result disclosure keeps each component and its source address selectab
   await expect(row).toHaveAttribute('aria-expanded', 'true');
   const details = table.getByRole('region', { name: 'Подробности: Синтетическая статья A' });
   const components = details.getByRole('list', { name: 'Слагаемые показателя: Синтетическая статья A' });
+  const addresses = components.getByText('Адреса и основание', { exact: true });
+  await addresses.nth(0).click();
+  await addresses.nth(1).click();
   const amounts = components.getByRole('button', { name: /^Сумма · / });
   await expect(amounts).toHaveCount(2);
   await expect(amounts.nth(0)).toHaveText(/C6/);

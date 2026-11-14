@@ -204,6 +204,7 @@ function Reconciliation({ result, storedRunId, rowJump }: {
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [evidenceId, setEvidenceId] = useState<string>();
   const sourceWorkspace = useSourceWorkspace({ result, storedRunId });
+  const { clear: clearSource } = sourceWorkspace;
   const [focused, setFocused] = useState(false);
   const workspace = useRef<HTMLDialogElement>(null);
   const focusToggle = useRef<HTMLButtonElement>(null);
@@ -253,7 +254,7 @@ function Reconciliation({ result, storedRunId, rowJump }: {
   function enterFocus() {
     const panel = workspace.current;
     if (!panel || restoreScroll.current) return;
-    sourceWorkspace.clear();
+    clearSource();
     const previousOverflow = window.document.body.style.overflow;
     panel.close();
     panel.showModal();
@@ -279,9 +280,9 @@ function Reconciliation({ result, storedRunId, rowJump }: {
     setQuery('');
     setSelectedId(id);
     setEvidenceId(undefined);
-    sourceWorkspace.clear();
+    clearSource();
     setExpanded((previous) => new Set(previous).add(id));
-  }, [rowJump]);
+  }, [rowJump, clearSource]);
 
   useLayoutEffect(() => {
     const target = pendingIssueScroll.current;
@@ -319,7 +320,7 @@ function Reconciliation({ result, storedRunId, rowJump }: {
   function selectRow(id?: string) {
     setSelectedId(id);
     setEvidenceId(undefined);
-    sourceWorkspace.clear();
+    clearSource();
   }
 
   function toggleRow(id: string) {
@@ -355,7 +356,9 @@ function Reconciliation({ result, storedRunId, rowJump }: {
   const refs = new Set(resultRowEvidenceIds(row, issue));
   const sources = evidence.filter(({ id }) => refs.has(id));
   const sourcesById = new Map(sources.map((item) => [item.id, item]));
-  const source = sources.find(({ id }) => id === evidenceId) ?? sources[0];
+  const source = sources.find(({ id }) => id === (evidenceId ??
+    (sourceWorkspace.row?.id === row?.id ? sourceWorkspace.evidenceId : undefined)))
+    ?? sources[0];
   const sourceIndex = sources.findIndex(({ id }) => id === source?.id);
   const document = source && documentsById.get(source.document_id);
 
@@ -423,7 +426,7 @@ function Reconciliation({ result, storedRunId, rowJump }: {
       <div className="reconcile-panes reconcile-panes-stacked">
         <ResultTable
           rows={visible} total={rows.length} filters={filters} filter={filter} query={query}
-          selectedId={sourceWorkspace.open ? sourceWorkspace.rowId : row?.id} selectedEvidenceId={sourceWorkspace.open ? sourceWorkspace.evidenceId : source?.id} expanded={expanded}
+          selectedId={sourceWorkspace.open ? sourceWorkspace.rowId : row?.id} selectedEvidenceId={source?.id} expanded={expanded}
           tableScroll={tableScroll} selectedRow={selectedRow} evidenceFields={componentEvidenceFields}
           evidenceById={allEvidenceById} documentsById={documentsById}
           formatAddress={formatSourceChoice}

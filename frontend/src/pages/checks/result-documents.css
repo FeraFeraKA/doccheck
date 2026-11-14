@@ -67,9 +67,9 @@
   background: #f6f9f8;
 }
 
-.result-document-file {
-  align-items: flex-start;
-}
+.result-document-table tr[data-selected="true"] { background: var(--ui-selected); }
+
+.result-document-file { align-items: center; }
 
 .result-document-file .file-type-icon {
   flex: 0 0 1.4rem;
@@ -122,22 +122,4 @@
   margin: 0;
   list-style: none;
   overflow-wrap: anywhere;
-}
-
-.result-document-details {
-  display: grid;
-  gap: .75rem;
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.result-document-picker {
-  display: grid;
-  min-width: 0;
-  gap: .25rem;
-}
-
-.result-document-picker select {
-  min-width: 0;
-  width: 100%;
 }

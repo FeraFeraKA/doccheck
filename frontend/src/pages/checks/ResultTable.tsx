@@ -133,19 +133,19 @@ export function ResultTable({
                             <summary>Адреса и основание</summary>
                             <p>{component.relation_reason}</p>
                             <ul className="indicator-addresses">
-                            {evidenceFields.flatMap(([field, role]) => (component[field] ?? []).map((id) => {
-                              const item = evidenceById.get(id);
-                              const document = item && documentsById.get(item.document_id);
-                              return <li key={`${field}:${id}`}>
-                                {item && document ? <button
-                                  type="button" aria-pressed={selected && selectedEvidenceId === id}
-                                  onClick={(event) => onSelectSource(row.id, id, event.currentTarget)}
-                                >
-                                  <span>{role} · {document.name} · {formatAddress(item.locator)}</span>
-                                  <span aria-hidden="true">›</span>
-                                </button> : <span>{role} · Адрес источника недоступен.</span>}
-                              </li>;
-                            }))}
+                              {evidenceFields.flatMap(([field, role]) => (component[field] ?? []).map((id) => {
+                                const item = evidenceById.get(id);
+                                const document = item && documentsById.get(item.document_id);
+                                return <li key={`${field}:${id}`}>
+                                  {item && document ? <button
+                                    type="button" aria-pressed={selected && selectedEvidenceId === id}
+                                    onClick={(event) => onSelectSource(row.id, id, event.currentTarget)}
+                                  >
+                                    <span>{role} · {document.name} · {formatAddress(item.locator)}</span>
+                                    <span aria-hidden="true">›</span>
+                                  </button> : <span>{role} · Адрес источника недоступен.</span>}
+                                </li>;
+                              }))}
                             </ul>
                           </details>
                         </li>)}

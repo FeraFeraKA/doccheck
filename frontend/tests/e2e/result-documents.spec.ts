@@ -24,7 +24,7 @@ test('synthetic document decisions, addresses and row links work without the doc
   await filters.getByRole('button', { name: 'Все (4)' }).click();
   const file = table.getByRole('button', { name: 'synthetic-ledger.xlsx', exact: true });
   await file.press('Enter');
-  const dialog = page.getByRole('dialog', { name: 'Источник документа' });
+  const dialog = page.getByLabel('Источник документа', { exact: true }).and(page.locator('.source-workspace-panel[open]'));
   await expect(dialog.getByText('Оригинал в готовом примере недоступен.')).toBeVisible();
   await dialog.getByRole('combobox', { name: 'Адрес доказательства' }).selectOption('amount-2');
   await expect(dialog.getByRole('paragraph').filter({ hasText: 'Лист «Синтетика», C7' })).toBeVisible();
@@ -72,7 +72,7 @@ test('stored exception without an address requests only its own original', async
   await expect(table.getByRole('link', { name: 'Синтетическая статья B' })).toHaveCount(1);
   const file = table.getByRole('button', { name: example.result.documents[3].name });
   await file.click();
-  const dialog = page.getByRole('dialog', { name: 'Источник документа' });
+  const dialog = page.getByLabel('Источник документа', { exact: true }).and(page.locator('.source-workspace-panel[open]'));
   await expect(dialog.getByText('Адрес фрагмента отсутствует.')).toBeVisible();
   await expect(dialog.getByRole('alert')).toBeVisible();
   expect([...new Set(originals)]).toEqual([`/api/v0/runs/${id}/documents/unreadable`]);
