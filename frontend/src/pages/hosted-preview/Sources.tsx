@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 
-type Source = { id: string; document_id: string };
+import { formatLocation } from '../checks/reviewResult';
+
+type Source = { id: string; document_id: string; locator?: unknown };
 type Original = { id: string; name: string };
 type SourcePreview =
   | { status: 'available'; path: string; text: string | null; highlight: unknown }
@@ -9,7 +11,40 @@ type SourcePreview =
 type OpenSource = { name: string; preview: SourcePreview };
 
 function record(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function index(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
+}
+
+function bbox(value: unknown): value is [number, number, number, number] {
+  return Array.isArray(value) && value.length === 4
+    && value.every((coordinate: unknown) => typeof coordinate === 'number'
+      && coordinate >= 0 && coordinate <= 1)
+    && value[0] < value[2] && value[1] < value[3];
+}
+
+function SourceAddress({ locator }: { locator: unknown }) {
+  if (!record(locator) || locator.kind !== 'page' || !index(locator.page)) return null;
+  const { page, bbox: box, line, table_row, table_column, fragment_id } = locator;
+  if ((box != null && !bbox(box)) || (line != null && !index(line))
+      || (table_row == null ? table_column != null : !index(table_row) || !index(table_column))
+      || (fragment_id != null && (typeof fragment_id !== 'string' || !fragment_id.trim()))
+      || (box == null && line == null && table_row == null && fragment_id == null)) return null;
+  const address = formatLocation({
+    page,
+    line: index(line) ? line : null,
+    table_row: index(table_row) ? table_row : null,
+    table_column: index(table_column) ? table_column : null,
+    fragment_id: typeof fragment_id === 'string' ? fragment_id : null,
+  });
+  return (
+    <p>
+      <strong>Адрес источника</strong>{' '}{address}
+      {bbox(box) && <> · Координаты фрагмента: {box.join(', ')}</>}
+    </p>
+  );
 }
 
 function resultSources(value: unknown): { evidence: Source[]; documents: Original[] } {
@@ -126,6 +161,7 @@ export function Sources({ runPath }: { runPath: string }) {
               {opened.preview.text === null
                 ? <p role="status">У оригинала нет доступного текстового фрагмента.</p>
                 : <PreviewText text={opened.preview.text} highlight={opened.preview.highlight} />}
+              <SourceAddress locator={selection?.source.locator} />
               <a href={opened.preview.path}>Скачать оригинал</a>
             </>
           )}

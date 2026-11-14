@@ -55,12 +55,18 @@ test('distinguishes a missing original, a retryable failure and an available ori
       evidence: [
         { id: 'missing', document_id: 'missing-original' },
         { id: 'retry', document_id: 'retry-original' },
-        { id: 'without-text', document_id: 'image' },
+        { id: 'without-text', document_id: 'image', locator: {
+          kind: 'page', page: 3, bbox: [0.1, 0.2, 0.7, 0.4],
+        } },
+        { id: 'invalid-address', document_id: 'invalid', locator: {
+          kind: 'page', page: 9, bbox: [0.7, 0.2, 0.1, 0.4],
+        } },
       ],
       documents: [
         { id: 'missing-original', name: 'Удалённый DOCX' },
         { id: 'retry-original', name: 'Временный сбой' },
         { id: 'image', name: 'Скан' },
+        { id: 'invalid', name: 'Неверный адрес' },
       ],
     },
   }));
@@ -86,5 +92,10 @@ test('distinguishes a missing original, a retryable failure and an available ori
   await expect(original).toHaveAttribute('href', prefix + '/' + runId + '/documents/retry-original');
   await sources.getByRole('button', { name: /Скан/ }).click();
   await expect(sources.getByRole('status')).toHaveText('У оригинала нет доступного текстового фрагмента.');
+  await expect(sources.getByText('Страница 3', { exact: false })).toBeVisible();
+  await expect(sources.getByText('Координаты фрагмента: 0.1, 0.2, 0.7, 0.4', { exact: false })).toBeVisible();
   await expect(original).toHaveAttribute('href', prefix + '/' + runId + '/documents/image');
+  await sources.getByRole('button', { name: /Неверный адрес/ }).click();
+  await expect(original).toHaveAttribute('href', prefix + '/' + runId + '/documents/invalid');
+  await expect(sources.getByText('Адрес источника', { exact: true })).toHaveCount(0);
 });
