@@ -348,6 +348,22 @@ def test_worker_does_not_use_conflicting_document_date_as_operation_period(
             "period_ambiguous",
         ),
         (
+            "Период: Февраль 2031 — «15» апреля 2031",
+            None,
+            "299,12",
+            "100,00",
+            False,
+            "period_ambiguous",
+        ),
+        (
+            'Период: Январь 2031 — "15" апреля 2031',
+            None,
+            "397,62",
+            "1,50",
+            True,
+            "period_ambiguous",
+        ),
+        (
             "Период: Январь 2031 до 15-го апреля 2031",
             None,
             "397,62",

@@ -142,6 +142,12 @@ _PERIOD_BOUND_START = re.compile(
     rf"|окончание|окончания|завершение|завершения)\b)",
     re.I,
 )
+_QUOTED_PERIOD_BOUND = re.compile(
+    rf"""^[«„“"'‘]\s*(?:{_DAY}\s*[»“”"'’]|"""
+    rf"""[0-9]{{1,2}}(?:[-‑](?:го|е|й|му|я|ое))?\s*[»“”"'’]"""
+    rf"""(?=$|\s+(?:{"|".join(_MONTH)}|{_MONTH_ABBREVIATION})\b))""",
+    re.I,
+)
 _BARE_DATE_RANGE = re.compile(rf"^\s*(?:с\s+)?{_DAY}(?:\s+г\.?)?\s*(?:по\b|до\b|[–—-])", re.I)
 _BARE_MONTH_PERIOD = re.compile(rf"^\s*(?:(?:с|за|в)\s+)?{_MONTH_YEAR}", re.I)
 _DATE_RANGE = re.compile(
@@ -297,6 +303,10 @@ def _duration_continuation(text: str) -> bool:
     )
 
 
+def _possible_period_bound(text: str) -> bool:
+    return bool(_PERIOD_BOUND_START.match(text) or _QUOTED_PERIOD_BOUND.match(text))
+
+
 def _period_continuation(text: str) -> bool:
     match = _PERIOD_CONTINUATION.match(text)
     if not match:
@@ -309,7 +319,7 @@ def _period_continuation(text: str) -> bool:
     rest = re.sub(r"^(?:по|до|на)(?:\s+|$)", "", rest, flags=re.I).strip()
     # A delimiter followed by unrelated prose (e.g. "по договору") is not
     # another period; a missing or period-shaped bound remains uncertain.
-    return not rest or bool(_PERIOD_BOUND_START.match(rest))
+    return not rest or _possible_period_bound(rest)
 
 
 def _additional_period_prefix(text: str) -> bool:
@@ -317,7 +327,7 @@ def _additional_period_prefix(text: str) -> bool:
     if not match:
         return False
     rest = text[match.end() :].strip()
-    return not rest or bool(_PERIOD_BOUND_START.match(rest))
+    return not rest or _possible_period_bound(rest)
 
 
 def _period_following(first: Observation, second: Observation) -> bool:
@@ -436,7 +446,7 @@ def _additional_pipe_period(tail: str) -> bool:
             return True
         if match := _BARE_DATE_RANGE.match(part):
             rest = part[match.end() :].strip()
-            if not rest or _PERIOD_BOUND_START.match(rest):
+            if not rest or _possible_period_bound(rest):
                 return True
     return False
 
