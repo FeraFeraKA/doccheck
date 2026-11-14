@@ -425,7 +425,7 @@ def test_malformed_docx_main_part_returns_file_diagnostic(tmp_path, main_xml):
     assert [issue.code for issue in result.issues] == ["native_read_error"]
 
 
-@pytest.mark.parametrize("file_format", ["pdf", "png"])
+@pytest.mark.parametrize("file_format", ["png", "other"])
 def test_unimplemented_native_format_has_explicit_diagnostic(tmp_path, file_format):
     result = read_native_document(tmp_path / "original", file_format)
     assert not result.observations
