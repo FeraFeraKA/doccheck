@@ -19,13 +19,14 @@ interface Selection {
 }
 
 export function useSourceWorkspace({
-  result, storedRunId, initialDocumentId, initialEvidenceId, onClose,
+  result, storedRunId, initialDocumentId, initialEvidenceId, onClose, onEvidenceChange,
 }: {
   result: ReviewResult;
   storedRunId?: string;
   initialDocumentId?: string;
   initialEvidenceId?: string;
   onClose?: () => void;
+  onEvidenceChange?: (id: string | undefined) => void;
 }) {
   const { documents, evidence } = result;
   const report = documents.find(({ role }) => role === 'report');
@@ -87,6 +88,7 @@ export function useSourceWorkspace({
   function selectEvidence(evidenceId: string) {
     const source = evidenceById.get(evidenceId);
     if (!source) return;
+    onEvidenceChange?.(evidenceId);
     setSelection({ ...selection, documentId: source.document_id, evidenceId,
       rowEvidenceIds: selection?.rowEvidenceIds ?? [] });
   }
@@ -104,6 +106,7 @@ export function useSourceWorkspace({
   function selectDocument(id: string) {
     const previous = selection?.documentId === id ? selected : undefined;
     const source = previous ?? rowSources.find(({ document_id }) => document_id === id) ?? evidenceByDocument.get(id)?.[0];
+    onEvidenceChange?.(source?.id);
     setSelection({ ...selection, documentId: id, evidenceId: source?.id, rowEvidenceIds: selection?.rowEvidenceIds ?? [] });
   }
 

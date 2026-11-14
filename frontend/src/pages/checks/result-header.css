@@ -5,8 +5,6 @@
 .result-header-meta,
 .result-summary-muted { color: var(--ui-secondary); }
 
-.check-result-header nav span[aria-current] { color: var(--ui-ink); }
-
 .checks-content .check-result-header h1 {
   font: 600 clamp(1.5rem, 4vw, 1.75rem)/1.25 Georgia, serif;
 }
@@ -57,8 +55,4 @@
 
 @media (max-width: 700px) {
   .checks-content .result-summary { margin-top: .75rem; }
-}
-
-@media (min-width: 1001px) {
-  .result-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

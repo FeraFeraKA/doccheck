@@ -203,7 +203,7 @@ function Reconciliation({ result, storedRunId, rowJump }: {
   const [selectedId, setSelectedId] = useState(() => rows.find(({ status }) => status === 'discrepancy')?.id);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [evidenceId, setEvidenceId] = useState<string>();
-  const sourceWorkspace = useSourceWorkspace({ result, storedRunId });
+  const sourceWorkspace = useSourceWorkspace({ result, storedRunId, onEvidenceChange: setEvidenceId });
   const { clear: clearSource } = sourceWorkspace;
   const [focused, setFocused] = useState(false);
   const workspace = useRef<HTMLDialogElement>(null);
@@ -268,6 +268,7 @@ function Reconciliation({ result, storedRunId, rowJump }: {
     closeFocus(false);
     const selected = rows.find((item) => item.id === selectedRowId) ?? row;
     const linkedIssue = summary.primary_issues.find((item) => item.id === selected?.root_issue_id);
+    setEvidenceId(id);
     sourceWorkspace.openEvidence(id, trigger, selected, [...new Set(resultRowEvidenceIds(selected, linkedIssue))]);
   }
 

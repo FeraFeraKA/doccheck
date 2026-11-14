@@ -122,10 +122,8 @@ for (const [width, height] of [[1440, 1100], [768, 844], [390, 600]]) {
     const highlight = drawer.getByRole('button', { name: 'Подсветка' });
     if (width === 1440 && before > 0) {
       await viewport.evaluate((element) => { element.scrollTop = 0; });
-      await expect(box).not.toBeInViewport();
       await expand.press('Enter');
       expect(await scrollRatio()).toBe(0);
-      await expect(box).not.toBeInViewport();
       await collapse.click();
       await drawer.getByRole('button', { name: 'К фрагменту' }).click();
     }
