@@ -13,6 +13,7 @@ from pdfminer.pdfinterp import PDFPageInterpreter
 from pdfminer.pdftypes import stream_value
 from pdfminer.psexceptions import PSException
 from pdfminer.psparser import literal_name
+from pdfminer.utils import mult_matrix
 from pdfplumber.page import Page, PDFPageAggregatorWithMarkedContent
 from pdfplumber.utils.exceptions import PdfminerException
 
@@ -31,13 +32,28 @@ class _PDFTextInterpreter(PDFPageInterpreter):
     do_W_a = do_W
 
     def do_Tr(self, render) -> None:
-        if render not in (0, 1, 2):
+        # Text advance boxes do not bound stroked contours, even without a crop.
+        if render != 0:
             raise _UnsupportedVisibility
         super().do_Tr(render)
 
     def do_TJ(self, seq) -> None:
         if isinstance(self.textstate.font, PDFType3Font):
             raise _UnsupportedVisibility
+        if self.textstate.font is not None:
+            a, b, c, d, x, y = mult_matrix(self.textstate.matrix, self.ctm)
+            if (
+                not all(
+                    isfinite(value)
+                    for value in (a, b, c, d, x, y, self.textstate.scaling, self.textstate.fontsize)
+                )
+                or self.textstate.scaling == 0
+                or self.textstate.fontsize == 0
+            ):
+                raise _UnsupportedVisibility
+            determinant = a * d - b * c
+            if not isfinite(determinant) or determinant == 0:
+                raise _UnsupportedVisibility
         super().do_TJ(seq)
 
     def do_gs(self, name) -> None:
@@ -101,6 +117,10 @@ def _visible_box(page: Page) -> tuple[float, float, float, float]:
         x0, x1 = left + right - x1, left + right - x0
     box = max(left, x0), max(top, y0), min(right, x1), min(bottom, y1)
     if not all(isfinite(value) for value in box) or box[0] >= box[2] or box[1] >= box[3]:
+        raise _UnsupportedVisibility
+    # PDFMiner uses advances and font metrics, not painted outlines. An inward
+    # crop can cut an overhanging glyph even when its advance is inside the crop.
+    if box != page.mediabox:
         raise _UnsupportedVisibility
     return box
 

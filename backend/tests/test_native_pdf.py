@@ -15,12 +15,12 @@ def _stream(data, extra=b""):
     )
 
 
-def _write_pdf(path, streams, *, attrs=b"", form=None):
+def _write_pdf(path, streams, *, attrs=b"", form=None, font=b"Courier"):
     page_part = b" ".join(f"{index} 0 R".encode() for index in range(4, 4 + len(streams)))
     objects = [
         b"<< /Type /Catalog /Pages 2 0 R >>",
         b"<< /Type /Pages /Kids [" + page_part + b"] /Count " + str(len(streams)).encode() + b" >>",
-        b"<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /" + font + b" >>",
     ]
     first_stream = 4 + len(streams)
     resources = b"/Font << /F1 3 0 R >>"
@@ -76,7 +76,7 @@ def test_pdf_preserves_written_glyphs_and_address_without_amount(tmp_path, rotat
 
 
 @pytest.mark.parametrize("rotation", [0, 90, 180, 270])
-def test_pdf_cropbox_omits_full_show_when_it_hides_sign(tmp_path, rotation):
+def test_pdf_inward_crop_rejects_page_even_if_some_advances_fit(tmp_path, rotation):
     pdf = _write_pdf(
         tmp_path / "crop.pdf",
         [b"BT /F1 12 Tf 12 140 Td (-120 RUB) Tj 25 -20 Td (Visible) Tj ET"],
@@ -84,9 +84,44 @@ def test_pdf_cropbox_omits_full_show_when_it_hides_sign(tmp_path, rotation):
     )
     result = read_native_document(pdf, "pdf")
 
-    assert [item.raw_text for item in result.observations] == ["Visible"]
-    assert [issue.code for issue in result.issues] == ["clipped_pdf_text"]
-    assert result.issues[0].locator.bbox is None
+    assert result.observations == ()
+    assert [(issue.code, issue.page) for issue in result.issues] == [
+        ("unsupported_pdf_visibility", 1),
+    ]
+
+
+@pytest.mark.parametrize("rotation", [0, 90, 180, 270])
+@pytest.mark.parametrize(
+    ("font", "show"),
+    [
+        (b"Helvetica-Oblique", b"BT /F1 24 Tf 20 140 Td (j) Tj ET"),
+        (b"Helvetica", b"10 w BT /F1 12 Tf 2 Tr 20 140 Td (-120 RUB) Tj ET"),
+    ],
+)
+def test_pdf_cropbox_rejects_paint_outside_glyph_advance(tmp_path, rotation, font, show):
+    pdf = _write_pdf(
+        tmp_path / "ink.pdf",
+        [show],
+        font=font,
+        attrs=f"/Rotate {rotation} /CropBox [20 0 300 200]".encode(),
+    )
+    result = read_native_document(pdf, "pdf")
+    assert result.observations == ()
+    assert [issue.code for issue in result.issues] == ["unsupported_pdf_visibility"]
+
+
+@pytest.mark.parametrize("rotation", [0, 90, 180, 270])
+@pytest.mark.parametrize("crop", ["[0 0 300 200]", "[-5 -5 305 205]"])
+def test_pdf_cropbox_that_keeps_full_media_does_not_suppress_text(tmp_path, rotation, crop):
+    pdf = _write_pdf(
+        tmp_path / "full.pdf",
+        [b"BT /F1 24 Tf 40 140 Td (j) Tj ET"],
+        font=b"Helvetica-Oblique",
+        attrs=f"/Rotate {rotation} /CropBox {crop}".encode(),
+    )
+    result = read_native_document(pdf, "pdf")
+    assert [item.raw_text for item in result.observations] == ["j"]
+    assert result.issues == ()
 
 
 @pytest.mark.parametrize("operator", [b"W", b"W*"])
@@ -109,7 +144,7 @@ def test_pdf_clip_operator_suppresses_page_but_not_the_next(tmp_path, operator):
     ]
 
 
-@pytest.mark.parametrize("mode", [3, 4, 5, 6, 7])
+@pytest.mark.parametrize("mode", [1, 2, 3, 4, 5, 6, 7])
 def test_pdf_unsupported_text_paint_modes_suppress_page(tmp_path, mode):
     pdf = _write_pdf(
         tmp_path / "text.pdf",
@@ -118,6 +153,28 @@ def test_pdf_unsupported_text_paint_modes_suppress_page(tmp_path, mode):
     result = read_native_document(pdf, "pdf")
     assert result.observations == ()
     assert [issue.code for issue in result.issues] == ["unsupported_pdf_visibility"]
+
+
+@pytest.mark.parametrize("rotation", [0, 90, 180, 270])
+@pytest.mark.parametrize(
+    ("text_setup", "supported"),
+    [
+        (b"100 Tz 1 1 -1 1 40 100 Tm", True),
+        (b"0 Tz 1 1 -1 1 40 100 Tm", False),
+        (b"100 Tz 1 1 2 2 40 100 Tm", False),
+    ],
+)
+def test_pdf_rejects_degenerate_transformed_glyphs(tmp_path, rotation, text_setup, supported):
+    pdf = _write_pdf(
+        tmp_path / "transform.pdf",
+        [b"BT /F1 24 Tf " + text_setup + b" (Zero) Tj ET"],
+        attrs=f"/Rotate {rotation}".encode(),
+    )
+    result = read_native_document(pdf, "pdf")
+    assert [item.raw_text for item in result.observations] == (["Zero"] if supported else [])
+    assert [issue.code for issue in result.issues] == (
+        [] if supported else ["unsupported_pdf_visibility"]
+    )
 
 
 @pytest.mark.parametrize("command", [b"/GS1 gs", b"/OC /LayerA BDC", b"/OC BMC"])
