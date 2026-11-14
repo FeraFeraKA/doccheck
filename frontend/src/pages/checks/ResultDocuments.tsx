@@ -1,9 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
-import type { MouseEvent, ReactNode } from 'react';
-import { Link, useLocation, useNavigate, useSearchParams } from 'react-router';
+import { useLayoutEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
+import { Link, useLocation, useNavigate, useNavigationType, useSearchParams } from 'react-router';
 import { FileTypeIcon } from './FileTypeIcon';
 import { SourceWorkspace, useSourceWorkspace } from './SourceWorkspace';
-import { XlsxDownload } from './XlsxDownload';
 import { WorkspaceIcon } from './WorkspaceIcon';
 import type { DocumentParseStatus, ReviewResult } from './reviewResult';
 import './result-documents.css';
@@ -14,13 +13,15 @@ export const documentDecisionLabels: Record<string, string> = {
   include: 'Включён', exclude: 'Исключён', needs_review: 'Требует проверки', parse_error: 'Ошибка чтения',
 };
 
-const exceptionFilters = [
-  ['exclude', documentDecisionLabels.exclude],
-  ['needs_review', documentDecisionLabels.needs_review],
-  ['parse_error', documentDecisionLabels.parse_error],
+const documentFilters = [
+  ['all', 'Все'],
+  ['read', 'Прочитано'],
+  ['excluded', 'Исключены'],
 ] as const;
 
-const readingFilters = [['read', 'Прочитано'], ['error', 'Ошибочные']] as const;
+type DocumentFilter = typeof documentFilters[number][0];
+const columns = ['Файл', 'Тип', 'Номер', 'Дата', 'Договор', 'Стр.', 'Статус', 'Строки КФЗ'];
+
 const readingLabels: Record<DocumentParseStatus, string> = {
   pending: 'Ожидает чтения',
   parsed: 'Прочитано',
@@ -40,21 +41,43 @@ interface ResultDocumentsProps {
   rowEvidenceIds: (row: ReviewResult['rows'][number], issue: ReviewResult['summary']['primary_issues'][number] | undefined) => string[];
 }
 
-export function ResultDocuments({
-  result, runPath, storedRunId, exportRunId, exceptions, synthetic, renderHeader, archiveAction, rowEvidenceIds,
-}: ResultDocumentsProps) {
-  const [readingFilter, setReadingFilter] = useState('all');
-  const [exceptionFilter, setExceptionFilter] = useState('all');
+export function ResultDocuments(props: ResultDocumentsProps) {
   const [params] = useSearchParams();
+  const navigationType = useNavigationType();
+  const sourceQuery = JSON.stringify([params.get('document'), params.get('evidence'), params.get('anchor')]);
+  const [sourceHistory, setSourceHistory] = useState({ query: sourceQuery, revision: 0 });
+  if (sourceQuery !== sourceHistory.query) {
+    // Browser history can restore an address from a different selection. Query writes by the
+    // viewer itself keep its state and the button that currently owns return focus.
+    const revision = sourceHistory.revision + (navigationType === 'POP' ? 1 : 0);
+    setSourceHistory({ query: sourceQuery, revision });
+  }
+  return <DocumentLibrary {...props} params={params} key={sourceHistory.revision} />;
+}
+
+function DocumentLibrary({ result, runPath, storedRunId, exceptions, renderHeader, rowEvidenceIds, params }:
+  ResultDocumentsProps & { params: URLSearchParams }) {
   const location = useLocation();
   const navigate = useNavigate();
-  const exceptionSection = useRef<HTMLElement>(null);
-  const jumpToExceptions = exceptions || location.hash === '#exceptions';
+  const queryRef = useRef(params);
+  useLayoutEffect(() => { queryRef.current = params; }, [params]);
+  const defaultFilter = exceptions || location.hash === '#exceptions' ? 'excluded' : 'all';
+  const requestedFilter = params.get('filter');
+  const filter = documentFilters.find(([value]) => value === requestedFilter)?.[0] ?? defaultFilter;
 
-  function updateSourceQuery(next: URLSearchParams) {
-    void navigate({ pathname: location.pathname, search: next.toString(), hash: location.hash }, {
-      replace: true, preventScrollReset: true,
-    });
+  function updateQuery(next: URLSearchParams, replace: boolean) {
+    const search = next.toString();
+    if (search === queryRef.current.toString()) return;
+    queryRef.current = next;
+    void navigate({ search, hash: location.hash }, { replace, preventScrollReset: true });
+  }
+
+  function setFilter(value: DocumentFilter) {
+    if (filter === value) return;
+    const next = new URLSearchParams(queryRef.current);
+    if (value === defaultFilter) next.delete('filter');
+    else next.set('filter', value);
+    updateQuery(next, false);
   }
 
   const source = useSourceWorkspace({
@@ -63,35 +86,28 @@ export function ResultDocuments({
     initialEvidenceId: params.get('evidence') ?? undefined,
     initialScopeOnly: params.get('anchor') === 'report-row',
     onSelectionChange(documentId, evidenceId) {
-      const next = new URLSearchParams(params);
+      const next = new URLSearchParams(queryRef.current);
       next.set('document', documentId);
       if (evidenceId) next.set('evidence', evidenceId);
       else next.delete('evidence');
       next.delete('anchor');
-      updateSourceQuery(next);
+      updateQuery(next, true);
     },
     onClose() {
-      const next = new URLSearchParams(params);
+      const next = new URLSearchParams(queryRef.current);
       next.delete('document');
       next.delete('evidence');
       next.delete('anchor');
-      updateSourceQuery(next);
+      updateQuery(next, true);
     },
   });
 
-  useEffect(() => {
-    if (jumpToExceptions) exceptionSection.current?.scrollIntoView({ block: 'start' });
-  }, [jumpToExceptions]);
-
-  function focusExceptions(event: MouseEvent<HTMLAnchorElement>) {
-    if (event.button !== 0 || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
-    const section = exceptionSection.current;
-    section?.focus({ preventScroll: true });
-    section?.scrollIntoView({ block: 'start' });
-  }
-
   const documents = result.documents;
-  const exceptionsList = documents.filter(({ decision }) => decision.state !== 'include');
+  const byFilter = {
+    all: documents,
+    read: documents.filter((document) => document.parse_status === 'parsed' && !isExceptionDocument(document)),
+    excluded: documents.filter(isExceptionDocument),
+  };
   const evidenceByDocument = new Map<string, ReviewResult['evidence']>();
   for (const source of result.evidence) {
     const group = evidenceByDocument.get(source.document_id);
@@ -124,66 +140,27 @@ export function ResultDocuments({
   }
 
   return <>
-    {renderHeader(<DocumentFilters label="Статус файла" options={readingFilters}
-      documents={documents} filter={readingFilter} setFilter={setReadingFilter} matches={matchesReadingFilter} />)}
+    {renderHeader(<div className="result-document-filters" role="group" aria-label="Статус файла">
+      {documentFilters.map(([value, text]) => (
+        <button type="button" key={value} aria-pressed={filter === value} onClick={() => setFilter(value)}>
+          {text} ({byFilter[value].length})
+        </button>
+      ))}
+    </div>)}
     <SourceWorkspace workspace={source} />
     <section className="result-documents" aria-label="Документы">
-      {exceptionsList.length > 0 && <Link className="result-document-anchor"
-        to={{ pathname: location.pathname, search: location.search, hash: '#exceptions' }}
-        preventScrollReset onClick={focusExceptions}>К исключениям</Link>}
-      <DocumentTable documents={documents.filter((document) => matchesReadingFilter(document, readingFilter))}
-        filtered={readingFilter !== 'all'} result={result} runPath={runPath} evidenceByDocument={evidenceByDocument}
+      <DocumentTable documents={byFilter[filter]} filtered={filter !== 'all'}
+        result={result} runPath={runPath} evidenceByDocument={evidenceByDocument}
         rowsByDocument={rowsByDocument} source={source} />
     </section>
-    <section id="exceptions" ref={exceptionSection} className="result-documents result-exceptions"
-      tabIndex={-1} aria-labelledby="result-exceptions-heading">
-      <div className="result-exceptions-heading">
-        <h2 id="result-exceptions-heading">Исключения</h2>
-        {exceptionsList.length > 0 && <DocumentFilters label="Статус исключения" options={exceptionFilters}
-          documents={exceptionsList} filter={exceptionFilter} setFilter={setExceptionFilter} matches={matchesExceptionFilter} />}
-      </div>
-      {synthetic && exceptionsList.length > 0 && <p className="checks-caption">
-        Действия бухгалтера недоступны в синтетическом режиме.
-      </p>}
-      <DocumentTable documents={exceptionsList.filter((document) => matchesExceptionFilter(document, exceptionFilter))}
-        filtered={exceptionFilter !== 'all'} result={result} runPath={runPath} evidenceByDocument={evidenceByDocument}
-        rowsByDocument={rowsByDocument} source={source} exceptions />
-    </section>
-    {(exportRunId || archiveAction) && <div className="result-document-actions">
-      {exportRunId && <XlsxDownload key={exportRunId} runId={exportRunId} />}
-      {archiveAction}
-    </div>}
   </>;
 }
 
-function matchesReadingFilter(document: Document, filter: string) {
-  if (filter === 'all') return true;
-  if (filter === 'read') return document.parse_status === 'parsed';
-  return document.parse_status === 'partial' || document.parse_status === 'error';
+export function isExceptionDocument({ decision, parse_status, errors }: Document) {
+  return decision.state !== 'include' || parse_status === 'partial' || parse_status === 'error' || errors.length > 0;
 }
 
-function matchesExceptionFilter(document: Document, filter: string) {
-  return filter === 'all' || document.decision.state === filter;
-}
-
-function DocumentFilters({ label, options, documents, filter, setFilter, matches }: {
-  label: string;
-  options: readonly (readonly [string, string])[];
-  documents: Document[];
-  filter: string;
-  setFilter: (value: string) => void;
-  matches: (document: Document, value: string) => boolean;
-}) {
-  return <div className="result-document-filters" role="group" aria-label={label}>
-    {([['all', 'Все'], ...options] as const).map(([value, text]) => (
-      <button type="button" key={value} aria-pressed={filter === value} onClick={() => setFilter(value)}>
-        {text} ({documents.filter((document) => matches(document, value)).length})
-      </button>
-    ))}
-  </div>;
-}
-
-function DocumentTable({ documents, filtered, result, runPath, evidenceByDocument, rowsByDocument, source, exceptions = false }: {
+function DocumentTable({ documents, filtered, result, runPath, evidenceByDocument, rowsByDocument, source }: {
   documents: Document[];
   filtered: boolean;
   result: ReviewResult;
@@ -191,25 +168,25 @@ function DocumentTable({ documents, filtered, result, runPath, evidenceByDocumen
   evidenceByDocument: Map<string, ReviewResult['evidence']>;
   rowsByDocument: Map<string, ReviewResult['rows']>;
   source: ReturnType<typeof useSourceWorkspace>;
-  exceptions?: boolean;
 }) {
-  return <div className="result-document-scroll" role="region" aria-label={exceptions ? 'Таблица исключений' : 'Таблица документов'} tabIndex={0}>
+  return <div className="result-document-scroll" role="region" aria-label="Таблица документов" tabIndex={0}>
     <table className="result-document-table">
       <thead><tr>
-        {exceptions
-          ? ['Файл', 'Роль', 'Решение', 'Основание', 'Показатели КФЗ'].map((label) => <th key={label} scope="col">{label}</th>)
-          : ['Файл', 'Тип', 'Номер', 'Дата', 'Договор', 'Стр.', 'Статус', 'Строки КФЗ'].map((label) => <th key={label} scope="col">{label}</th>)}
+        {columns.map((label) => <th key={label} scope="col">{label}</th>)}
       </tr></thead>
       <tbody>{documents.map((document) => {
         const related = rowsByDocument.get(document.id) ?? [];
         const metadata = evidenceByDocument.get(document.id) ?? [];
         const report = document.role === 'report';
         const contract = report ? result.scope.contract_number : oneText(metadata, 'contract');
-        const messages = new Set([document.decision.message, ...document.errors.map(({ message }) => message)]);
-        const useDecision = exceptions || document.decision.state !== 'include' || document.parse_status !== 'parsed';
+        const { decision, parse_status: parseStatus, errors } = document;
+        const exception = isExceptionDocument(document);
+        const messages = new Set(errors.map(({ message }) => message));
+        if (decision.state !== 'include') messages.add(decision.message);
+        const readingStatus = parseStatus === undefined ? 'Чтение не указано' : readingLabels[parseStatus];
         return <tr key={document.id} data-selected={source.open && source.documentId === document.id}
           onClick={(event) => {
-            if (event.target instanceof Element && !event.target.closest('button, a, details')) {
+            if (event.target instanceof Element && !event.target.closest('button, a')) {
               source.openDocument(document.id, event.currentTarget.querySelector('button') ?? event.currentTarget);
             }
           }}>
@@ -218,30 +195,24 @@ function DocumentTable({ documents, filtered, result, runPath, evidenceByDocumen
             <button type="button" onClick={(event) => source.openDocument(document.id, event.currentTarget)}>{document.name}</button>
           </div></td>
           <td>{report ? 'КФЗ' : 'Первичный документ'}</td>
-          {!exceptions && <>
-            <td>{report ? result.reportNumber ?? '—' : '—'}</td>
-            <td>—</td>
-            <td>{contract ?? '—'}</td>
-            <td>{document.format === 'png' && document.parse_status === 'parsed' ? '1' : '—'}</td>
-          </>}
-          <td>
-            {!exceptions && <span className="document-reading-status" data-reading={document.parse_status}>
-              {document.parse_status === 'parsed' && <span className="document-read-icon"><WorkspaceIcon name="check" size={12} /></span>}
-              {document.parse_status === undefined ? 'Чтение не указано' : readingLabels[document.parse_status]}
+          <td>{report ? result.reportNumber ?? '—' : '—'}</td>
+          <td>—</td>
+          <td>{contract ?? '—'}</td>
+          <td>{document.format === 'png' && parseStatus === 'parsed' ? '1' : '—'}</td>
+          <td className="document-status-cell">
+            {decision.state !== 'include' ? <>
+              <span className="result-document-state" data-state={decision.state}>{documentDecisionLabels[decision.state]}</span>
+              {parseStatus === 'error' && decision.state !== 'parse_error' && <span className="document-status-message">{readingStatus}</span>}
+            </> : <span className="document-reading-status">
+              {!exception && parseStatus === 'parsed' &&
+                <span className="document-read-icon"><WorkspaceIcon name="check" size={12} /></span>}
+              {exception && (parseStatus === undefined || parseStatus === 'parsed')
+                ? documentDecisionLabels.needs_review : readingStatus}
             </span>}
-            {useDecision && <span className="result-document-state" data-state={document.decision.state}>
-              {documentDecisionLabels[document.decision.state]}
-            </span>}
-            {!exceptions && useDecision && <details className="document-decision-details">
-              <summary>Основание</summary>
-              <ul className="result-document-messages">
-                {[...messages].map((message) => <li key={message}>{message}</li>)}
-              </ul>
-            </details>}
+            {messages.size > 0 && <ul className="result-document-messages document-status-message">
+              {[...messages].map((message) => <li key={message}>{message}</li>)}
+            </ul>}
           </td>
-          {exceptions && <td><ul className="result-document-messages">
-            {[...messages].map((message) => <li key={message}>{message}</li>)}
-          </ul></td>}
           <td>{related.length ? <ul className="result-document-messages">
             {related.map(({ id, label }) => <li key={id}>
               <Link to={{ pathname: runPath, search: '?' + new URLSearchParams({ indicator: id }) }}>{label}</Link>
@@ -249,9 +220,8 @@ function DocumentTable({ documents, filtered, result, runPath, evidenceByDocumen
           </ul> : '—'}</td>
         </tr>;
       })}
-      {documents.length === 0 && <tr><td colSpan={exceptions ? 5 : 8}>
-        <p role="status">{filtered ? 'Документов с этим статусом нет.'
-          : exceptions ? 'Исключений нет.' : 'Документы отсутствуют.'}</p>
+      {documents.length === 0 && <tr><td colSpan={columns.length}>
+        <p role="status">{filtered ? 'Документов с этим статусом нет.' : 'Документы отсутствуют.'}</p>
       </td></tr>}
       </tbody>
     </table>
