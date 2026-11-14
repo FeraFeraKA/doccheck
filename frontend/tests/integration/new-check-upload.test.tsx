@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { CheckDetail } from '../../src/pages/checks';
 import { NewCheck } from '../../src/pages/checks/NewCheck';
 import type { InitialRunPack } from '../../src/pages/checks/NewCheck';
+import { RunPackEditor } from '../../src/pages/checks/RunPackEditor';
 import { discardPreparedRun, prepareRunTransfer, RunUploadHttpError, startPreparedRun } from '../../src/pages/checks/createRun';
 
 vi.mock('../../src/pages/checks/createRun', async (importOriginal) => {
@@ -128,17 +129,30 @@ it('загружает пакет с явным выбором строки то
         progress: null, error: { code: 'scan_scope_required', message: 'Не удалось выбрать строку.' },
       });
     }
+    if (String(url) === '/api/v0/runs/ambiguous-scan/pack') {
+      return Response.json({ documents: [
+        { id: 'report', name: 'КФЗ.pdf', size: 512, role: 'report' },
+        { id: 'act', name: 'Акт.docx', size: 512, role: 'supporting' },
+      ] });
+    }
+    if (String(url) === '/api/v0/runs/retry-run') {
+      return Response.json({
+        run_id: 'retry-run', status: 'queued', created_at: '2031-02-01T00:00:00Z',
+        progress: { processed_documents: 0, total_documents: 2 }, error: null,
+      });
+    }
     return Response.json({ items: [], next_cursor: null });
   }));
   render(<MemoryRouter initialEntries={['/checks/ambiguous-scan']}>
     <Routes>
       <Route path="/checks/:id" element={<CheckDetail view="table" />} />
-      <Route path="/checks/new" element={<NewCheck />} />
+      <Route path="/checks/new" element={<RunPackEditor />} />
     </Routes>
   </MemoryRouter>);
   fireEvent.click(await screen.findByRole('link', { name: 'Выбрать строку КФЗ вручную' }));
-  selectPacket();
-  const fields = screen.getByRole('group', { name: 'Строка КФЗ' });
+  const fields = await screen.findByRole('group', { name: 'Строка КФЗ' });
+  expect(screen.getByText('КФЗ.pdf')).toBeVisible();
+  expect(screen.getByText('Акт.docx')).toBeVisible();
   const submit = screen.getByRole('button', { name: 'Запустить проверку' });
   expect(submit).toBeDisabled();
   for (const [label, value] of [
@@ -152,12 +166,16 @@ it('загружает пакет с явным выбором строки то
     fireEvent.change(within(fields).getByLabelText(label), { target: { value } });
   }
   await waitFor(() => expect(submit).toBeEnabled());
-  expect(prepareTransfer.mock.calls[0][0].scanScope).toEqual({
-    contractNumber: 'СИНТ-31', periodStart: '2031-02-01', periodEnd: '2031-02-28', stage: 2, page: 3,
+  expect(prepareTransfer.mock.calls[0][0]).toEqual({
+    sourceRunId: 'ambiguous-scan', retainedDocumentIds: ['report', 'act'], report: undefined, documents: [],
+    scanScope: {
+      contractNumber: 'СИНТ-31', periodStart: '2031-02-01', periodEnd: '2031-02-28', stage: 2, page: 3,
+    },
   });
   fireEvent.click(submit);
   expect(startRun).toHaveBeenCalledExactlyOnceWith('manual-upload', expect.any(AbortSignal));
-  expect(await screen.findByRole('heading', { name: 'Проверка КФЗ №retry-run' })).toBeVisible();
+  expect(await screen.findByRole('heading', { name: 'Новая проверка' })).toBeVisible();
+  expect(screen.queryByText('КФЗ.pdf')).not.toBeInTheDocument();
   selectPacket();
   expect(screen.queryByRole('group', { name: 'Строка КФЗ' })).not.toBeInTheDocument();
 });

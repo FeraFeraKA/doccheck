@@ -889,7 +889,10 @@ class V32Processor:
 
         scope = automatic_scope or _scope(run, native, model_scope)
         is_scan = report.format in {"pdf", "png"}
-        if scope is None or (is_scan and explicit_scope is None and not scanned):
+        unresolved_scan = (
+            is_scan and scanned is None and (explicit_scope is None or not report.errors)
+        )
+        if scope is None or unresolved_scan:
             return CheckJob(
                 run_id=run_id,
                 status="failed",

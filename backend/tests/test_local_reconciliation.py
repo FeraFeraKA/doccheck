@@ -1,3 +1,4 @@
+import json
 from io import BytesIO
 from pathlib import Path
 from uuid import uuid4
@@ -6,7 +7,12 @@ import pytest
 from docx import Document
 from fastapi.testclient import TestClient
 from openpyxl import Workbook, load_workbook
-from scanned_kfz_fixture import ScanRow, require_raster_ocr, write_kfz_with_breakdown
+from scanned_kfz_fixture import (
+    ScanRow,
+    require_raster_ocr,
+    write_kfz_with_breakdown,
+    write_scanned_kfz,
+)
 
 from doccheck_backend.api import create_app
 from doccheck_backend.config import Settings
@@ -256,11 +262,69 @@ def test_bundled_example_counts_the_document_total(database_url, tmp_path):
         assert row["calculation"]["components"][0]["amount"] == "8112.50"
 
 
+def test_unresolved_scan_can_retry_existing_files_with_the_correct_stage(database_url, tmp_path):
+    require_raster_ocr()
+    _, documents = write_reconciliation_case(tmp_path)
+    target = ScanRow(5, 2031, ("1070,45", "351,29", "789,05", "399,12", "2609,91"))
+    ambiguous = ScanRow(6, 2031, ("1040,00", "340,00", "790,00", "400,00", "2570,00"))
+    report = write_scanned_kfz(
+        tmp_path / "report.png", ((target, ambiguous),), contract=CONTRACT, period=(START, END)
+    )
+    settings = Settings(database_url, upload_root=tmp_path / "uploads")
+    processor = V32Processor(no_model, no_model)
+    with TestClient(create_app(settings)) as client:
+        run_id = _prepare_and_start(
+            client,
+            [
+                ("report", (report.name, report.read_bytes())),
+                *(("documents", (doc.name, doc.read_bytes())) for doc in documents),
+            ],
+        )
+
+        def retry_with_stage(previous, stage):
+            assert run_document_worker(
+                client.app.state.engine, settings.upload_root, processor, once=True
+            )
+            previous_url = f"/api/v0/runs/{previous}"
+            state = client.get(previous_url).json()
+            assert state["status"] == "failed" and state["error"]["code"] == "scan_scope_required"
+            pack = client.get(previous_url + "/pack")
+            assert pack.status_code == 200
+            fields = {
+                "source_run_id": previous,
+                "contract_number": CONTRACT,
+                "period_start": START,
+                "period_end": END,
+                "report_row_locator": json.dumps(
+                    {"kind": "page", "page": 1, "fragment_id": f"kfz-stage-{stage}-2031"}
+                ),
+            }
+            files = [
+                ("retained_document_id", (None, item["id"])) for item in pack.json()["documents"]
+            ]
+            return _prepare_and_start(client, files, data=fields)
+
+        incorrect = retry_with_stage(run_id, 7)
+        corrected = retry_with_stage(incorrect, 5)
+        assert run_document_worker(
+            client.app.state.engine, settings.upload_root, processor, once=True
+        )
+        findings = client.get(f"/api/v0/runs/{corrected}/findings")
+        assert findings.status_code == 200
+        assert findings.json()["summary"]["counts"] == {
+            "verified": 3,
+            "discrepancy": 2,
+            "unverified": 0,
+        }
+
+
 @pytest.mark.parametrize(
     ("second_issuer", "second_kind", "expected"),
     [
         ("ООО Бета", "Акт", "399.12"),
         ("ООО Альфа", "Акт", None),
+        ("ООО Альфа.", "Акт", None),
+        ("ООО «Альфа» (ИНН 7700000000)", "Акт", None),
         (None, "Акт", None),
         ("ООО Альфа", "УПД", "399.12"),
     ],

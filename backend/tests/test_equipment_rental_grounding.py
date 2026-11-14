@@ -39,8 +39,7 @@ def test_clipped_rental_requires_two_addressed_ocr_lines(
         ),
     ]
     document = NativeDocument(tuple(purpose))
-    monkeypatch.setattr(grounded_amounts, "_read_observations", lambda *_: (document, method))
-    monkeypatch.setattr(grounded_amounts, "read_native_document", lambda *_: NativeDocument(()))
+    monkeypatch.setattr(grounded_amounts, "_read_observations", lambda *_: (document, method, ()))
 
     source = grounded_amounts.ground_document(
         uuid4(), "synthetic-act", Path("temporary_equipment.pdf"), "pdf", "a" * 64
