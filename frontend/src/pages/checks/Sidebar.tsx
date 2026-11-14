@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router';
 import { classes } from '../../shared/lib/classes';
 import { WorkspaceIcon } from './WorkspaceIcon';
@@ -12,11 +12,25 @@ export function Sidebar() {
   const { pathname } = useLocation();
   const [choice, setChoice] = useState<boolean | null>(null);
   const [hovered, setHovered] = useState(false);
+  const sidebar = useRef<HTMLElement>(null);
   const toggle = useRef<HTMLButtonElement>(null);
   const expanded = choice ?? hovered;
   const isNew = pathname === '/' || pathname === '/checks/new';
+
+  useEffect(() => {
+    if (!expanded) return;
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key !== 'Escape' || event.defaultPrevented ||
+        (event.target instanceof Element && event.target.closest('dialog[open], [aria-modal="true"]'))) return;
+      setChoice(false);
+      if (sidebar.current?.contains(document.activeElement)) toggle.current?.focus();
+    }
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [expanded]);
+
   return (
-    <aside className="app-sidebar" aria-label="Меню DocCheck" data-expanded={expanded}
+    <aside ref={sidebar} className="app-sidebar" aria-label="Меню DocCheck" data-expanded={expanded}
       onPointerMove={(event) => {
         // A mount or a layout change can fire pointerenter under a stationary mouse.
         if (!hovered && event.pointerType === 'mouse' &&
@@ -29,11 +43,6 @@ export function Sidebar() {
       }}
       onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget)) setChoice(null);
-      }}
-      onKeyDown={(event) => {
-        if (event.key !== 'Escape' || !expanded) return;
-        setChoice(false);
-        toggle.current?.focus();
       }}>
       <Link to="/checks/new" className="brand" aria-label="DocCheck" onClick={() => setChoice(false)}>
         <span className="brand-symbol"><WorkspaceIcon name="scan" size={23} /></span>

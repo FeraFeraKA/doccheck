@@ -122,6 +122,7 @@ test('the accountant distinguishes missing files, invalid selection and unknown 
 });
 
 test('saved run and history cursor are recovered from the URL', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
   const summary = {
     run_id: 'saved-run', status: 'completed', error: null, created_at: '2026-11-13T12:00:00Z',
   };
@@ -142,8 +143,20 @@ test('saved run and history cursor are recovered from the URL', async ({ page })
   }));
   await page.goto('/checks');
   await expect(page.getByRole('link', { name: 'Синтетическая сверка', exact: true })).toBeVisible();
+  const sidebar = page.getByRole('complementary', { name: 'Меню DocCheck' });
+  const search = page.getByRole('searchbox', { name: 'Поиск на странице' });
+  await page.getByRole('button', { name: 'Требуют внимания' }).click();
+  await search.focus();
+  await sidebar.hover({ position: { x: 7, y: 7 } });
+  await expect(sidebar).toHaveAttribute('data-expanded', 'true');
+  await page.keyboard.press('Escape');
+  await expect(sidebar).toHaveAttribute('data-expanded', 'false');
+  await expect(search).toBeFocused();
+  const all = page.getByRole('button', { name: 'Все проверки' });
+  await all.click();
+  await expect(all).toHaveAttribute('aria-pressed', 'true');
   const older = page.getByRole('link', { name: 'Более ранние проверки' });
-  await page.getByRole('complementary', { name: 'Меню DocCheck' }).hover({ position: { x: 4, y: 4 } });
+  await sidebar.hover({ position: { x: 4, y: 4 } });
   await expect(page.getByRole('button', { name: 'Свернуть меню' })).toHaveAttribute('aria-expanded', 'true');
   await older.click();
   await page.reload();
