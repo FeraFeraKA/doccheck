@@ -218,11 +218,18 @@ function sendWithProgress<T>(
     request.timeout = 60_000;
     request.responseType = 'json';
     request.setRequestHeader('Idempotency-Key', key);
+    let sentPercent = -1;
+    function reportProgress(percent: number) {
+      if (percent <= sentPercent) return;
+      sentPercent = percent;
+      onProgress(percent);
+    }
     request.upload.addEventListener('progress', (event) => {
       if (event.lengthComputable && event.total > 0) {
-        onProgress(Math.floor(100 * event.loaded / event.total));
+        reportProgress(Math.min(100, Math.floor(100 * event.loaded / event.total)));
       }
     });
+    request.upload.addEventListener('load', () => reportProgress(100), { once: true });
     request.addEventListener('load', () => {
       try {
         if (request.responseURL !== url.href) throw new InvalidRunUploadResponse();

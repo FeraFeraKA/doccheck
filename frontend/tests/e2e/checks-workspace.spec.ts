@@ -651,6 +651,7 @@ test('the uploaded files wait for a separate start and the queue opens only a fi
   const submit = page.getByRole('button', { name: 'Запустить проверку' });
   const transfer = page.getByRole('progressbar', { name: 'Загрузка пакета' });
   await expect(transfer).toBeVisible();
+  await expect(transfer).toHaveAttribute('aria-valuenow', /^\d{1,3}$/);
   await expect(submit).toBeDisabled();
   expect(requestCount).toBe(0);
   releaseUpload();

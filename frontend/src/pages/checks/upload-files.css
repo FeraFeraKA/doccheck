@@ -19,7 +19,16 @@
   color: var(--ui-secondary);
   font-size: 13px;
 }
-.upload-transfer-progress { margin-top: 10px; }
+.upload-transfer-progress {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 4.5ch;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  color: var(--ui-secondary);
+  font-size: 13px;
+  text-align: end;
+}
 
 @keyframes upload-spin {
   to { transform: rotate(360deg); }
