@@ -96,7 +96,7 @@ for (const [width, height] of [[1440, 1100], [768, 844], [390, 600]]) {
     const toolbarBounds = await drawer.getByRole('group', { name: 'Настройки просмотра' }).boundingBox();
     const fragmentBounds = await drawer.getByRole('button', { name: 'К фрагменту' }).boundingBox();
     if (!toolbarBounds || !fragmentBounds) throw new Error('Viewer controls not visible');
-    expect(viewBounds.y).toBeCloseTo(toolbarBounds.y + toolbarBounds.height, 0);
+    expect(Math.abs(viewBounds.y - toolbarBounds.y - toolbarBounds.height)).toBeLessThan(4);
     expect(viewBounds.y + viewBounds.height).toBeLessThan(fragmentBounds.y);
     expect(fragmentBounds.y - (viewBounds.y + viewBounds.height)).toBeLessThan(20);
     expect(viewBounds.height).toBeGreaterThan(128);

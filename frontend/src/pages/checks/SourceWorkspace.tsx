@@ -240,14 +240,14 @@ export function SourceWorkspace({ workspace }: { workspace: ReturnType<typeof us
 
   const sizeLabel = expanded ? 'Свернуть источник в боковую панель' : 'Развернуть источник на весь экран';
   return <div className="source-workspace" data-source-open={open}>
-    <aside className="source-workspace-rail" aria-label="Управление источником">
+    <div role="group" className="source-workspace-rail" aria-label="Управление источником">
       <button ref={toggle} type="button" className={open ? 'nav-item source-workspace-toggle active' : 'nav-item source-workspace-toggle'}
         aria-label={open ? 'Скрыть источник документа' : 'Показать источник документа'}
         title={open ? 'Скрыть источник' : 'Открыть источник'}
         aria-expanded={open} aria-controls={open ? panelId : undefined} onClick={togglePanel}>
         <PanelIcon name={open ? 'eye' : 'eye-off'} />
       </button>
-    </aside>
+    </div>
     {open && <dialog ref={panel} id={panelId} aria-label="Источник документа"
       role={expanded ? undefined : 'region'} className="source-workspace-panel compact-source" data-fullscreen={expanded}
       onCancel={(event) => { event.preventDefault(); close(); }}>
