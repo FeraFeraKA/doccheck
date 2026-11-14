@@ -122,6 +122,7 @@ test('the accountant distinguishes missing files, invalid selection and unknown 
 });
 
 test('saved run and history cursor are recovered from the URL', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
   const summary = {
     run_id: 'saved-run', status: 'completed', error: null, created_at: '2026-11-13T12:00:00Z',
   };
@@ -142,7 +143,22 @@ test('saved run and history cursor are recovered from the URL', async ({ page })
   }));
   await page.goto('/checks');
   await expect(page.getByRole('link', { name: 'Синтетическая сверка', exact: true })).toBeVisible();
-  await page.getByRole('link', { name: 'Более ранние проверки' }).click();
+  const sidebar = page.getByRole('complementary', { name: 'Меню DocCheck' });
+  const search = page.getByRole('searchbox', { name: 'Поиск на странице' });
+  await page.getByRole('button', { name: 'Требуют внимания' }).click();
+  await search.focus();
+  await sidebar.hover({ position: { x: 7, y: 7 } });
+  await expect(sidebar).toHaveAttribute('data-expanded', 'true');
+  await page.keyboard.press('Escape');
+  await expect(sidebar).toHaveAttribute('data-expanded', 'false');
+  await expect(search).toBeFocused();
+  const all = page.getByRole('button', { name: 'Все проверки' });
+  await all.click();
+  await expect(all).toHaveAttribute('aria-pressed', 'true');
+  const older = page.getByRole('link', { name: 'Более ранние проверки' });
+  await sidebar.hover({ position: { x: 4, y: 4 } });
+  await expect(page.getByRole('button', { name: 'Свернуть меню' })).toHaveAttribute('aria-expanded', 'true');
+  await older.click();
   await page.reload();
   await expect(page.getByRole('link', { name: 'Проверка older-run', exact: true })).toBeVisible();
   await page.getByRole('link', { name: 'К новым проверкам' }).click();
@@ -418,7 +434,7 @@ test('the compact wizard adapts its upload blocks and keeps the example link in 
     await page.goto('/');
 
     const example = page.getByRole('link', { name: 'Открыть готовый синтетический результат' });
-    if (width < 700) await example.scrollIntoViewIfNeeded();
+    if (width < 700) await example.evaluate((link) => link.scrollIntoView({ block: 'center' }));
     await expect(example).toBeInViewport({ ratio: 1 });
     const report = await page.getByRole('region', { name: 'КФЗ', exact: true }).boundingBox();
     const documents = await page.getByRole('region', { name: 'Первичные документы' }).boundingBox();
