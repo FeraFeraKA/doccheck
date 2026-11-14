@@ -899,3 +899,68 @@ def test_only_trusted_local_worker_can_add_omitted_requested_row(
 
     job.result.scope.contract_number = "OTHER-CONTRACT"
     assert _process(run, tmp_path, lambda *_: job).status == "failed"
+
+
+@pytest.mark.parametrize(
+    ("native_text", "scan_page", "expected"),
+    [
+        ("cover", 2, "completed"),
+        ("conflicting_contract", 2, "failed"),
+        ("native_money", 2, "failed"),
+        ("cover", 1, "failed"),
+    ],
+)
+def test_mixed_pdf_ocr_scope_requires_a_nonconflicting_raster_page(
+    uploaded_files, tmp_path, monkeypatch, native_text, scan_page, expected
+):
+    from dataclasses import replace
+
+    from test_local_ocr import _box
+    from test_native_pdf import _write_pdf
+
+    from doccheck_backend.contracts.locators import PageLocator
+    from doccheck_backend.native_observations import NativeDocument, NativeIssue, Observation
+    from doccheck_backend.v32_adapter import read_native_document
+
+    _stub_ollama(monkeypatch, "1172.70")
+    report = uploaded_files[0]
+    report_path = tmp_path / report["id"]
+    _write_pdf(report_path, [b"BT /F1 10 Tf 40 45 Td (Cover) Tj ET", b"0 0 10 10 re f"])
+    report.update(
+        format="pdf", name="report.pdf", sha256=sha256(report_path.read_bytes()).hexdigest()
+    )
+    observations = (
+        _box("Договор № E2E-31", 0.06, 0.09, 0.36),
+        _box("Начало 2 этапа", 0.06, 0.12, 0.14),
+        _box('"22" октября 2026 г.', 0.18, 0.12, 0.28),
+        _box("Окончание 2 этапа", 0.06, 0.15, 0.15),
+        _box('"17" марта 2027 г.', 0.18, 0.15, 0.28),
+        _box("2 этап, 2027 г.:", 0.04, 0.53, 0.16),
+    )
+    scan = tuple(
+        replace(item, locator=item.locator.model_copy(update={"page": scan_page}))
+        for item in observations
+    )
+    if native_text != "cover":
+        text = {
+            "conflicting_contract": "Договор № OTHER-44",
+            "native_money": "Оплата труда: 111,10 руб.",
+        }[native_text]
+
+        def read(path, kind):
+            if kind == "pdf":
+                return NativeDocument(
+                    (Observation(text, PageLocator(kind="page", page=1, line=1)),),
+                    (NativeIssue("no_native_text", page=2),),
+                )
+            return read_native_document(path, kind)
+
+        monkeypatch.setattr("doccheck_backend.v32_adapter.read_native_document", read)
+    monkeypatch.setattr("doccheck_backend.v32_adapter.read_scan", lambda *_: NativeDocument(scan))
+    job = process(StoredRun(uuid4(), None, uploaded_files), tmp_path)
+
+    assert job.status == expected
+    if expected == "completed":
+        assert job.result.scope.report_row_locator.page == 2
+    else:
+        assert job.error.code == "v32_pdf_scope_ambiguous"

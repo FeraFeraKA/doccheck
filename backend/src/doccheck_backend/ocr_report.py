@@ -354,16 +354,23 @@ def parse_scan_report(observations: tuple[Observation, ...]) -> ScanScope | None
     start = max(first, date(last.year, 1, 1))
     if start > last:
         return None
-    matches = []
-    for item in positioned:
-        label = _ROW.fullmatch(item.raw_text.casefold())
-        if label and (int(label[1].replace("з", "3")), int(label[2])) == (stage, last.year):
-            matches.append(item)
+    labelled_rows = [
+        (item, (int(label[1].replace("з", "3")), int(label[2])))
+        for item in positioned
+        if (label := _ROW.fullmatch(item.raw_text.casefold())) is not None
+    ]
+    selected = (stage, last.year)
+    matches = [item for item, identity in labelled_rows if identity == selected]
     confirmed_rows = [item for item in matches if item in visible]
     if not confirmed_rows:
         return None
     row = confirmed_rows[0]
     if any(not _same_region(left, right) for left, right in combinations(confirmed_rows, 2)):
+        return None
+    if any(
+        identity != selected and any(_same_region(source, item) for source in confirmed_rows)
+        for item, identity in labelled_rows
+    ):
         return None
     if any(
         _page(other) != _page(row) or abs(_center(other, 1) - _center(row, 1)) > 0.004

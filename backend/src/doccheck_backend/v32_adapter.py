@@ -265,6 +265,30 @@ def _read_pdf_report(
     return (scope, evidence) if evidence else None
 
 
+def _only_raster_visibility_issues(issues) -> bool:
+    return bool(issues) and all(
+        issue.code in {"no_native_text", "unsupported_pdf_visibility"} for issue in issues
+    )
+
+
+def _matches_native_pdf_scope(
+    observations: tuple[Observation, ...], inferred: Scope, parse_date
+) -> bool:
+    # Only cover metadata or other nonfinancial text may coexist with this
+    # fallback. A native financial row could be a conflicting report.
+    articles = {label.casefold() for _, label in _ARTICLES.values()}
+    expected_period = tuple(parse_date(day) for day in (inferred.period_start, inferred.period_end))
+    for item in observations:
+        text = item.raw_text.strip()
+        if text.partition(":")[0].strip().casefold() in articles:
+            return False
+        if (contract := _contract(text)) is not None and contract != inferred.contract_number:
+            return False
+        if _period_candidate(text) and _period(text, parse_date) != expected_period:
+            return False
+    return True
+
+
 def _contract(text: str) -> str | None:
     match = _CONTRACT.fullmatch(text.strip()) or _XLSX_SCOPE.fullmatch(text.strip())
     return match[1] if match else None
@@ -460,9 +484,7 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
         else:
             v32.verify_source(report_entry)
             native_report = read_native_document(report_path, "pdf")
-            if not native_report.observations and {
-                issue.code for issue in native_report.issues
-            } <= {"no_native_text", "unsupported_pdf_visibility"}:
+            if _only_raster_visibility_issues(native_report.issues):
                 # Native extraction may decline a valid CropBox; both OCR
                 # implementations normalize to PDFium's visible page frame.
                 scan = read_scan(report_path, "pdf")
@@ -484,6 +506,21 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
                     period_end=parsed_scan.end.isoformat(),
                     report_row_locator=parsed_scan.row,
                 )
+                scan_page = parsed_scan.row.page
+                raster_pages = {issue.page for issue in native_report.issues}
+                if (
+                    not (
+                        scan_page in raster_pages
+                        or (None in raster_pages and not native_report.observations)
+                    )
+                ) or not _matches_native_pdf_scope(
+                    native_report.observations, inferred, decision_rules.parse_date
+                ):
+                    return _failure(
+                        run,
+                        "v32_pdf_scope_ambiguous",
+                        "Область OCR не согласуется с нативными страницами PDF.",
+                    )
                 # The scan only establishes scope. A nearby OCR number cannot
                 # identify a monetary column in a multi-level table.
                 report_evidence = {}
