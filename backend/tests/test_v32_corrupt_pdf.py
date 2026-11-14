@@ -10,6 +10,8 @@ from fastapi.testclient import TestClient
 from jsonschema import Draft202012Validator
 from PIL import Image
 from pypdf import PdfWriter
+from pypdf.errors import PdfStreamError
+from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 from test_native_pdf import _write_pdf
 from test_v32_protected_pdf import _native_inputs, _no_model, _run
 
@@ -40,6 +42,32 @@ def _pdf(variant: str) -> bytes:
         assert broken != raw
         return broken
     raise ValueError("unknown synthetic PDF variant")
+
+
+def _pdf_with_broken_contents(variant: str) -> bytes:
+    writer = PdfWriter()
+    page = writer.add_blank_page(width=200, height=200)
+    font = DictionaryObject(
+        {
+            NameObject("/Type"): NameObject("/Font"),
+            NameObject("/Subtype"): NameObject("/Type1"),
+            NameObject("/BaseFont"): NameObject("/Helvetica"),
+        }
+    )
+    page[NameObject("/Resources")] = DictionaryObject(
+        {NameObject("/Font"): DictionaryObject({NameObject("/F1"): writer._add_object(font)})}
+    )
+    endings = {
+        "string": b"(unterminated",
+        "hex": b"<ab34",
+        "dict": b"<< /Key (value)",
+    }
+    stream = DecodedStreamObject()
+    stream.set_data(b"BT /F1 8 Tf 10 100 Td " + endings[variant])
+    page[NameObject("/Contents")] = writer._add_object(stream)
+    output = BytesIO()
+    writer.write(output)
+    return output.getvalue()
 
 
 def _validate_schema(job):
@@ -74,10 +102,30 @@ def test_unreadable_primary_preserves_other_sources_and_partial_value(tmp_path, 
     _validate_schema(outcome)
 
 
-@pytest.mark.parametrize("duplicate_first", [False, True])
-def test_duplicate_unreadable_pdf_keeps_exclusion_and_both_errors(tmp_path, duplicate_first):
+@pytest.mark.parametrize("variant", ["string", "hex", "dict"])
+def test_broken_pdf_content_preserves_other_sources(tmp_path, variant):
     report, readable = _native_inputs("TST-62", "128.60")
-    broken = _pdf("half")
+    outcome = _run(
+        tmp_path,
+        ("report.xlsx", report),
+        [("act.docx", readable), ("broken-content.pdf", _pdf_with_broken_contents(variant))],
+    )
+    assert outcome.status == "completed_with_issues" and outcome.result is not None
+    document = next(item for item in outcome.result.documents if item.name == "broken-content.pdf")
+    assert document.parse_status == "error" and document.errors[0].code == "pdf_unreadable"
+    row = next(item for item in outcome.result.rows if item.id == "general_admin")
+    assert row.status == "unverified" and row.expected_value is None and row.delta is None
+    assert row.observed_evidence_sum == "128.60"
+    _validate_schema(outcome)
+
+
+@pytest.mark.parametrize("duplicate_first", [False, True])
+@pytest.mark.parametrize("variant", ["half", "contents"])
+def test_duplicate_unreadable_pdf_keeps_exclusion_and_both_errors(
+    tmp_path, duplicate_first, variant
+):
+    report, readable = _native_inputs("TST-62", "128.60")
+    broken = _pdf("half") if variant == "half" else _pdf_with_broken_contents("string")
     original = ("broken-a.pdf", broken)
     duplicate = ("broken-b.pdf", broken)
     primary = (
@@ -105,13 +153,20 @@ def test_duplicate_unreadable_pdf_keeps_exclusion_and_both_errors(tmp_path, dupl
     _validate_schema(outcome)
 
 
-@pytest.mark.parametrize("variant", ["half", "xref", "root"])
+@pytest.mark.parametrize(
+    "variant", ["half", "xref", "root", "content_string", "content_hex", "content_dict"]
+)
 @pytest.mark.parametrize("explicit_scope", [False, True])
 def test_unreadable_report_fails_without_result(tmp_path, variant, explicit_scope):
     _, readable = _native_inputs("TST-62", "128.60")
     outcome = _run(
         tmp_path,
-        ("report.pdf", _pdf(variant)),
+        (
+            "report.pdf",
+            _pdf_with_broken_contents(variant.removeprefix("content_"))
+            if variant.startswith("content_")
+            else _pdf(variant),
+        ),
         [("act.docx", readable)],
         explicit_scope=explicit_scope,
     )
@@ -217,14 +272,69 @@ def test_unexpected_model_failure_remains_a_job_failure(monkeypatch, tmp_path):
     assert "synthetic model detail" not in outcome.error.message
 
 
-@pytest.mark.parametrize("failure", ["pdfium_unknown", "program_error"])
+def test_late_pdf_stream_error_preserves_other_sources_and_duplicate(monkeypatch, tmp_path):
+    from bench.e2e_v32_20261114 import runtime
+
+    report, readable = _native_inputs("TST-62", "128.60")
+    buffer = BytesIO()
+    Image.new("RGB", (200, 300), "white").save(buffer, "PDF")
+    monkeypatch.setattr(
+        grounded_amounts,
+        "recognize_lines",
+        lambda _image: [OcrLine("Синтетический документ", (10, 10, 100, 30), 99)],
+    )
+
+    def broken_stream(_path):
+        raise PdfStreamError("synthetic internal PDF detail")
+
+    monkeypatch.setattr(runtime, "native_text", broken_stream)
+    outcome = _run(
+        tmp_path,
+        ("report.xlsx", report),
+        [
+            ("copy.pdf", buffer.getvalue()),
+            ("act.docx", readable),
+            ("original.pdf", buffer.getvalue()),
+        ],
+        fixed_ids={"original.pdf": "a" * 32, "copy.pdf": "b" * 32},
+    )
+    assert outcome.status == "completed_with_issues" and outcome.result is not None
+    documents = {item.name: item for item in outcome.result.documents}
+    representative, copy = documents["original.pdf"], documents["copy.pdf"]
+    assert representative.errors[0].code == copy.errors[0].code == "pdf_unreadable"
+    assert representative.parse_status == copy.parse_status == "error"
+    assert copy.duplicate_of == representative.id and copy.decision.state == "exclude"
+    assert "synthetic internal PDF detail" not in outcome.model_dump_json()
+    row = next(item for item in outcome.result.rows if item.id == "general_admin")
+    assert row.status == "unverified" and row.observed_evidence_sum == "128.60"
+    _validate_schema(outcome)
+
+
+def test_unreadable_png_still_produces_file_error(tmp_path):
+    report, readable = _native_inputs("TST-62", "128.60")
+    outcome = _run(
+        tmp_path,
+        ("report.xlsx", report),
+        [("act.docx", readable), ("invalid.png", b"not a readable image")],
+    )
+    assert outcome.status == "completed_with_issues" and outcome.result is not None
+    document = next(item for item in outcome.result.documents if item.name == "invalid.png")
+    assert document.parse_status == "error" and document.errors[0].code == "source_unreadable"
+    row = next(item for item in outcome.result.rows if item.id == "general_admin")
+    assert row.status == "unverified" and row.observed_evidence_sum == "128.60"
+
+
+@pytest.mark.parametrize(
+    "failure", ["pdfium_unknown", "pdfium_success", "pdfium_no_code", "program_error"]
+)
 def test_unexpected_pdf_probe_failure_is_not_reported_as_bad_file(monkeypatch, tmp_path, failure):
     report, readable = _native_inputs("TST-62", "128.60")
     valid = _pdf("root").replace(b"/Root 9 0 R", b"/Root 3 0 R", 1)
 
     def unexpected(*_args, **_kwargs):
-        if failure == "pdfium_unknown":
-            raise pdfium.PdfiumError("synthetic internal detail", err_code=1)
+        if failure.startswith("pdfium"):
+            code = {"pdfium_unknown": 1, "pdfium_success": 0, "pdfium_no_code": None}[failure]
+            raise pdfium.PdfiumError("synthetic internal detail", err_code=code)
         raise ValueError("synthetic internal detail")
 
     monkeypatch.setattr(pdfium, "PdfDocument", unexpected)
@@ -234,6 +344,80 @@ def test_unexpected_pdf_probe_failure_is_not_reported_as_bad_file(monkeypatch, t
     assert outcome.status == "failed" and outcome.result is None
     assert outcome.error is not None and outcome.error.code == "processing_failed"
     assert "synthetic internal detail" not in outcome.error.message
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "model_value",
+        "model_oserror",
+        "model_runtime",
+        "late_pdfium_value",
+        "late_pdfium_unknown",
+        "late_pdfium_no_code",
+    ],
+)
+def test_late_unexpected_value_error_is_safe_job_failure(
+    database_url, monkeypatch, tmp_path, caplog, failure
+):
+    report, readable = _native_inputs("TST-62", "128.60")
+    scan = BytesIO()
+    Image.new("RGB", (200, 300), "white").save(scan, "PDF")
+    private_detail = "synthetic internal diagnostic"
+    monkeypatch.setattr(
+        grounded_amounts,
+        "recognize_lines",
+        lambda _image: [OcrLine("Синтетический документ", (10, 10, 100, 30), 99)],
+    )
+
+    def model_error(*_args, **_kwargs):
+        if failure == "model_oserror":
+            raise OSError(private_detail)
+        if failure == "model_runtime":
+            raise RuntimeError(private_detail)
+        raise ValueError(private_detail)
+
+    if failure.startswith("late_pdfium"):
+        open_pdf = pdfium.PdfDocument
+        calls = []
+
+        def open_then_fail(*args, **kwargs):
+            calls.append(1)
+            if len(calls) > 1:
+                if failure == "late_pdfium_unknown":
+                    raise pdfium.PdfiumError(private_detail, err_code=1)
+                if failure == "late_pdfium_no_code":
+                    raise pdfium.PdfiumError(private_detail)
+                raise ValueError(private_detail)
+            return open_pdf(*args, **kwargs)
+
+        monkeypatch.setattr(pdfium, "PdfDocument", open_then_fail)
+
+    settings = Settings(database_url, upload_root=tmp_path / "uploads")
+    with TestClient(create_app(settings)) as client:
+        response = client.post(
+            "/api/v0/runs",
+            headers={"Idempotency-Key": str(uuid4())},
+            files=[
+                ("report", ("report.xlsx", report)),
+                ("documents", ("act.docx", readable)),
+                ("documents", ("scan.pdf", scan.getvalue())),
+            ],
+        )
+        assert response.status_code == 202
+        run_id = response.json()["run_id"]
+        assert run_document_worker(
+            client.app.state.engine,
+            settings.upload_root,
+            V32Processor(_no_model, model_error),
+            once=True,
+        )
+        state = client.get(f"/api/v0/runs/{run_id}")
+        assert state.json()["status"] == "failed"
+        assert state.json()["error"]["code"] == "processing_failed"
+        assert private_detail not in state.text and private_detail not in caplog.text
+        findings = client.get(f"/api/v0/runs/{run_id}/findings")
+        assert findings.status_code == 409 and findings.json()["code"] == "run_failed"
 
 
 def test_worker_accepts_valid_scanned_pdf_with_mocked_ocr_and_model(
@@ -283,10 +467,15 @@ def test_worker_accepts_valid_scanned_pdf_with_mocked_ocr_and_model(
         assert document["parse_status"] == "parsed" and document["errors"] == []
 
 
-@pytest.mark.parametrize("broken_report", [False, True])
-def test_worker_and_api_preserve_corrupt_pdf_outcome(database_url, tmp_path, broken_report):
+@pytest.mark.parametrize(
+    ("broken_report", "variant"),
+    [(False, "half"), (True, "half"), (False, "contents"), (True, "contents")],
+)
+def test_worker_and_api_preserve_corrupt_pdf_outcome(
+    database_url, tmp_path, broken_report, variant
+):
     report, readable = _native_inputs("TST-62", "128.60")
-    broken = _pdf("half")
+    broken = _pdf("half") if variant == "half" else _pdf_with_broken_contents("string")
     report_file = ("broken-report.pdf", broken) if broken_report else ("report.xlsx", report)
     documents = [("act.docx", readable)]
     if not broken_report:

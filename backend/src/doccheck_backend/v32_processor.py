@@ -11,6 +11,9 @@ from shutil import copyfileobj
 from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Literal
 
+from pypdf.errors import FileNotDecryptedError, PdfReadError
+from pypdfium2 import PdfiumError
+
 from doccheck_backend.byte_duplicates import plan_byte_duplicates
 from doccheck_backend.contracts import RESULT_SCHEMA_VERSION, CheckJob, CheckResult
 from doccheck_backend.contracts.locators import PageLocator, SheetLocator
@@ -103,6 +106,18 @@ class ExtractionLimit(ValueError):
     """The document exceeds a limit of the local model profile."""
 
 
+class SourceInputError(Exception):
+    """An expected problem while reading a source file."""
+
+
+class PdfContentError(Exception):
+    """A PDF parser could not read the source contents."""
+
+    def __init__(self, code: Literal["encrypted_pdf", "pdf_unreadable"]):
+        super().__init__(code)
+        self.code = code
+
+
 def _digest(path: Path) -> str:
     with path.open("rb") as stream:
         return file_digest(stream, "sha256").hexdigest()
@@ -166,35 +181,46 @@ def _copy_original(run: StoredRun, directory: Path, item: dict, scratch: Path) -
     return path
 
 
+def _pdfium_issue(error: PdfiumError) -> Literal["encrypted_pdf", "pdf_unreadable"] | None:
+    import pypdfium2.raw as pdfium_raw
+
+    if error.err_code == pdfium_raw.FPDF_ERR_PASSWORD:
+        return "encrypted_pdf"
+    if error.err_code in {
+        pdfium_raw.FPDF_ERR_FILE,
+        pdfium_raw.FPDF_ERR_FORMAT,
+        pdfium_raw.FPDF_ERR_SECURITY,
+        pdfium_raw.FPDF_ERR_PAGE,
+    }:
+        return "pdf_unreadable"
+    return None
+
+
 def _pdf_issue(path: Path) -> Literal["encrypted_pdf", "pdf_unreadable"] | None:
     import pypdfium2 as pdfium
-    import pypdfium2.raw as pdfium_raw
     from pypdf import PdfReader
-    from pypdf.errors import FileNotDecryptedError, PdfReadError
 
     if any(issue.code == "encrypted_pdf" for issue in read_pdf(path, page_number=1).issues):
         return "encrypted_pdf"
     try:
         with PdfReader(path) as reader:
             pages = len(reader.pages)
+            for page in reader.pages:
+                contents = page.get_contents()
+                if contents is not None:
+                    _ = contents.operations
+        if pages == 0:
+            return "pdf_unreadable"
         with pdfium.PdfDocument(path) as document:
-            if pages == 0 or len(document) != pages:
+            if len(document) != pages:
                 return "pdf_unreadable"
     except FileNotDecryptedError:
         return "encrypted_pdf"
     except PdfReadError:
         return "pdf_unreadable"
-    except pdfium.PdfiumError as error:
-        if error.err_code == pdfium_raw.FPDF_ERR_PASSWORD:
-            return "encrypted_pdf"
-        if error.err_code in {
-            pdfium_raw.FPDF_ERR_SUCCESS,
-            pdfium_raw.FPDF_ERR_FILE,
-            pdfium_raw.FPDF_ERR_FORMAT,
-            pdfium_raw.FPDF_ERR_SECURITY,
-            pdfium_raw.FPDF_ERR_PAGE,
-        }:
-            return "pdf_unreadable"
+    except PdfiumError as error:
+        if issue := _pdfium_issue(error):
+            return issue
         raise
     return None
 
@@ -206,14 +232,14 @@ def _images(path: Path) -> list[Path]:
     if path.suffix == ".png":
         with Image.open(path) as source:
             if source.format != "PNG" or source.n_frames != 1:
-                raise ValueError("Expected a single PNG")
+                raise SourceInputError("Expected a single PNG")
             image = source.convert("RGB")
         target = path.with_suffix(".input.png")
         image.thumbnail((2000, 2500))
         image.save(target)
         return [target]
     if path.suffix != ".pdf":
-        raise ValueError("A scanned input must be PDF or PNG")
+        raise SourceInputError("A scanned input must be PDF or PNG")
     result = []
     with pdfium.PdfDocument(path) as document:
         if not 0 < len(document) <= _MAX_PAGES:
@@ -223,7 +249,7 @@ def _images(path: Path) -> list[Path]:
             try:
                 width, height = page.get_size()
                 if min(width, height) <= 0:
-                    raise ValueError("Invalid PDF page dimensions")
+                    raise SourceInputError("Invalid PDF page dimensions")
                 bitmap = page.render(scale=min(2.5, 2000 / width, 2500 / height))
                 try:
                     target = path.with_suffix(f".page-{index + 1}.png")
@@ -262,16 +288,27 @@ def _identity_crop(path: Path, locator: PageLocator) -> Path:
 
 def _model_input(path: Path) -> tuple[str | None, list[Path]]:
     from bench.e2e_v32_20261114.runtime import native_text
-    from pypdf.errors import PdfReadError
-    from pypdfium2 import PdfiumError
 
     try:
         text = native_text(path)
         if text and len(text) > _MAX_NATIVE_CHARS:
             raise ExtractionLimit
         return (text, []) if text and text.strip() else (None, _images(path))
-    except (PdfReadError, PdfiumError) as error:
-        raise OcrError("Cannot read the PDF source for the model") from error
+    except FileNotDecryptedError as error:
+        if path.suffix != ".pdf":
+            raise
+        raise PdfContentError("encrypted_pdf") from error
+    except PdfReadError as error:
+        if path.suffix != ".pdf":
+            raise
+        raise PdfContentError("pdf_unreadable") from error
+    except PdfiumError as error:
+        issue = _pdfium_issue(error) if path.suffix == ".pdf" else None
+        if issue is None:
+            raise
+        raise PdfContentError(issue) from error
+    except OSError as error:
+        raise SourceInputError("Source could not be read") from error
 
 
 def _predict(
@@ -833,7 +870,11 @@ class V32Processor:
                         continue
                     if document is report:
                         if document.format == "xlsx":
-                            native = read_native_report(path)
+                            try:
+                                native = read_native_report(path)
+                            except (OSError, ValueError):
+                                _file_error(document, "source_unreadable")
+                                continue
                         elif document.format in {"pdf", "png"}:
                             report_copy = path
                             if run.scope is None:
@@ -857,8 +898,13 @@ class V32Processor:
                         document.decision = _decision("needs_review", "report_pending")
                         continue
                     try:
+                        opened_digest = _digest(path)
+                    except OSError:
+                        _file_error(document, "source_unreadable")
+                        continue
+                    try:
                         grounded = ground_document(
-                            run.id, document.id, path, document.format, _digest(path)
+                            run.id, document.id, path, document.format, opened_digest
                         )
                         if any(issue.code == "encrypted_pdf" for issue in grounded.issues):
                             _file_error(document, "encrypted_pdf")
@@ -870,8 +916,17 @@ class V32Processor:
                                 document.parse_status = "partial"
                                 document.decision = _decision("needs_review", "source_incomplete")
                                 continue
-                    except OcrError:
+                    except OcrError as error:
+                        if document.format == "pdf" and isinstance(error.__cause__, PdfiumError):
+                            issue = _pdfium_issue(error.__cause__)
+                            if issue is None:
+                                raise
+                            _file_error(document, issue)
+                            continue
                         _file_error(document, "source_unreadable")
+                    except OSError:
+                        _file_error(document, "source_unreadable")
+                        continue
                     # Deterministic readers cover native fields. The approved LoRA
                     # proposes an identity on scans while these source facts remain authoritative.
                     if document.id in grounds and document.format in {"xlsx", "docx"}:
@@ -890,7 +945,12 @@ class V32Processor:
                         try:
                             image = images[0]
                             if source and isinstance(source.identity_locator, PageLocator):
-                                image = _identity_crop(image, source.identity_locator)
+                                try:
+                                    image = _identity_crop(image, source.identity_locator)
+                                except OSError as error:
+                                    raise SourceInputError(
+                                        "Source image could not be read"
+                                    ) from error
                             number = self.read_number(image)
                         except QwenPredictionError:
                             _file_error(document, "qwen_prediction_failed")
@@ -949,7 +1009,33 @@ class V32Processor:
                     _file_error(document, "extraction_limit")
                 except QwenPredictionError:
                     _file_error(document, "qwen_prediction_failed")
-                except (OSError, RunReadError, ValueError, QwenInputError):
+                except PdfContentError as error:
+                    if document is report:
+                        return CheckJob(
+                            run_id=run_id,
+                            status="failed",
+                            result=None,
+                            error=Issue(code=error.code, message=_CODES[error.code]),
+                        )
+                    grounds.pop(document.id, None)
+                    _file_error(document, error.code)
+                except OcrError as error:
+                    if document.format == "pdf" and isinstance(error.__cause__, PdfiumError):
+                        issue = _pdfium_issue(error.__cause__)
+                        if issue is None:
+                            raise
+                        if document is report:
+                            return CheckJob(
+                                run_id=run_id,
+                                status="failed",
+                                result=None,
+                                error=Issue(code=issue, message=_CODES[issue]),
+                            )
+                        grounds.pop(document.id, None)
+                        _file_error(document, issue)
+                    else:
+                        _file_error(document, "source_unreadable")
+                except (SourceInputError, QwenInputError):
                     _file_error(document, "source_unreadable")
             if scan_pages and not report.errors:
                 automatic_scope = _select_scan_scope(
@@ -972,16 +1058,32 @@ class V32Processor:
                                 scanned = None
                                 break
                             scanned = reading
-                except OcrError:
+                except OcrError as error:
+                    if report.format == "pdf" and isinstance(error.__cause__, PdfiumError):
+                        issue = _pdfium_issue(error.__cause__)
+                        if issue is None:
+                            raise
+                        return CheckJob(
+                            run_id=run_id,
+                            status="failed",
+                            result=None,
+                            error=Issue(code=issue, message=_CODES[issue]),
+                        )
                     _file_error(report, "source_unreadable")
         documents_by_id = {document.id: document for document in documents}
         for document in documents:
             if copy := copies.get(document.id):
                 representative = documents_by_id[copy.duplicate_of]
-                if not document.errors and any(
-                    error.code == "encrypted_pdf" for error in representative.errors
-                ):
-                    _file_error(document, "encrypted_pdf")
+                inherited = next(
+                    (
+                        error.code
+                        for error in representative.errors
+                        if error.code in {"encrypted_pdf", "pdf_unreadable"}
+                    ),
+                    None,
+                )
+                if not document.errors and inherited:
+                    _file_error(document, inherited)
                 document.duplicate_of = copy.duplicate_of
                 document.decision = copy.decision
 
