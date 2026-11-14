@@ -254,3 +254,23 @@ def test_date_parser_cannot_skip_intervening_low_quality_fragment(scanned_stage)
     fragment = _box("архивный", 0.147, 0.15, 0.172, confidence=0.54)
 
     assert parse_scan_report((*scanned_stage, fragment)) is None
+
+
+def test_compact_numeric_alternative_inside_contract_value_rejects_scope(scanned_stage):
+    _, *others = scanned_stage
+    contract = _box("Договор № 741208 от 01.01.2027", 0.06, 0.09, 0.36)
+    alternate = _box("741209", 0.166, 0.09, 0.216, confidence=0.73)
+
+    assert parse_scan_report((contract, *others, alternate)) is None
+
+
+def test_date_to_right_of_contract_value_does_not_compete(scanned_stage):
+    _, *others = scanned_stage
+    contract = _box("Договор № 741208 от 01.01.2027", 0.06, 0.09, 0.36)
+    date_reading = _box("01.01.2027", 0.258, 0.09, 0.36, confidence=0.73)
+
+    result = parse_scan_report((contract, *others, date_reading))
+
+    assert result is not None
+    assert result.contract == "741208"
+    assert result.end.isoformat() == "2028-04-17"
