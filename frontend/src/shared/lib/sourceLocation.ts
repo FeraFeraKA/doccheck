@@ -1,4 +1,4 @@
-interface PageAddress {
+export interface PageAddress {
   page: number;
   table_row?: number | null;
   table_column?: number | null;

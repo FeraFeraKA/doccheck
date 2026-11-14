@@ -1,9 +1,8 @@
 .result-documents {
   min-width: 0;
-  margin-block: 1rem;
+  margin-top: 1rem;
 }
 
-.result-documents-heading,
 .result-document-filters,
 .result-document-file {
   display: flex;
@@ -11,104 +10,88 @@
   gap: .5rem;
 }
 
-.result-documents-heading h2 {
-  margin: 0;
-  font-family: inherit;
-  font-size: 1.125rem;
-  font-weight: 600;
-}
-
-.result-documents-heading {
-  justify-content: space-between;
-  flex-wrap: wrap;
-}
-
-.result-document-filters {
-  flex-wrap: wrap;
-  margin-block: .75rem;
-}
-
-.result-document-filters button {
-  background: #fff;
-  border: 1px solid #dce5e5;
-  border-radius: .375rem;
-  padding: .35rem .625rem;
-  font-size: .8125rem;
-}
-
-.result-document-filters button[aria-pressed="true"] {
-  background: #e5f0ed;
-  box-shadow: inset 0 -2px var(--ui-primary);
-}
-
-.result-document-scroll {
-  overflow: auto;
-  border: 1px solid #dce5e5;
-  border-radius: .625rem;
-  background: #fff;
-}
-
-.result-document-table {
-  width: 100%;
-  min-width: 38rem;
-  margin: 0;
-  font-size: .8125rem;
-}
-
-.result-document-table th {
-  background: var(--ui-soft);
+.result-document-filters { flex-wrap: wrap; gap: .25rem; }
+.checks-content .result-document-filters button {
+  border: 0;
+  border-radius: 4px;
+  padding: 4px 8px;
+  min-height: 28px;
+  font-size: 12px;
+  white-space: nowrap;
   color: var(--ui-secondary);
 }
 
-.result-document-table th,
-.result-document-table td {
-  padding: .625rem .75rem;
+.result-document-filters button[aria-pressed="true"] {
+  color: var(--ui-primary);
+  background: #e5f0ed;
+}
+
+.result-document-actions { font-size: 13px; }
+.result-document-scroll { overflow-x: auto; background: #fff; }
+
+.result-document-table {
+  width: 100%;
+  min-width: 920px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.checks-content .result-document-table th {
+  height: 54px;
+  padding: 16px 12px;
+  border-bottom: 1px solid #ccd7d7;
   text-align: start;
-  vertical-align: top;
+  background: white;
+  color: var(--ui-secondary);
+  font-size: 13px;
+  font-weight: 500;
 }
 
-.result-document-table th:first-child {
-  min-width: 12.5rem;
+.checks-content .result-document-table td {
+  padding: 18px 12px;
+  border-bottom: 1px solid var(--ui-line);
+  text-align: start;
+  vertical-align: middle;
+  font-size: 13px;
+  line-height: 1.6;
 }
+.result-document-table th:first-child { min-width: 200px; }
+.result-document-table tbody tr:nth-child(even) { background: #f6f9f8; }
+.result-document-table tbody tr:hover { background: #eff4f2; }
+.result-document-table tr[data-selected="true"] { background: var(--ui-selected); }
 
-.result-document-table th:nth-last-child(2),
-.result-document-table th:last-child {
-  min-width: 10rem;
+.result-document-file { gap: 13px; }
+.result-documents .result-document-table tbody tr { cursor: pointer; }
+.document-reading-status { display: flex; align-items: center; gap: 7px; }
+.document-read-icon {
+  display: grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  border-radius: 4px;
+  background: var(--ui-lime);
+  color: var(--ui-ink);
 }
-
-.result-document-table tbody tr:nth-child(even) {
-  background: #f6f9f8;
-}
-
-.result-document-file {
-  align-items: flex-start;
-}
-
+.document-decision-details { font-size: 12px; color: var(--ui-secondary); }
+.document-decision-details summary { cursor: pointer; }
+.document-reading-status + .result-document-state { margin-top: 4px; }
 .result-document-file .file-type-icon {
-  flex: 0 0 1.4rem;
-  width: 1.4rem;
-  height: 1.65rem;
+  flex: 0 0 42px;
+  width: 42px;
+  height: 48px;
 }
-
-.result-document-file .file-type-icon svg {
-  width: 1.4rem;
-  height: 1.65rem;
-}
-
-.result-document-file button {
+.result-document-file .file-type-icon svg { width: 42px; height: 48px; }
+.checks-content .result-document-file button {
   margin: 0;
   border: 0;
-  border-radius: .25rem;
-  padding: .25rem;
-  color: var(--ui-primary);
+  padding: 0;
+  font-weight: 500;
+  color: var(--ui-ink);
   background: transparent;
   text-align: start;
   overflow-wrap: anywhere;
 }
-
-.result-document-file button:hover {
-  text-decoration: underline;
-}
+.result-document-file button:hover { text-decoration: underline; }
 
 .result-document-state {
   display: inline-block;
@@ -135,22 +118,4 @@
   margin: 0;
   list-style: none;
   overflow-wrap: anywhere;
-}
-
-.result-document-details {
-  display: grid;
-  gap: .75rem;
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.result-document-picker {
-  display: grid;
-  min-width: 0;
-  gap: .25rem;
-}
-
-.result-document-picker select {
-  min-width: 0;
-  width: 100%;
 }

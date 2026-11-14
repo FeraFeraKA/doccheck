@@ -6,6 +6,7 @@ RUN npm install --global "pnpm@$(node -p 'require("./package.json").packageManag
 COPY frontend/tsconfig.json frontend/vite.config.ts frontend/index.html ./
 COPY frontend/src ./src
 COPY frontend/public/fonts/inter-OFL.txt ./public/fonts/
+COPY frontend/public/demo/report.xlsx frontend/public/demo/act.docx ./public/demo/
 COPY contracts/check-result.v1.synthetic.json ../contracts/
 COPY docs/synthetic/nrt-89/inputs.json ../docs/synthetic/nrt-89/
 RUN pnpm build

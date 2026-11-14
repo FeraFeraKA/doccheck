@@ -68,6 +68,7 @@ services:
     networks: [backend]
 
   document-worker:
+    restart: on-failure
     profiles: [document-worker]
     image: "${DOCCHECK_DOCUMENT_WORKER_IMAGE:-doccheck-backend:local}"
     environment:

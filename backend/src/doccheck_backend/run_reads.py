@@ -10,15 +10,24 @@ from os import fstat, stat_result
 from os.path import samestat
 from pathlib import Path
 from stat import S_ISREG
-from typing import BinaryIO
+from typing import BinaryIO, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ValidationError
-from sqlalchemy import Engine, select, tuple_
+from sqlalchemy import Engine, and_, func, select, tuple_
 from sqlalchemy.orm import Session, defer
 
 from doccheck_backend.contracts import CheckResult
-from doccheck_backend.contracts.result import Evidence, Issue, JobStatus
+from doccheck_backend.contracts.result import Evidence, Issue, JobStatus, StatusCounts
+from doccheck_backend.document_preview import (
+    MAX_PREVIEW_BYTES,
+    PREVIEW_ERRORS,
+    SheetPreview,
+    WordPreview,
+    pdf_page_preview,
+    sheet_preview,
+    word_preview,
+)
 from doccheck_backend.fragment_preview import MAX_INPUT_BYTES, FragmentPreview, render_preview
 from doccheck_backend.models import Run
 
@@ -49,10 +58,28 @@ class RunProgress(BaseModel):
 
 class RunState(RunSummary):
     progress: RunProgress | None
+    archived_at: datetime | None = None
+
+
+class HistoryRun(RunSummary):
+    counts: StatusCounts | None = None
+    report_number: str | None = None
+    synthetic: bool | None = None
+    document_count: int
+    contract_number: str | None = None
+    archived_at: datetime | None = None
+
+
+FindingFilter = Literal["discrepancy", "unverified", "verified"]
+RunView = Literal["active", "archive"]
+
+
+class ArchiveState(BaseModel):
+    archived_at: datetime | None
 
 
 class RunPage(BaseModel):
-    items: list[RunSummary]
+    items: list[HistoryRun]
     next_cursor: str | None
 
 
@@ -60,20 +87,87 @@ def unavailable() -> RunReadError:
     return RunReadError(503, "service_unavailable", "Хранилище проверок недоступно")
 
 
-def list_runs(engine: Engine, limit: int, cursor: str | None) -> RunPage:
-    query = select(Run.id, Run.status, Run.created_at, Run.error)
+def list_runs(
+    engine: Engine,
+    limit: int,
+    cursor: str | None,
+    finding: FindingFilter | None = None,
+    view: RunView = "active",
+) -> RunPage:
+    counts = Run.result["summary"]["counts"]
+    archive = view == "archive"
+    sort_date = Run.archived_at if archive else Run.created_at
+    columns = (
+        Run.id,
+        Run.status,
+        Run.created_at,
+        Run.error,
+        counts,
+        Run.result["report_number"].as_string(),
+        Run.result["synthetic"].as_boolean(),
+        Run.documents[0]["synthetic"].as_boolean(),
+        func.jsonb_array_length(Run.documents),
+        Run.result["scope"]["contract_number"].as_string(),
+        Run.archived_at,
+    )
+    query = select(*columns).where(
+        Run.archived_at.is_not(None) if archive else Run.archived_at.is_(None)
+    )
+    if finding is not None:
+        query = query.where(Run.status.in_(("completed", "completed_with_issues")))
+        if finding == "verified":
+            query = query.where(
+                and_(
+                    counts["verified"].as_integer() > 0,
+                    counts["discrepancy"].as_integer() == 0,
+                    counts["unverified"].as_integer() == 0,
+                )
+            )
+        else:
+            query = query.where(counts[finding].as_integer() > 0)
     if cursor is not None:
-        query = query.where(tuple_(Run.created_at, Run.id) < _decode_cursor(cursor))
-    query = query.order_by(Run.created_at.desc(), Run.id.desc()).limit(limit + 1)
+        query = query.where(tuple_(sort_date, Run.id) < _decode_cursor(cursor))
+    query = query.order_by(sort_date.desc(), Run.id.desc()).limit(limit + 1)
     with Session(engine) as session:
-        items = [
-            RunSummary(run_id=run_id, status=status, created_at=created_at, error=error)
-            for run_id, status, created_at, error in session.execute(query)
-        ]
+        items = []
+        for (
+            run_id,
+            status,
+            created_at,
+            error,
+            row_counts,
+            number,
+            synthetic,
+            demo,
+            document_count,
+            contract_number,
+            archived_at,
+        ) in session.execute(query):
+            item = HistoryRun(
+                run_id=run_id,
+                status=status,
+                created_at=created_at,
+                error=error,
+                document_count=document_count,
+            )
+            if archived_at is not None:
+                item.archived_at = archived_at
+            if demo is True:
+                item.synthetic = True
+            if contract_number is not None:
+                item.contract_number = contract_number
+            if status in ("completed", "completed_with_issues") and row_counts is not None:
+                item.counts = StatusCounts.model_validate(row_counts)
+                item.report_number = number
+                if synthetic is not None:
+                    item.synthetic = synthetic or demo is True
+            items.append(item)
     if len(items) <= limit:
         return RunPage(items=items, next_cursor=None)
     last = items[limit - 1]
-    position = json.dumps([last.created_at.isoformat(), str(last.run_id)]).encode("ascii")
+    moment = last.archived_at if archive else last.created_at
+    assert moment is not None
+    position = json.dumps([moment.isoformat(), str(last.run_id)]).encode("ascii")
     token = urlsafe_b64encode(position).decode("ascii").rstrip("=")
     return RunPage(items=items[:limit], next_cursor=token)
 
@@ -98,13 +192,17 @@ def _decode_cursor(token: str) -> tuple[datetime, UUID]:
         raise RunReadError(422, "invalid_input", "Некорректный курсор", "cursor") from None
 
 
-def _load_run(engine: Engine, run_id: str, *, with_result: bool = False) -> Run:
+def _run_key(run_id: str) -> UUID:
     try:
         if not _URL_ID.fullmatch(run_id):
             raise ValueError
-        key = UUID(run_id)
+        return UUID(run_id)
     except ValueError:
         raise RunReadError(404, "run_not_found", "Проверка не найдена") from None
+
+
+def _load_run(engine: Engine, run_id: str, *, with_result: bool = False) -> Run:
+    key = _run_key(run_id)
     with Session(engine) as session:
         options = () if with_result else (defer(Run.result, raiseload=True),)
         run = session.get(Run, key, options=options)
@@ -127,6 +225,7 @@ def get_run_state(engine: Engine, run_id: str) -> RunState:
         created_at=run.created_at,
         error=run.error,
         progress=progress,
+        archived_at=run.archived_at.astimezone(UTC) if run.archived_at is not None else None,
     )
 
 
@@ -146,6 +245,22 @@ def _stored_result(run: Run) -> CheckResult:
 
 def get_run_findings(engine: Engine, run_id: str) -> CheckResult:
     return _stored_result(_load_run(engine, run_id, with_result=True))
+
+
+def set_run_archive(engine: Engine, run_id: str, archived: bool) -> ArchiveState:
+    with Session(engine) as session, session.begin():
+        run = session.get(Run, _run_key(run_id), with_for_update=True)
+        if run is None:
+            raise RunReadError(404, "run_not_found", "Проверка не найдена")
+        if archived:
+            _stored_result(run)
+            if run.archived_at is None:
+                run.archived_at = datetime.now(UTC)
+        else:
+            run.archived_at = None
+        return ArchiveState(
+            archived_at=run.archived_at.astimezone(UTC) if run.archived_at is not None else None,
+        )
 
 
 def _document_not_found() -> RunReadError:
@@ -224,6 +339,70 @@ def get_run_document(
     return stream, size, safe_name
 
 
+def get_document_preview(
+    engine: Engine,
+    root: Path,
+    run_id: str,
+    document_id: str,
+    *,
+    sheet: str | None,
+    row: int,
+    column: int,
+) -> SheetPreview | WordPreview:
+    file_format, data = _preview_original(engine, root, run_id, document_id)
+    try:
+        if file_format == "xlsx":
+            return sheet_preview(data, sheet, row, column)
+        if file_format == "docx":
+            return word_preview(data)
+    except (KeyError, *PREVIEW_ERRORS):
+        raise RunReadError(422, "preview_unavailable", "Не удалось прочитать документ") from None
+    raise RunReadError(415, "preview_unavailable", "Этот формат не имеет офисного предпросмотра")
+
+
+def get_document_pdf_page(
+    engine: Engine,
+    root: Path,
+    run_id: str,
+    document_id: str,
+    page: int,
+) -> tuple[bytes, int]:
+    file_format, data = _preview_original(engine, root, run_id, document_id)
+    if file_format != "pdf":
+        raise RunReadError(415, "preview_unavailable", "Документ не является PDF")
+    try:
+        return pdf_page_preview(data, page)
+    except IndexError:
+        raise RunReadError(404, "page_not_found", "Страница PDF не найдена") from None
+    except PREVIEW_ERRORS:
+        raise RunReadError(422, "preview_unavailable", "Не удалось открыть страницу PDF") from None
+
+
+def _preview_original(
+    engine: Engine,
+    root: Path,
+    run_id: str,
+    document_id: str,
+) -> tuple[object, bytes]:
+    run = _load_run(engine, run_id)
+    document = _stored_document(run, document_id)
+    if document["size"] > MAX_PREVIEW_BYTES:
+        raise RunReadError(413, "preview_unavailable", "Файл слишком большой для предпросмотра")
+    stream, size = _open_original(root, run.id, document_id, document)
+    return document.get("format"), _read_verified_original(stream, size, document)
+
+
+def _read_verified_original(stream: BinaryIO, size: int, document: dict[str, object]) -> bytes:
+    with stream:
+        try:
+            content = stream.read(size + 1)
+        except OSError:
+            raise unavailable() from None
+    if len(content) != size or sha256(content).hexdigest() != document["sha256"]:
+        raise _document_not_found()
+    return content
+
+
 def get_run_fragment(
     engine: Engine,
     root: Path,
@@ -246,17 +425,11 @@ def get_run_fragment_preview(
     evidence, stream, size, document = _open_fragment(
         engine, root, run_id, document_id, evidence_id
     )
-    with stream:
-        if size > MAX_INPUT_BYTES:
-            return FragmentPreview(text=None, highlight=None)
-        try:
-            content = stream.read(size + 1)
-        except OSError:
-            raise unavailable() from None
-    # The parser and the hash must see the same bytes, even if the on-disk
-    # file is rewritten in place after _open_original verifies it.
-    if len(content) != size or sha256(content).hexdigest() != document["sha256"]:
-        raise _document_not_found()
+    if size > MAX_INPUT_BYTES:
+        stream.close()
+        return FragmentPreview(text=None, highlight=None)
+    # Verify the exact bytes supplied to the parser.
+    content = _read_verified_original(stream, size, document)
     return render_preview(BytesIO(content), document.get("format"), evidence)
 
 

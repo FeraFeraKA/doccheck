@@ -26,13 +26,14 @@ function fragment(documentId: string, locator: object): Response {
   });
 }
 
-function mockSource(documentId: string, locator: object) {
+function mockSource(documentId: string, locator: object, preview?: object) {
   const fetchMock = vi.fn<typeof fetch>().mockImplementation(async (input) => {
     const url = new URL(String(input), 'http://localhost');
     if (url.pathname.endsWith('/fragments')) {
       expect(url.searchParams.get('evidence_id')).toBe(evidenceId);
       return fragment(documentId, locator);
     }
+    if (url.pathname.endsWith('/preview') && preview) return Response.json(preview);
     return original();
   });
   vi.stubGlobal('fetch', fetchMock);
@@ -88,17 +89,27 @@ describe('document source preview', () => {
   });
 
   it.each([
-    ['xlsx', { kind: 'sheet', sheet: 'Синтетика', range: 'C6:D8' }, 'Лист «Синтетика», C6:D8'],
-    ['docx', { kind: 'paragraph', paragraph: 3 }, 'Абзац 3'],
-    ['docx', { kind: 'table_cell', table: 1, row: 2, cell: 3 }, 'Таблица 1, строка 2, ячейка 3'],
-  ] as const)('shows the address for %s and downloads the office original', async (format, locator, label) => {
+    ['xlsx', { kind: 'sheet', sheet: 'Синтетика', range: 'C6:D8' }, 'Лист «Синтетика», C6:D8', {
+      sheet: 'Синтетика', sheets: ['Синтетика'], row: 6, column: 3, last_row: 8, last_column: 4,
+      rows: [['1,00', 'Рубли'], ['2,00', 'Рубли'], ['3,00', 'Рубли']],
+    }, 'C6'],
+    ['docx', { kind: 'paragraph', paragraph: 3 }, 'Абзац 3', {
+      blocks: [{ paragraph: 3, text: '1,00', heading: false }], truncated: false,
+    }, 'paragraph-3'],
+    ['docx', { kind: 'table_cell', table: 1, row: 2, cell: 3 }, 'Таблица 1, строка 2, ячейка 3', {
+      blocks: [{ table: 1, rows: [[{ column: 1, text: 'Итого', span: 3 }], [
+        { column: 1, text: 'Сумма', span: 2 }, { column: 3, text: '1,00', span: 1 },
+      ]] }], truncated: false,
+    }, 'table-1-2-3'],
+  ] as const)('renders and highlights the %s address with a link to the original', async (format, locator, label, preview, address) => {
     const document = { id: 'office-1', name: `example.${format}`, format };
-    mockSource(document.id, locator);
-    render(<DocumentSourcePreview runId="run-1" document={document} evidenceId={evidenceId} />);
+    mockSource(document.id, locator, preview);
+    render(<DocumentSourcePreview runId="run-1" document={document} evidenceId={evidenceId} tone="discrepancy" />);
 
     expect(await screen.findByText(label)).toBeVisible();
-    expect(screen.getByText('Для просмотра по адресу откройте скачанный файл в офисном приложении.'))
-      .toBeVisible();
+    const value = await screen.findByText('1,00');
+    expect(value.closest('[data-source-address]')).toHaveAttribute('data-source-address', address);
+    expect(value.closest('[data-source-tone]')).toHaveAttribute('data-source-tone', 'discrepancy');
     expect(screen.getByRole('link', { name: 'Скачать оригинал' })).toHaveAttribute('download', document.name);
     expect(screen.queryByRole('img')).not.toBeInTheDocument();
   });

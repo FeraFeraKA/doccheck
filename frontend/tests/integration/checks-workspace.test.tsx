@@ -70,10 +70,10 @@ it('открывает сохранённый запуск из истории �
   </MemoryRouter>);
 
   expect(screen.getByRole('link', { name: 'Синтетическая сверка' })).toBeVisible();
-  fireEvent.click(await screen.findByRole('link', { name: 'Проверка saved-run' }));
+  fireEvent.click(await screen.findByRole('link', { name: 'Проверка КФЗ №saved-run' }));
   expect(await screen.findByText('Обработано документов: 0 из 2')).toBeVisible();
   expect(await screen.findByRole('alert')).toHaveTextContent('Безопасная причина остановки');
-  expect(screen.getByRole('status')).toHaveTextContent('Завершилась ошибкой');
+  expect(screen.getByRole('status')).toHaveTextContent('Ошибка обработки');
   expect(fetchMock.mock.calls.map(([path]) => path)).toEqual([
     '/api/v0/runs', '/api/v0/runs/saved-run', '/api/v0/runs/saved-run',
   ]);
@@ -98,7 +98,7 @@ it('после ошибки получения состояния повторя
   expect(await screen.findByRole('alert')).toHaveTextContent('Не удалось получить состояние проверки.');
   fireEvent.click(screen.getByRole('button', { name: 'Повторить' }));
   expect(await screen.findByText('Результат проверки недоступен.')).toBeVisible();
-  expect(screen.getByText('Состояние проверки · Завершена с замечаниями')).toBeVisible();
+  expect(screen.getByText('Состояние проверки · Готово с замечаниями')).toBeVisible();
   expect(screen.getByRole('alert')).toHaveTextContent('Проверка завершилась с замечаниями');
   expect(fetchMock).toHaveBeenCalledTimes(3);
 });
@@ -128,7 +128,7 @@ it('показывает прогресс задания без готового
   await act(async () => {});
   fireEvent.click(screen.getByRole('link', { name: 'Следующая проверка' }));
   expect(await screen.findByRole('heading', { name: 'Вторая проверка' })).toBeVisible();
-  expect(screen.getByRole('status')).toHaveTextContent('Обрабатывается');
+  expect(screen.getByRole('status')).toHaveTextContent('Обработка документов');
   expect(screen.getByText('Обработано документов: 0 из 2')).toBeVisible();
   expect(screen.queryByRole('table')).not.toBeInTheDocument();
   expect(firstSignal?.aborted).toBe(true);
@@ -212,6 +212,8 @@ it('показывает абзац и ячейку таблицы DOCX в сп�
     <Routes><Route path="/checks/:id" element={<CheckDetail view="table" loadRun={loadRun} />} /></Routes>
   </MemoryRouter>);
 
+  const disclosure = await screen.findByText('Основания выбранного показателя', { selector: 'summary' });
+  disclosure.parentElement?.setAttribute('open', '');
   const select = await screen.findByRole('combobox', { name: 'Доказательство' });
   for (const [id, location] of [
     ['docx-paragraph', 'Абзац 3'],
@@ -265,6 +267,8 @@ it('показывает доказательства слагаемых при 
     <Routes><Route path="/checks/:id" element={<CheckDetail view="table" loadRun={loadRun} />} /></Routes>
   </MemoryRouter>);
 
+  const disclosure = await screen.findByText('Основания выбранного показателя', { selector: 'summary' });
+  disclosure.parentElement?.setAttribute('open', '');
   const select = await screen.findByRole('combobox', { name: 'Доказательство' });
   expect(within(select).getByRole('option', { name: /Лист «Синтетика», C6/ })).toBeVisible();
   expect(within(select).getByRole('option', { name: /Лист «Синтетика», C7/ })).toBeVisible();

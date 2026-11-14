@@ -8,17 +8,17 @@ import './source-context.css';
 const tabs = [['source', 'Источник'], ['rule', 'Правило проверки']] as const;
 type Panel = (typeof tabs)[number][0];
 
-export function SourceContext({ row, picker, children }: {
+export function SourceContext({ row, picker, children, compact = false }: {
   row: ReviewResult['rows'][number];
   picker: ReactNode;
+  compact?: boolean;
   children: (active: boolean) => ReactNode;
 }) {
   const [panel, setPanel] = useState<Panel>('source');
   const id = useId();
   const tablist = useRef<HTMLDivElement>(null);
 
-  return <section className={classes('source-context', panel === 'rule' && 'source-context-show-rule')}>
-    <header className="source-context-header">
+  const heading = <header className="source-context-header">
       <div><h3>{row.label}</h3><span className="checks-status" data-status={row.status}>{statusLabels[row.status]}</span></div>
       <dl>{([
         ['В КФЗ', row.reported_value], ['По документам', row.expected_value], ['Разница', row.delta],
@@ -27,7 +27,10 @@ export function SourceContext({ row, picker, children }: {
       </div>)}</dl>
       {row.expected_value === null && row.observed_evidence_sum != null &&
         <p>Частичная сумма: {formatDecimal(row.observed_evidence_sum)} {row.unit}</p>}
-    </header>
+  </header>;
+
+  return <section className={classes('source-context', panel === 'rule' && 'source-context-show-rule')}>
+    {!compact && heading}
     <div ref={tablist} role="tablist" aria-label="Сведения об источнике" className="source-context-tabs"
       onKeyDown={(event) => {
         if (event.altKey || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
@@ -48,6 +51,7 @@ export function SourceContext({ row, picker, children }: {
     </div>
     <div className="source-context-rule" role="tabpanel" id={id + '-rule'} tabIndex={0}
       aria-labelledby={id + '-rule-tab'} hidden={panel !== 'rule'}>
+      {compact && heading}
       <h3>Основание результата</h3>
       <dl>
         <dt>Правило</dt><dd>{row.calculation.policy_id}</dd>

@@ -1,14 +1,14 @@
 import { useState } from 'react';
-import { Link } from 'react-router';
-import { DocumentSourcePreview } from './DocumentSourcePreview';
+import type { ReactNode } from 'react';
+import { Link, useSearchParams } from 'react-router';
 import { FileTypeIcon } from './FileTypeIcon';
-import { SourceDrawer } from './SourceDrawer';
+import { SourceWorkspace, useSourceWorkspace } from './SourceWorkspace';
 import { XlsxDownload } from './XlsxDownload';
+import { WorkspaceIcon } from './WorkspaceIcon';
 import type { DocumentParseStatus, ReviewResult } from './reviewResult';
 import './result-documents.css';
 
 type Document = ReviewResult['documents'][number];
-type Evidence = ReviewResult['evidence'][number];
 
 export const documentDecisionLabels: Record<string, string> = {
   include: 'Включён', exclude: 'Исключён', needs_review: 'Требует проверки', parse_error: 'Ошибка чтения',
@@ -35,16 +35,35 @@ interface ResultDocumentsProps {
   storedRunId?: string;
   exportRunId?: string;
   exceptions: boolean;
+  renderHeader: (filters: ReactNode, actions: ReactNode) => ReactNode;
   synthetic: boolean;
   rowEvidenceIds: (row: ReviewResult['rows'][number], issue: ReviewResult['summary']['primary_issues'][number] | undefined) => string[];
-  formatAddress: (locator: Evidence['locator']) => string;
 }
 
 export function ResultDocuments({
-  result, runPath, storedRunId, exportRunId, exceptions, synthetic, rowEvidenceIds, formatAddress,
+  result, runPath, storedRunId, exportRunId, exceptions, synthetic, renderHeader, rowEvidenceIds,
 }: ResultDocumentsProps) {
   const [filter, setFilter] = useState('all');
-  const [openId, setOpenId] = useState<string>();
+  const [params, setParams] = useSearchParams();
+  const source = useSourceWorkspace({
+    result, storedRunId,
+    initialDocumentId: params.get('document') ?? undefined,
+    initialEvidenceId: params.get('evidence') ?? undefined,
+    onSelectionChange(documentId, evidenceId) {
+      const next = new URLSearchParams(params);
+      next.set('document', documentId);
+      if (evidenceId) next.set('evidence', evidenceId);
+      else next.delete('evidence');
+      setParams(next, { replace: true, preventScrollReset: true });
+    },
+    onClose() {
+      if (!params.has('document') && !params.has('evidence')) return;
+      const next = new URLSearchParams(params);
+      next.delete('document');
+      next.delete('evidence');
+      setParams(next, { replace: true, preventScrollReset: true });
+    },
+  });
   const documents = exceptions
     ? result.documents.filter(({ decision }) => decision.state !== 'include')
     : result.documents;
@@ -56,14 +75,13 @@ export function ResultDocuments({
       : document.parse_status === 'partial' || document.parse_status === 'error';
   }
   const visible = documents.filter((document) => matchesFilter(document, filter));
-  const evidenceByDocument = new Map<string, Evidence[]>();
-  const documentByEvidence = new Map<string, string>();
-  for (const item of result.evidence) {
-    const existing = evidenceByDocument.get(item.document_id);
-    if (existing) existing.push(item);
-    else evidenceByDocument.set(item.document_id, [item]);
-    documentByEvidence.set(item.id, item.document_id);
+  const evidenceByDocument = new Map<string, ReviewResult['evidence']>();
+  for (const source of result.evidence) {
+    const group = evidenceByDocument.get(source.document_id);
+    if (group) group.push(source);
+    else evidenceByDocument.set(source.document_id, [source]);
   }
+  const documentByEvidence = new Map(result.evidence.map(({ id, document_id }) => [id, document_id]));
   const documentsByError = new Map<string, string[]>();
   for (const document of documents) {
     for (const { id } of document.errors) {
@@ -87,101 +105,97 @@ export function ResultDocuments({
       else rowsByDocument.set(id, [row]);
     }
   }
-  const openDocument = documents.find(({ id }) => id === openId);
+  const filterControls = <div className="result-document-filters" role="group" aria-label="Статус файла">
+    {([['all', 'Все'], ...filters] as const).map(([value, label]) => (
+      <button type="button" key={value} aria-pressed={filter === value} onClick={() => setFilter(value)}>
+        {label} ({documents.filter((document) => matchesFilter(document, value)).length})
+      </button>
+    ))}
+  </div>;
+  const actions = <div className="result-document-actions flex flex-wrap items-center gap-3">
+    {exportRunId && <XlsxDownload key={exportRunId} runId={exportRunId} />}
+    <Link to={runPath + (exceptions ? '/documents' : '/exceptions')}>
+      {exceptions ? 'К документам' : 'К исключениям'}
+    </Link>
+  </div>;
 
-  return <section className="result-documents" aria-label={exceptions ? 'Исключения' : 'Документы'}>
-    <header className="result-documents-heading">
-      <h2>{exceptions ? 'Исключения' : 'Документы'}</h2>
-      <div className="flex flex-wrap items-center gap-3">
-        {exportRunId && <XlsxDownload key={exportRunId} runId={exportRunId} />}
-        <Link to={runPath + (exceptions ? '/documents' : '/exceptions')}>
-          {exceptions ? 'К документам' : 'К исключениям'}
-        </Link>
+  return <>
+    {renderHeader(filterControls, actions)}
+    <SourceWorkspace workspace={source} />
+    <section className="result-documents" aria-label={exceptions ? 'Исключения' : 'Документы'}>
+      {exceptions && <h2 className="mb-2 text-lg font-medium">Исключения</h2>}
+      {exceptions && synthetic && <p role="status" className="checks-caption">
+        Действия бухгалтера недоступны в синтетическом режиме.
+      </p>}
+      <div className="result-document-scroll" role="region" aria-label="Таблица документов" tabIndex={0}>
+        <table className="result-document-table">
+          <thead><tr>
+            {exceptions
+              ? ['Файл', 'Роль', 'Решение', 'Основание', 'Показатели КФЗ'].map((label) => <th key={label} scope="col">{label}</th>)
+              : ['Файл', 'Тип', 'Номер', 'Дата', 'Договор', 'Стр.', 'Статус', 'Строки КФЗ'].map((label) => <th key={label} scope="col">{label}</th>)}
+          </tr></thead>
+          <tbody>{visible.map((document) => {
+            const related = rowsByDocument.get(document.id) ?? [];
+            const metadata = evidenceByDocument.get(document.id) ?? [];
+            const report = document.role === 'report';
+            const contract = report ? result.scope.contract_number : oneText(metadata, 'contract');
+            const messages = new Set([document.decision.message, ...document.errors.map(({ message }) => message)]);
+            const useDecision = exceptions || document.decision.state !== 'include' || document.parse_status !== 'parsed';
+            return <tr key={document.id} data-selected={source.open && source.documentId === document.id}
+              onClick={(event) => {
+                if (event.target instanceof Element && !event.target.closest('button, a, details')) {
+                  source.openDocument(document.id, event.currentTarget.querySelector('button') ?? event.currentTarget);
+                }
+              }}>
+              <td><div className="result-document-file">
+                <FileTypeIcon extension={document.format ?? ''} />
+                <button type="button" onClick={(event) => source.openDocument(document.id, event.currentTarget)}>{document.name}</button>
+              </div></td>
+              <td>{report ? exceptions ? 'Отчёт' : 'КФЗ' : 'Первичный документ'}</td>
+              {!exceptions && <>
+                <td>{report ? result.reportNumber ?? '—' : '—'}</td>
+                <td>—</td>
+                <td>{contract ?? '—'}</td>
+                <td>{document.format === 'png' && document.parse_status === 'parsed' ? '1' : '—'}</td>
+              </>}
+              <td>
+                {!exceptions && <span className="document-reading-status" data-reading={document.parse_status}>
+                  {document.parse_status === 'parsed' && <span className="document-read-icon"><WorkspaceIcon name="check" size={12} /></span>}
+                  {document.parse_status === undefined ? 'Чтение не указано' : readingLabels[document.parse_status]}
+                </span>}
+                {useDecision && <span className="result-document-state" data-state={document.decision.state}>
+                  {documentDecisionLabels[document.decision.state]}
+                </span>}
+                {!exceptions && useDecision && <details className="document-decision-details">
+                  <summary>Основание</summary>
+                  <ul className="result-document-messages">
+                    {[...messages].map((message) => <li key={message}>{message}</li>)}
+                  </ul>
+                </details>}
+              </td>
+              {exceptions && <td><ul className="result-document-messages">
+                {[...messages].map((message) => <li key={message}>{message}</li>)}
+              </ul></td>}
+              <td>{related.length ? <ul className="result-document-messages">
+                {related.map(({ id, label }) => <li key={id}>
+                  <Link to={{ pathname: runPath, search: '?' + new URLSearchParams({ indicator: id }) }}>{label}</Link>
+                </li>)}
+              </ul> : '—'}</td>
+            </tr>;
+          })}
+          {visible.length === 0 && <tr><td colSpan={exceptions ? 5 : 8}>
+            <p role="status">{filter !== 'all' ? 'Документов с этим статусом нет.'
+              : exceptions ? 'Исключений нет.' : 'Документы отсутствуют.'}</p>
+          </td></tr>}
+          </tbody>
+        </table>
       </div>
-    </header>
-    {exceptions && synthetic && <p role="status" className="checks-caption">
-      Действия бухгалтера недоступны в синтетическом режиме.
-    </p>}
-    <div className="result-document-filters" role="group" aria-label="Статус файла">
-      {([['all', 'Все'], ...filters] as const).map(([value, label]) => (
-        <button type="button" key={value} aria-pressed={filter === value}
-          onClick={() => setFilter(value)}>
-          {label} ({documents.filter((document) => matchesFilter(document, value)).length})
-        </button>
-      ))}
-    </div>
-    <div className="result-document-scroll" role="region" aria-label="Таблица документов" tabIndex={0}>
-      <table className="result-document-table">
-        <thead><tr>
-          <th scope="col">Файл</th><th scope="col">Роль</th>
-          {!exceptions && <th scope="col">Чтение</th>}<th scope="col">Решение</th>
-          <th scope="col">Основание</th><th scope="col">Показатели КФЗ</th>
-        </tr></thead>
-        <tbody>{visible.map((document) => {
-          const related = rowsByDocument.get(document.id) ?? [];
-          const messages = new Set([
-            document.decision.message, ...document.errors.map(({ message }) => message),
-          ]);
-          return <tr key={document.id}>
-            <td><div className="result-document-file">
-              <FileTypeIcon extension={document.format ?? ''} />
-              <button type="button" onClick={() => setOpenId(document.id)}>{document.name}</button>
-            </div></td>
-            <td>{document.role === 'report' ? 'Отчёт' : 'Первичный документ'}</td>
-            {!exceptions && <td>
-              {document.parse_status === undefined ? 'Чтение не указано' : readingLabels[document.parse_status]}
-            </td>}
-            <td><span className="result-document-state" data-state={document.decision.state}>
-              {documentDecisionLabels[document.decision.state]}
-            </span></td>
-            <td><ul className="result-document-messages">
-              {[...messages].map((message) => <li key={message}>{message}</li>)}
-            </ul></td>
-            <td>{related.length ? <ul className="result-document-messages">
-              {related.map(({ id, label }) => <li key={id}>
-                <Link to={{ pathname: runPath, search: '?' + new URLSearchParams({ indicator: id }) }}>{label}</Link>
-              </li>)}
-            </ul> : '—'}</td>
-          </tr>;
-        })}
-        {visible.length === 0 && <tr><td colSpan={exceptions ? 5 : 6}>
-          <p role="status">{filter !== 'all' ? 'Документов с этим статусом нет.'
-            : exceptions ? 'Исключений нет.' : 'Документы отсутствуют.'}</p>
-        </td></tr>}
-        </tbody>
-      </table>
-    </div>
-    {openDocument && <SourceDrawer onClose={() => setOpenId(undefined)}>
-      <DocumentDetails
-        key={openDocument.id} document={openDocument} storedRunId={storedRunId}
-        evidence={evidenceByDocument.get(openDocument.id) ?? []} formatAddress={formatAddress}
-      />
-    </SourceDrawer>}
-  </section>;
+    </section>
+  </>;
 }
 
-function DocumentDetails({ document, storedRunId, evidence, formatAddress }: {
-  document: Document;
-  storedRunId?: string;
-  evidence: Evidence[];
-  formatAddress: ResultDocumentsProps['formatAddress'];
-}) {
-  const [selected, setSelected] = useState(evidence[0]?.id ?? '');
-  const source = evidence.find(({ id }) => id === selected);
-  return <div className="result-document-details">
-    <h3>{document.name}</h3>
-    {evidence.length > 0 && <label className="result-document-picker">
-      Адрес доказательства
-      <select value={selected} onChange={(event) => setSelected(event.target.value)}>
-        {evidence.map((item) => <option key={item.id} value={item.id}>{formatAddress(item.locator)}</option>)}
-      </select>
-    </label>}
-    {storedRunId ? <DocumentSourcePreview
-      runId={storedRunId} document={{ id: document.id, name: document.name, format: document.format ?? null }}
-      evidenceId={source?.id ?? null}
-    /> : <>
-      <p>Оригинал в готовом примере недоступен.</p>
-      {source ? <p>{formatAddress(source.locator)}</p> : <p>Адрес фрагмента отсутствует.</p>}
-    </>}
-  </div>;
+function oneText(evidence: ReviewResult['evidence'], kind: string) {
+  const values = new Set(evidence.filter((item) => item.kind === kind).map(({ normalized_value }) => normalized_value));
+  const value = values.values().next().value;
+  return values.size === 1 && typeof value === 'string' ? value : undefined;
 }

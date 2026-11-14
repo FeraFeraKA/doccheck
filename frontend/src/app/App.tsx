@@ -9,6 +9,7 @@ export function App() {
       <Route element={<ChecksWorkspace />}>
         <Route index element={<NewCheck />} />
         <Route path="/checks" element={<ChecksOverview />} />
+        <Route path="/archive" element={<ChecksOverview archive />} />
         <Route path="/checks/new" element={<NewCheck />} />
         <Route path="/checks/:id" element={<CheckDetail view="table" />} />
         <Route path="/checks/:id/documents" element={<CheckDetail view="documents" />} />

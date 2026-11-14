@@ -26,7 +26,7 @@ export function UploadFileList({ files, onRemove, disabled }: {
             <strong title={file.name}>{file.name}</strong>
             <span>{sizeLabel(file.size)}</span>
           </div>
-          <span className="text-emerald-700" aria-hidden="true"><WorkspaceIcon name="check" size={16} /></span>
+          <span className="upload-file-status" aria-hidden="true"><WorkspaceIcon name="check" size={20} /></span>
           <button className="upload-remove" type="button" disabled={disabled} onClick={() => onRemove(id)}
             aria-label={`Удалить ${file.name}`} title="Убрать файл">
             <WorkspaceIcon name="close" size={18} />
