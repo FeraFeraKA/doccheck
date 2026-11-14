@@ -106,6 +106,8 @@ jobs:
           test "$(docker inspect --format '{{.State.ExitCode}}' "$(docker compose ps --all -q migrate)")" = 0
           test "$(docker inspect --format '{{.State.Health.Status}}' "$(docker compose ps -q db)")" = healthy
           test "$(docker inspect --format '{{.State.Health.Status}}' "$(docker compose ps -q api)")" = healthy
+      - name: Build the GPU worker and model preparation images
+        run: docker compose -f compose.yaml -f compose.gpu.yaml build document-worker model-prepare
       - name: Check built runtime filesystems for synthetic sentinels
         shell: bash
         run: |

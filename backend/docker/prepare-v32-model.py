@@ -1,7 +1,9 @@
 """Prepare the documented MLX base in a Compose volume before offline inference."""
 
 from hashlib import file_digest
+from os import environ
 from pathlib import Path
+from shutil import copyfile
 
 from huggingface_hub import snapshot_download
 
@@ -36,7 +38,16 @@ def main() -> None:
         and marker.read_text(encoding="utf-8").strip() == REVISION
         and all((MODEL_DIR / name).is_file() for name in FILES)
     ):
-        snapshot_download(REPOSITORY, revision=REVISION, allow_patterns=FILES, local_dir=MODEL_DIR)
+        source = Path(environ["DOCCHECK_QWEN_SNAPSHOT_DIR"]) / REVISION
+        if source.is_dir():
+            if not all((source / name).is_file() for name in FILES):
+                raise SystemExit("The supplied Qwen MLX snapshot is incomplete")
+            for name in FILES:
+                copyfile(source / name, MODEL_DIR / name)
+        else:
+            snapshot_download(
+                REPOSITORY, revision=REVISION, allow_patterns=FILES, local_dir=MODEL_DIR
+            )
         if not all((MODEL_DIR / name).is_file() for name in FILES):
             raise SystemExit("The pinned Qwen MLX snapshot is incomplete")
         verify_weights()

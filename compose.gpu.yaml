@@ -12,8 +12,15 @@ services:
       HF_HUB_OFFLINE: "0"
       HF_HUB_DISABLE_TELEMETRY: "1"
       HF_HOME: /tmp/huggingface
+      DOCCHECK_QWEN_SNAPSHOT_DIR: /source
     volumes:
       - qwen-base:/models/qwen
+      - type: bind
+        source: "${DOCCHECK_QWEN_SNAPSHOT_DIR:-./data/models/base}"
+        target: /source
+        read_only: true
+        bind:
+          create_host_path: true
     networks: [model-download]
 
   document-worker:
