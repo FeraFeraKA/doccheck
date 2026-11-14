@@ -1,5 +1,6 @@
 import { HttpError } from '../../shared/api/requestJson';
 import { demoJob, demoTitle } from './demoData';
+import { readDocumentParseStatus } from './loadFindings';
 import type { ReviewResult } from './reviewResult';
 import { isRunId, listRuns, pollRun } from './runStatusApi';
 import type { RunState } from './runStatusApi';
@@ -56,7 +57,14 @@ export async function loadRunHistory(signal: AbortSignal, cursor?: string): Prom
 
 export async function loadDemoRun(id: string): Promise<RunDetails | null> {
   if (id !== demoJob.run_id) return null;
-  return { title: demoTitle, status: demoRunStatus(demoJob.status), result: demoJob.result };
+  const result = {
+    ...demoJob.result,
+    documents: demoJob.result.documents.map((document) => ({
+      ...document,
+      parse_status: readDocumentParseStatus(document.parse_status),
+    })),
+  };
+  return { title: demoTitle, status: demoRunStatus(demoJob.status), result };
 }
 
 function toRunDetails(run: RunState): RunDetails {
