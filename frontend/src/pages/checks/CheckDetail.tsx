@@ -277,8 +277,7 @@ function Reconciliation({ result, storedRunId, runPath, rowJump, onOpenRow }: {
   function openSource(id: string, trigger: HTMLElement, selectedRowId = selectedId) {
     closeFocus(false);
     const selected = rows.find((item) => item.id === selectedRowId) ?? row;
-    const linkedIssue = summary.primary_issues.find((item) => item.id === selected?.root_issue_id);
-    sourceWorkspace.openEvidence(id, trigger, selected, [...new Set(resultRowEvidenceIds(selected, linkedIssue))]);
+    sourceWorkspace.openEvidence(id, trigger, selected);
   }
 
   useLayoutEffect(() => {

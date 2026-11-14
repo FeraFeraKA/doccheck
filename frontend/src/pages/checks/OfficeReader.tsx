@@ -4,8 +4,9 @@ import { getOfficePreview } from './documentPreviewApi';
 import type { OfficePreview } from './documentPreviewApi';
 import { getSourceFragmentPreview } from './sourceApi';
 import type { SourceEvidence } from './sourceApi';
-import { strongestTone } from './sourceHighlights';
-import type { SourceHighlight, SourceTone } from './sourceHighlights';
+import { sourceMark } from './sourceHighlights';
+import type { SourceField, SourceHighlight } from './sourceHighlights';
+import { SourcePreviewSkeleton } from './SourcePreviewSkeleton';
 import { ReaderArrow } from './ReaderArrow';
 import './document-reader.css';
 
@@ -39,47 +40,49 @@ function rangeBounds(range: string) {
   return { first: cellPosition(first), last: cellPosition(last) };
 }
 
-function sheetTones(preview: Sheet, highlights: readonly SourceHighlight[]) {
-  const tones = preview.rows.map((cells) => new Array<SourceTone | undefined>(cells.length));
-  for (const { locator, tone } of highlights) {
+function sheetFields(preview: Sheet, highlights: readonly SourceHighlight[]) {
+  const fields = preview.rows.map((cells) => new Array<Set<SourceField> | undefined>(cells.length));
+  for (const { locator, kind } of highlights) {
     if (!('sheet' in locator) || locator.sheet !== preview.sheet) continue;
     const { first, last } = rangeBounds(locator.range);
-    const lastRow = Math.min(tones.length - 1, last.row - preview.row);
+    const lastRow = Math.min(fields.length - 1, last.row - preview.row);
     for (let row = Math.max(0, first.row - preview.row); row <= lastRow; row++) {
-      const lastColumn = Math.min(tones[row].length - 1, last.column - preview.column);
+      const lastColumn = Math.min(fields[row].length - 1, last.column - preview.column);
       for (let column = Math.max(0, first.column - preview.column); column <= lastColumn; column++) {
-        tones[row][column] = strongestTone(tones[row][column], tone);
+        (fields[row][column] ??= new Set()).add(kind);
       }
     }
   }
-  return tones;
+  return fields;
 }
 
-function wordTones(highlights: readonly SourceHighlight[]) {
-  const paragraphs = new Map<number, SourceTone>();
-  const tables = new Map<string, Map<number, SourceTone>>();
-  for (const { locator, tone } of highlights) {
+function wordFields(highlights: readonly SourceHighlight[]) {
+  const paragraphs = new Map<number, Set<SourceField>>();
+  const tables = new Map<string, Map<number, Set<SourceField>>>();
+  for (const { locator, kind } of highlights) {
     if ('paragraph' in locator) {
-      const preferred = strongestTone(paragraphs.get(locator.paragraph), tone);
-      if (preferred) paragraphs.set(locator.paragraph, preferred);
+      const fields = paragraphs.get(locator.paragraph) ?? new Set<SourceField>();
+      fields.add(kind);
+      paragraphs.set(locator.paragraph, fields);
     } else if ('table' in locator) {
       const id = locator.table + ':' + locator.row;
-      const row = tables.get(id) ?? new Map<number, SourceTone>();
-      const preferred = strongestTone(row.get(locator.cell), tone);
-      if (preferred) row.set(locator.cell, preferred);
+      const row = tables.get(id) ?? new Map<number, Set<SourceField>>();
+      const fields = row.get(locator.cell) ?? new Set<SourceField>();
+      fields.add(kind);
+      row.set(locator.cell, fields);
       tables.set(id, row);
     }
   }
   return { paragraphs, tables };
 }
 
-function cellTone(tones: ReadonlyMap<number, SourceTone> | undefined, column: number, span: number) {
-  if (span === 1 || !tones) return tones?.get(column);
-  let preferred: SourceTone | undefined;
-  for (const [address, tone] of tones) {
-    if (address >= column && address < column + span) preferred = strongestTone(preferred, tone);
+function cellFields(cells: ReadonlyMap<number, Set<SourceField>> | undefined, column: number, span: number) {
+  if (span === 1 || !cells) return cells?.get(column);
+  const fields = new Set<SourceField>();
+  for (const [address, kinds] of cells) {
+    if (address >= column && address < column + span) kinds.forEach((kind) => fields.add(kind));
   }
-  return preferred;
+  return fields;
 }
 
 function centerCell(scroller: RefObject<HTMLDivElement | null>, focus: RefObject<HTMLElement | null>,
@@ -95,13 +98,13 @@ function centerCell(scroller: RefObject<HTMLDivElement | null>, focus: RefObject
   return { locator, preview };
 }
 
-export function OfficeReader({ runId, documentId, format, locator, evidenceId, tone, highlights, active, fallback }: {
+export function OfficeReader({ runId, documentId, format, locator, evidenceId, selectedField, highlights, active, fallback }: {
   runId: string;
   documentId: string;
   format: 'xlsx' | 'docx';
   locator?: Locator;
   evidenceId: string | null;
-  tone?: SourceTone;
+  selectedField?: SourceField;
   highlights: readonly SourceHighlight[];
   active: boolean;
   fallback: ReactNode;
@@ -130,9 +133,9 @@ export function OfficeReader({ runId, documentId, format, locator, evidenceId, t
   const preview = documentState?.request === request ? documentState.preview : undefined;
   const fragment = textState?.id === evidenceId ? textState.fragment : null;
   const visibleSheetData = documentState?.lastSheet;
-  const sheetEvidence = useMemo(() => visibleSheetData && sheetTones(visibleSheetData, highlights),
+  const sheetEvidence = useMemo(() => visibleSheetData && sheetFields(visibleSheetData, highlights),
     [visibleSheetData, highlights]);
-  const wordEvidence = useMemo(() => format === 'docx' ? wordTones(highlights) : undefined,
+  const wordEvidence = useMemo(() => format === 'docx' ? wordFields(highlights) : undefined,
     [format, highlights]);
   const focus = useRef<HTMLElement | null>(null);
   function trackFocus(node: HTMLElement | null) { focus.current = node; }
@@ -183,7 +186,7 @@ export function OfficeReader({ runId, documentId, format, locator, evidenceId, t
   }, [active, locator, manualWindow, preview]);
 
   const matchingPreview = preview && (format === 'xlsx' ? 'sheets' in preview : 'blocks' in preview) ? preview : null;
-  const pending = <div className="source-viewer-placeholder"><p role="status">Чтение документа…</p></div>;
+  const pending = <SourcePreviewSkeleton />;
   const failure = <div className="source-viewer-placeholder">
     <p role="alert">Не удалось открыть предпросмотр. Оригинал можно скачать.</p>
     <button type="button" onClick={() => setAttempt((current) => current + 1)}>Повторить предпросмотр</button>
@@ -192,7 +195,7 @@ export function OfficeReader({ runId, documentId, format, locator, evidenceId, t
 
   function highlight(text: string, singleSheetCell = false) {
     // Exact single-cell evidence preserves the original text (for example, 60.250).
-    if (!fragment?.match || (fragment.text !== text && !singleSheetCell)) return text;
+    if (!selectedField || !fragment?.match || (fragment.text !== text && !singleSheetCell)) return text;
     const [before, match, after] = fragment.match;
     return <>{before}<mark>{match}</mark>{after}</>;
   }
@@ -263,11 +266,9 @@ export function OfficeReader({ runId, documentId, format, locator, evidenceId, t
                 && current >= bounds.first.column && current <= bounds.last.column;
               const first = selected && number === Math.max(row, bounds.first.row)
                 && current === Math.max(column, bounds.first.column);
-              const background = sheetEvidence?.[index]?.[offset];
-              const markTone = selected ? strongestTone(background, tone) ?? 'source' : background;
               return <td key={current} title={address} data-source-address={address}
                 ref={first ? trackFocus : undefined}
-                data-source-active={selected ? 'true' : undefined} data-source-tone={markTone}>
+                {...sourceMark(sheetEvidence?.[index]?.[offset], selected ? selectedField : undefined)}>
                 {selected ? highlight(text, singleCell) : text}
               </td>;
             })}</tr>;
@@ -287,10 +288,9 @@ export function OfficeReader({ runId, documentId, format, locator, evidenceId, t
         {matchingPreview.blocks.map((block) => {
           if ('paragraph' in block) {
             const selected = locator?.kind === 'paragraph' && locator.paragraph === block.paragraph;
-            const background = wordEvidence?.paragraphs.get(block.paragraph);
             return <p key={'p' + block.paragraph} data-source-address={'paragraph-' + block.paragraph}
-              data-word-heading={block.heading} data-source-active={selected ? 'true' : undefined}
-              data-source-tone={selected ? strongestTone(background, tone) ?? 'source' : background}
+              data-word-heading={block.heading}
+              {...sourceMark(wordEvidence?.paragraphs.get(block.paragraph), selected ? selectedField : undefined)}
               ref={selected ? trackFocus : undefined}>
               {selected ? highlight(block.text) : block.text || '\u00a0'}
             </p>;
@@ -299,11 +299,10 @@ export function OfficeReader({ runId, documentId, format, locator, evidenceId, t
             {block.rows.map((cells, index) => <tr key={index}>{cells.map((cell) => {
               const selected = locator?.kind === 'table_cell' && locator.table === block.table
                 && locator.row === index + 1 && locator.cell >= cell.column && locator.cell < cell.column + cell.span;
-              const background = cellTone(wordEvidence?.tables.get(block.table + ':' + (index + 1)), cell.column, cell.span);
+              const fields = cellFields(wordEvidence?.tables.get(block.table + ':' + (index + 1)), cell.column, cell.span);
               return <td key={cell.column} colSpan={cell.span}
                 data-source-address={`table-${block.table}-${index + 1}-${cell.column}`}
-                data-source-active={selected ? 'true' : undefined}
-                data-source-tone={selected ? strongestTone(background, tone) ?? 'source' : background}
+                {...sourceMark(fields, selected ? selectedField : undefined)}
                 ref={selected ? trackFocus : undefined}>
                 {selected ? highlight(cell.text) : cell.text}
               </td>;

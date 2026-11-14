@@ -3,6 +3,8 @@ import type { ReactNode } from 'react';
 const icons = {
   scan: <><path d="M4 7V6a2 2 0 0 1 2-2h2m8 0h2a2 2 0 0 1 2 2v1m0 10v1a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-1" /><path d="M7 12h10" /></>,
   plus: <path d="M12 5v14M5 12h14" />,
+  minus: <path d="M5 12h14" />,
+  reset: <><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5" /></>,
   archive: <><rect x="3" y="4" width="18" height="5" rx="1" /><path d="M5 9v11h14V9m-9 4h4" /></>,
   clipboard: <><rect x="8" y="3" width="8" height="4" rx="1" /><path d="M16 5h2a2 2 0 0 1 2 2v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a2 2 0 0 1 2-2h2m2 6h6m-6 5h6M8 11h.01M8 16h.01" /></>,
   arrow: <path d="M5 12h14m-7-7 7 7-7 7" />,

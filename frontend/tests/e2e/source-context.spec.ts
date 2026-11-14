@@ -36,22 +36,20 @@ test('a PNG fragment received on the rule tab is centered once when shown', asyn
   await page.getByRole('button', { name: /^150,50\s*₽$/ }).click();
   const drawer = page.getByLabel('Источник документа', { exact: true }).and(page.locator('.source-workspace-panel[open]'));
   const image = drawer.getByRole('img', { name: 'synthetic-report.png' });
-  await drawer.getByRole('button', { name: 'Увеличить масштаб' }).click();
-  const original = await image.getAttribute('src');
-  const originalRequestCount = originals;
-  const fragmentRequestCount = fragments;
+  await expect(drawer.getByRole('status').filter({ hasText: 'Загрузка документа' })).toHaveCount(1);
+  await expect(image).toHaveCount(0);
   const source = drawer.getByRole('tab', { name: 'Источник' });
   const rule = drawer.getByRole('tab', { name: 'Правило проверки' });
   await rule.click();
   await expect(rule).toHaveAttribute('aria-selected', 'true');
   release();
   const mark = drawer.locator('.source-viewer-highlight');
-  await expect(mark).toHaveCount(1);
   await expect(mark).toBeHidden();
   await source.click();
   await expect(mark).toBeInViewport({ ratio: 1 });
-  await expect(drawer.getByText('125%', { exact: true })).toBeVisible();
-  await expect(image).toHaveAttribute('src', original ?? '');
+  const original = await image.getAttribute('src');
+  const originalRequestCount = originals;
+  const fragmentRequestCount = fragments;
   const viewport = drawer.getByRole('region', { name: 'Просмотр документа: synthetic-report.png' });
   await viewport.evaluate((element) => { element.scrollTop = 0; });
   await expect(mark).not.toBeInViewport();
@@ -59,6 +57,7 @@ test('a PNG fragment received on the rule tab is centered once when shown', asyn
   await source.click();
   expect(await viewport.evaluate((element) => element.scrollTop)).toBe(0);
   await expect(mark).not.toBeInViewport();
+  await expect(image).toHaveAttribute('src', original ?? '');
   expect([originals, fragments]).toEqual([originalRequestCount, fragmentRequestCount]);
 });
 
@@ -68,7 +67,8 @@ for (const width of [390, 768]) {
     const id = 'source-context';
     const path = `**/api/v0/runs/${id}`;
     const first = example.result.evidence[0];
-    const second = { ...first, id: 'report-alt', locator: { kind: 'page', page: 1, bbox: [.2, .72, .5, .8] } };
+    const second = { ...first, id: 'report-contract', kind: 'contract', locator: { kind: 'page', page: 1, bbox: [.2, .72, .5, .8] } };
+    const duplicate = { ...second, id: 'report-contract-copy' };
     await page.route(path, (route) => route.fulfill({ json: {
       run_id: id, status: 'completed_with_issues', created_at: '2026-11-14T00:00:00Z', error: null,
       progress: { processed_documents: 4, total_documents: 4 },
@@ -78,8 +78,8 @@ for (const width of [390, 768]) {
       documents: example.result.documents.map((item) => item.id === 'report'
         ? { ...item, format: 'png', name: 'synthetic-report.png' } : item),
       rows: example.result.rows.map((item, i) => i === 0
-        ? { ...item, reported_evidence_refs: [first.id, second.id] } : item),
-      evidence: [first, second, ...example.result.evidence.slice(1)],
+        ? { ...item, reported_evidence_refs: [first.id] } : item),
+      evidence: [first, second, duplicate, ...example.result.evidence.slice(1)],
     } }));
     const png = readFileSync(new URL('../../../docs/synthetic/nrt-89/inputs/12_communication.png', import.meta.url));
     const originals: string[] = [];
@@ -102,7 +102,7 @@ for (const width of [390, 768]) {
       const selected = new URL(route.request().url()).searchParams.get('evidence_id');
       if (!selected) throw new Error('Missing evidence id');
       fragments.push(selected);
-      return route.fulfill({ json: selected === second.id ? second : example.result.evidence.find(({ id }) => id === selected) });
+      return route.fulfill({ json: example.result.evidence.find(({ id }) => id === selected) });
     });
 
     await page.goto('/checks/' + id);
@@ -125,24 +125,32 @@ for (const width of [390, 768]) {
     const image = drawer.getByRole('img', { name: 'synthetic-report.png' });
     const blob = await image.getAttribute('src');
     const originalCount = originals.length;
-    const picker = drawer.getByRole('combobox', { name: 'Доказательство' });
-    await drawer.getByRole('button', { name: 'Следующий источник' }).press('Enter');
-    await expect(picker).toHaveValue('report-alt');
+    const fragmentCount = fragments.length;
+    const docPicker = drawer.getByRole('combobox', { name: 'Документы комплекта' });
+    await expect(drawer.getByRole('combobox')).toHaveCount(1);
+    expect((await drawer.getByRole('button', { name: 'Увеличить масштаб' }).boundingBox())?.width).toBeGreaterThanOrEqual(36);
     await expect(drawer.locator('.source-viewer-highlight')).toHaveCount(2);
-    await expect(drawer.locator('.source-viewer-highlight[data-source-active="true"]')).toHaveAttribute('style', /top: 72%/);
+    const contract = drawer.getByRole('checkbox', { name: 'Договоры' });
+    const contractMark = drawer.locator('.source-viewer-highlight[data-source-field="contract"]');
+    await expect(contractMark).toHaveAttribute('style', /top: 72%/);
+    await contract.uncheck();
+    await expect(contractMark).toHaveCount(0);
+    await expect(drawer.locator('.source-viewer-highlight[data-source-active="true"]')).toHaveAttribute('style', /top: 40%/);
     await expect(drawer.getByText('125%', { exact: true })).toBeVisible();
     await expect(image).toHaveAttribute('src', blob ?? '');
     await expect(drawer).toHaveAttribute('data-fullscreen', 'true');
+    expect([...new Set(originals)]).toEqual(['report']);
+    expect([...new Set(fragments)]).toEqual([first.id]);
     expect(originals).toHaveLength(originalCount);
-    expect(fragments).toContain('report-alt');
-    await drawer.getByRole('button', { name: 'Предыдущий источник' }).press('Enter');
-    await expect(picker).toHaveValue(first.id);
-    await expect(drawer.locator('.source-viewer-highlight[data-source-active="true"]')).toHaveAttribute('style', /top: 40%/);
+    expect(fragments).toHaveLength(fragmentCount);
 
-    await picker.selectOption('amount-1');
-    await expect(picker).toHaveValue('amount-1');
+    await docPicker.selectOption('ledger');
+    await expect(docPicker).toHaveValue('ledger');
     await expect(drawer.getByRole('link', { name: 'Скачать оригинал' })).toBeVisible();
     expect(originals).toContain('ledger');
+    await docPicker.selectOption('report');
+    await expect(contract).not.toBeChecked();
+    await expect(drawer.getByText('125%', { exact: true })).toBeVisible();
     await expect(drawer).toHaveAttribute('data-fullscreen', 'true');
     await page.keyboard.press('Escape');
     await expect(opener).toBeFocused();
@@ -196,15 +204,14 @@ test('the document eye has no side rail and the workbook opens at the first row'
   await expect(documents).toHaveValue('report');
   await documents.selectOption('ledger');
   const addresses = panel.getByRole('combobox', { name: 'Адрес доказательства' });
-  await expect(addresses).toHaveValue('');
+  await expect(addresses).toHaveCount(0);
   await expect(panel.getByRole('cell', { name: 'Ведомость' })).toBeVisible();
-  await expect(panel.locator('td[data-source-tone="discrepancy"]')).toHaveCount(2);
+  await expect(panel.locator('td[data-source-field~="amount"]')).toHaveCount(2);
   await expect(panel.locator('[data-source-active="true"]')).toHaveCount(0);
-  await addresses.selectOption('amount-2');
-  await expect(panel.locator('td[data-source-active="true"] mark')).toHaveText('60.250');
-  await expect(panel.locator('td[data-source-tone="discrepancy"]')).toHaveCount(2);
+  await panel.getByRole('checkbox', { name: 'Суммы и значения' }).uncheck();
+  await expect(panel.locator('td[data-source-field~="amount"]')).toHaveCount(0);
+  await expect(panel.locator('td[data-source-field="contract"]')).toHaveCount(1);
   await expect(panel.getByRole('link', { name: 'Скачать оригинал' })).toHaveAttribute('download', ledger?.name ?? '');
-  await addresses.selectOption('');
   await expect(panel.getByRole('cell', { name: 'Ведомость' })).toBeVisible();
   await expect(panel.locator('[data-source-active="true"]')).toHaveCount(0);
   await page.keyboard.press('Escape');

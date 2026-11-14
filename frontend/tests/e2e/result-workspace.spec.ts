@@ -119,15 +119,15 @@ for (const [width, height] of [[1440, 1100], [768, 844], [390, 600]]) {
     const zoomBefore = await drawer.getByLabel('Масштаб документа').innerText();
     const expand = drawer.getByRole('button', { name: 'Развернуть источник на весь экран' });
     const collapse = drawer.getByRole('button', { name: 'Свернуть источник в боковую панель' });
-    const highlight = drawer.getByRole('button', { name: 'Подсветка' });
-    await highlight.click();
+    const highlight = drawer.getByRole('checkbox', { name: 'Суммы и значения' });
+    await highlight.uncheck();
     await expand.press('Enter');
     await expect(collapse).toHaveAttribute('aria-pressed', 'true');
     await expect(collapse).toBeFocused();
     expect((await drawer.boundingBox())?.width).toBe(width);
     expect(await scrollRatio()).toBeCloseTo(before, 2);
     await expect(drawer.getByLabel('Масштаб документа')).toHaveText(zoomBefore);
-    await expect(highlight).toHaveAttribute('aria-pressed', 'false');
+    await expect(highlight).not.toBeChecked();
     await expect(imageElement).toHaveAttribute('src', previousSrc ?? '');
     await collapse.click();
     await expect(expand).toHaveAttribute('aria-pressed', 'false');
@@ -254,11 +254,10 @@ test('source pane opens the stored original at a mobile width', async ({ page })
   const amount = page.getByRole('button', { name: /^Сумма · .*C7$/ });
   await amount.press('Enter');
   await expect(amount).toHaveAttribute('aria-pressed', 'true');
-  await expect(page.getByRole('combobox', { name: 'Доказательство' })).toHaveValue('amount-2');
-  await expect(drawer.getByLabel('Доказательство').locator('option:checked')).toContainText('C7');
+  await expect(preview.getByText('Лист «Синтетика», C7', { exact: true })).toBeVisible();
   const selectedCell = preview.getByRole('cell', { name: '60.250', exact: true });
   await expect(selectedCell.locator('mark')).toHaveText('60.250');
-  await expect(selectedCell).toHaveAttribute('data-source-tone', 'discrepancy');
+  await expect(selectedCell).toHaveAttribute('data-source-field', 'amount');
   await expect(preview.getByRole('link', { name: 'Скачать оригинал' })).toBeVisible();
   expect(ledgerRequests).toEqual(expect.arrayContaining([
     `/api/v0/runs/${id}/documents/ledger`,
@@ -358,14 +357,14 @@ test('sources on the same PDF page have distinct selectable boxes at 320px', asy
   await page.route(`**/api/v0/runs/${id}/documents/ledger`, (route) => route.fulfill({
     body: '%PDF-1.4 synthetic transport fixture', contentType: 'application/octet-stream',
   }));
-  await page.route(`**/api/v0/runs/${id}/documents/ledger/fragments?evidence_id=${second.id}`, (route) =>
-    route.fulfill({ json: second }));
+  await page.route(`**/api/v0/runs/${id}/documents/ledger/fragments?*`, (route) =>
+    route.fulfill({ json: new URL(route.request().url()).searchParams.get('evidence_id') === second.id ? second : first }));
   await page.goto('/checks/' + id);
   await page.getByRole('button', { name: 'Синтетическая статья A', exact: true }).click();
   const component = page.getByRole('list', { name: 'Слагаемые показателя: Синтетическая статья A' })
     .locator(':scope > li').first();
   await component.getByText('Адреса и основание', { exact: true }).click();
-  const choices = page.getByRole('combobox', { name: 'Доказательство' });
+  const panel = page.getByRole('region', { name: 'Источник документа', exact: true });
   for (const item of [first, second]) {
     const coords = item.locator.bbox.join(', ');
     const label = `synthetic-ledger.pdf · Страница 1 · Рамка (${coords})`;
@@ -374,9 +373,12 @@ test('sources on the same PDF page have distinct selectable boxes at 320px', asy
     const fragmentRequest = page.waitForRequest((request) =>
       new URL(request.url()).searchParams.get('evidence_id') === item.id);
     await button.click();
-    await expect(choices).toHaveValue(item.id);
+    await expect(panel.getByRole('combobox', { name: 'Документы комплекта' })).toHaveValue('ledger');
+    await expect(panel.getByRole('checkbox', { name: 'Договоры' })).toBeChecked();
+    await expect(button).toHaveAttribute('aria-pressed', 'true');
     await fragmentRequest;
     await page.getByRole('button', { name: 'Закрыть просмотр источника' }).click();
+    await expect(button).toBeFocused();
   }
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
 });
