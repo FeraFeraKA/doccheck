@@ -18,7 +18,7 @@ if (-not (Test-Path -LiteralPath $csc -PathType Leaf)) {
     throw 'Для теста нужен компилятор C# из .NET Framework.'
 }
 
-$names = @('TEMP', 'PATH', 'OLLAMA_HOST', 'OLLAMA_NO_CLOUD', 'OLLAMA_MODELS',
+$names = @('TEMP', 'PATH', 'OLLAMA_HOST', 'OLLAMA_NO_CLOUD', 'OLLAMA_NOPRUNE', 'OLLAMA_MODELS',
     'DOCCHECK_FAKE_OLLAMA_TRACE', 'DOCCHECK_FAKE_OLLAMA_EXIT')
 $previous = @{}
 foreach ($name in $names) {
@@ -48,7 +48,7 @@ public static class FakeOllama {
         File.WriteAllLines(env("DOCCHECK_FAKE_OLLAMA_TRACE"), new[] {
             Assembly.GetExecutingAssembly().Location,
             string.Join("|", args),
-            env("OLLAMA_HOST"), env("OLLAMA_NO_CLOUD"), env("OLLAMA_MODELS")
+            env("OLLAMA_HOST"), env("OLLAMA_NO_CLOUD"), env("OLLAMA_NOPRUNE"), env("OLLAMA_MODELS")
         });
         int exitCode;
         return int.TryParse(env("DOCCHECK_FAKE_OLLAMA_EXIT"), out exitCode) ? exitCode : 0;
@@ -65,6 +65,9 @@ public static class FakeOllama {
     $env:TEMP = $isolatedTemp
     $env:PATH = $pathDir
     $env:DOCCHECK_FAKE_OLLAMA_TRACE = $trace
+    $env:OLLAMA_HOST = '0.0.0.0:11434'
+    $env:OLLAMA_NO_CLOUD = '0'
+    $env:OLLAMA_NOPRUNE = '0'
     Remove-Item Env:DOCCHECK_FAKE_OLLAMA_EXIT -ErrorAction SilentlyContinue
 
     function Invoke-Scenario {
@@ -80,12 +83,13 @@ public static class FakeOllama {
         param([string]$Executable, [string]$Models)
         Assert-True (Test-Path -LiteralPath $trace -PathType Leaf) 'Тестовый процесс не запускался.'
         $lines = @(Get-Content -LiteralPath $trace -Encoding UTF8)
-        Assert-True ($lines.Count -eq 5) 'Неполный журнал тестового процесса.'
+        Assert-True ($lines.Count -eq 6) 'Неполный журнал тестового процесса.'
         Assert-True ($lines[0] -ieq $Executable) "Выбран неверный исполняемый файл: $($lines[0])."
         Assert-True ($lines[1] -eq 'serve') 'Передана неверная команда.'
         Assert-True ($lines[2] -eq '127.0.0.1:11438') 'Изменился адрес Ollama.'
         Assert-True ($lines[3] -eq '1') 'Не установлен OLLAMA_NO_CLOUD.'
-        Assert-True ($lines[4] -eq $Models) "Изменилось хранилище моделей: [$($lines[4])], ожидалось [$Models]."
+        Assert-True ($lines[4] -eq '1') 'Не установлен OLLAMA_NOPRUNE.'
+        Assert-True ($lines[5] -eq $Models) "Изменилось хранилище моделей: [$($lines[5])], ожидалось [$Models]."
     }
 
     $customModels = Join-Path $resolvedRoot 'custom models'

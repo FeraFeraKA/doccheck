@@ -56,6 +56,7 @@ try {
         'ollama' {
             $env:OLLAMA_HOST = '127.0.0.1:11438'
             $env:OLLAMA_NO_CLOUD = '1'
+            $env:OLLAMA_NOPRUNE = '1'
             $packagedOllama = Join-Path $OllamaDirectory 'ollama.exe'
             if ($PSBoundParameters.ContainsKey('OllamaDirectory') -or
                 (Test-Path -LiteralPath $packagedOllama -PathType Leaf)) {
