@@ -74,11 +74,17 @@ export function ResultTable({
             const messages = new Set([
               rowExplanation(row), ...row.reasons.map(({ message }) => message), row.completeness.reason,
             ]);
+            const reportSources = [...new Set(row.reported_evidence_refs)];
             const rowEvidence = new Set([
-              ...row.reported_evidence_refs,
+              ...reportSources,
               ...components.flatMap((component) => evidenceFields.flatMap(([field]) => component[field] ?? [])),
             ]);
             const issueSources = [...new Set(issue?.evidence_refs)].filter((id) => !rowEvidence.has(id));
+            const listedSources = new Set([...rowEvidence, ...issueSources]);
+            const reasonSources = [...new Set([
+              ...row.reasons.flatMap((reason) => reason.evidence_refs),
+              ...row.completeness.evidence_refs,
+            ])].filter((id) => !listedSources.has(id));
             const reportSource = row.reported_evidence_refs.find((id) => {
               const item = evidenceById.get(id);
               return item && documentsById.has(item.document_id);
@@ -138,24 +144,24 @@ export function ResultTable({
                     <p><strong>{statusLabels[row.status]}.</strong>{' '}
                       {[...messages].join(' ')}
                     </p>
+                    {reportSources.length > 0 && <SourceReferences
+                      ids={reportSources} label="Источники значения КФЗ" prefix="КФЗ"
+                      rowId={row.id} selected={selected} selectedEvidenceId={selectedEvidenceId}
+                      evidenceById={evidenceById} documentsById={documentsById}
+                      formatAddress={formatAddress} onSelectSource={onSelectSource} />}
+                    {reasonSources.length > 0 && <SourceReferences
+                      ids={reasonSources} label="Источники оснований показателя" prefix="Основание"
+                      rowId={row.id} selected={selected} selectedEvidenceId={selectedEvidenceId}
+                      evidenceById={evidenceById} documentsById={documentsById}
+                      formatAddress={formatAddress} onSelectSource={onSelectSource} />}
                     {issue && (!messages.has(issue.message) || issueSources.length > 0) && (
                       <div className="indicator-issue">
                         {!messages.has(issue.message) && <p>{issue.message}</p>}
-                        {issueSources.length > 0 && (
-                          <ul className="indicator-addresses" aria-label="Источники замечания">
-                            {issueSources.map((id) => {
-                              const item = evidenceById.get(id);
-                              const document = item && documentsById.get(item.document_id);
-                              return <li key={id}>{item && document ? (
-                                <button type="button" aria-pressed={selected && selectedEvidenceId === id}
-                                  onClick={(event) => onSelectSource(row.id, id, event.currentTarget)}>
-                                  <span>{document.name} · {formatAddress(item.locator)}</span>
-                                  <span aria-hidden="true">›</span>
-                                </button>
-                              ) : <span>Адрес источника недоступен.</span>}</li>;
-                            })}
-                          </ul>
-                        )}
+                        {issueSources.length > 0 && <SourceReferences
+                          ids={issueSources} label="Источники замечания"
+                          rowId={row.id} selected={selected} selectedEvidenceId={selectedEvidenceId}
+                          evidenceById={evidenceById} documentsById={documentsById}
+                          formatAddress={formatAddress} onSelectSource={onSelectSource} />}
                       </div>
                     )}
                     {components.length === 0 ? <p>Нет подтверждённых слагаемых.</p> :
@@ -204,6 +210,38 @@ export function ResultTable({
       <p className="sr-only">Показателей: {rows.length} из {total}. Прочерк означает, что значение отсутствует.</p>
     </section>
   );
+}
+
+interface SourceReferencesProps {
+  ids: readonly string[];
+  label: string;
+  prefix?: string;
+  rowId: string;
+  selected: boolean;
+  selectedEvidenceId?: string;
+  evidenceById: ReadonlyMap<string, Evidence>;
+  documentsById: ReadonlyMap<string, Document>;
+  formatAddress: ResultTableProps['formatAddress'];
+  onSelectSource: ResultTableProps['onSelectSource'];
+}
+
+function SourceReferences({
+  ids, label, prefix, rowId, selected, selectedEvidenceId, evidenceById, documentsById,
+  formatAddress, onSelectSource,
+}: SourceReferencesProps) {
+  return <ul className="indicator-addresses" aria-label={label}>
+    {ids.map((id, index) => {
+      const item = evidenceById.get(id);
+      const document = item && documentsById.get(item.document_id);
+      const kind = prefix ? `${prefix}${ids.length > 1 ? ` ${index + 1}` : ''} · ` : '';
+      return <li key={id}>{item && document ? <button type="button"
+        aria-pressed={selected && selectedEvidenceId === id}
+        onClick={(event) => onSelectSource(rowId, id, event.currentTarget)}>
+        <span>{kind}{document.name} · {formatAddress(item.locator)}</span>
+        <span aria-hidden="true">›</span>
+      </button> : <span>{kind}Адрес источника недоступен.</span>}</li>;
+    })}
+  </ul>;
 }
 
 function Measure({ value, unit }: { value: string | null; unit: string }) {
