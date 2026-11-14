@@ -2,6 +2,7 @@ import json
 from io import BytesIO
 from pathlib import Path
 from uuid import uuid4
+from zipfile import ZipFile
 
 import pytest
 from docx import Document
@@ -218,6 +219,108 @@ def test_unreadable_source_keeps_the_rest_of_the_run(database_url, tmp_path, fil
         row = next(row for row in result["rows"] if row["id"] == "payroll")
         assert row["reported_value"] == row["observed_evidence_sum"] == "1070.45"
         assert row["status"] == "unverified"
+
+
+@pytest.mark.parametrize("bad_member", ["missing_relationships", "malformed_xml"])
+def test_unreadable_kfz_preserves_supporting_files(database_url, tmp_path, bad_member):
+    report, files = write_reconciliation_case(tmp_path)
+    content = BytesIO()
+    with ZipFile(report) as source, ZipFile(content, "w") as damaged:
+        if bad_member == "missing_relationships":
+            damaged.writestr("xl/workbook.xml", source.read("xl/workbook.xml"))
+        else:
+            damaged.writestr("xl/workbook.xml", "<workbook")
+    fields = {
+        "contract_number": CONTRACT,
+        "period_start": START,
+        "period_end": END,
+        "report_row_locator": json.dumps({"kind": "sheet", "sheet": "КФЗ", "range": "A4"}),
+    }
+    settings = Settings(database_url, upload_root=tmp_path / "uploads")
+    with TestClient(create_app(settings)) as client:
+        run_id = _prepare_and_start(
+            client,
+            [
+                ("report", (report.name, content.getvalue())),
+                *(("documents", (path.name, path.read_bytes())) for path in files),
+            ],
+            data=fields,
+        )
+        assert run_document_worker(
+            client.app.state.engine,
+            settings.upload_root,
+            V32Processor(no_model, no_model),
+            once=True,
+        )
+        entry = f"/api/v0/runs/{run_id}"
+        assert client.get(entry).json()["status"] == "completed_with_issues"
+        findings = client.get(entry + "/findings")
+        assert findings.status_code == 200
+        result = findings.json()
+        assert result["rows"] == []
+        source = next(doc for doc in result["documents"] if doc["role"] == "report")
+        assert source["parse_status"] == "error"
+        assert source["decision"]["reason_code"] == "source_unreadable"
+        assert all(
+            doc["decision"]["state"] == "include"
+            for doc in result["documents"]
+            if doc["role"] == "support"
+        )
+
+
+@pytest.mark.parametrize(
+    ("second_cell", "explicit_total", "expected"),
+    [
+        (None, False, "399.12"),
+        ("", False, None),
+        ("неразборчиво", False, None),
+        ("неразборчиво", True, "399.12"),
+    ],
+)
+def test_docx_amount_needs_a_single_billed_row_or_a_readable_total(
+    database_url, tmp_path, second_cell, explicit_total, expected
+):
+    report, files = write_reconciliation_case(tmp_path)
+    document = Document()
+    document.add_paragraph("Акт № SYN-202")
+    document.add_paragraph(f"Договор № {CONTRACT}")
+    document.add_paragraph(f"Период: {START} — {END}")
+    document.add_paragraph("Общехозяйственные расходы.")
+    table = document.add_table(rows=2, cols=2)
+    table.cell(0, 0).text, table.cell(0, 1).text = "Услуга", "Сумма, руб."
+    table.cell(1, 0).text, table.cell(1, 1).text = "Первая услуга", "399,12"
+    if second_cell is not None:
+        service, money = table.add_row().cells
+        service.text, money.text = "Вторая услуга", second_cell
+    if explicit_total:
+        document.add_paragraph("Итого: 399,12 руб.")
+    path = tmp_path / "ADM-72.docx"
+    document.save(path)
+    settings = Settings(database_url, upload_root=tmp_path / "uploads")
+    with TestClient(create_app(settings)) as client:
+        run_id = _prepare_and_start(
+            client,
+            [
+                ("report", (report.name, report.read_bytes())),
+                *(("documents", (item.name, item.read_bytes())) for item in files),
+            ],
+        )
+        assert run_document_worker(
+            client.app.state.engine,
+            settings.upload_root,
+            V32Processor(no_model, no_model),
+            once=True,
+        )
+        findings = client.get(f"/api/v0/runs/{run_id}/findings")
+        assert findings.status_code == 200
+        row = next(row for row in findings.json()["rows"] if row["id"] == "general_admin")
+        assert row["expected_value"] == expected
+        if expected is None:
+            assert row["status"] == "unverified"
+            assert row["observed_evidence_sum"] is None
+            assert any(reason["code"] == "amount_missing" for reason in row["reasons"])
+        else:
+            assert row["status"] == "verified"
 
 
 def test_scanned_breakdown_retains_unverified_values_without_counting_them_twice(

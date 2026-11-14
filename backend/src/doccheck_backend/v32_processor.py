@@ -10,6 +10,9 @@ from pathlib import Path
 from shutil import copyfileobj
 from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Literal
+from xml.etree.ElementTree import ParseError
+from zipfile import BadZipFile
+from zlib import error as DecompressionError
 
 from pypdf.errors import FileNotDecryptedError, PdfReadError
 from pypdfium2 import PdfiumError
@@ -872,7 +875,15 @@ class V32Processor:
                         if document.format == "xlsx":
                             try:
                                 native = read_native_report(path)
-                            except (OSError, ValueError):
+                            except (
+                                BadZipFile,
+                                DecompressionError,
+                                IndexError,
+                                KeyError,
+                                OSError,
+                                ParseError,
+                                ValueError,
+                            ):
                                 _file_error(document, "source_unreadable")
                                 continue
                         elif document.format in {"pdf", "png"}:
@@ -1091,6 +1102,13 @@ class V32Processor:
         unresolved_scan = (
             is_scan and scanned is None and (explicit_scope is None or not report.errors)
         )
+        if scope is None and report.errors:
+            return CheckJob(
+                run_id=run_id,
+                status="failed",
+                result=None,
+                error=Issue(code=report.errors[0].code, message=report.errors[0].message),
+            )
         if scope is None or unresolved_scan:
             return CheckJob(
                 run_id=run_id,
