@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 from bench.e2e_v32_20261114.articles import report_category
 from bench.e2e_v32_20261114.classification import classify_source
+from docx import Document
 from openpyxl import Workbook
 from PIL import Image
 
@@ -38,6 +39,17 @@ from doccheck_backend.reconciliation_comparison import compare_observed_rubles
         ("Код статьи: 0400; 0700", None),
         ("Код статьи: 0400/0700", None),
         ("Код статьи: 0600\nТехническое обслуживание административной сети.", None),
+        ("Код статьи: 0600\nНазначение: техническое обслуживание сети бухгалтерии.", None),
+        ("Код статьи: 0600 Назначение: поверка измерительных приборов.", None),
+        (
+            "Код статьи: 0400 — пусконаладка новой производственной линии\n"
+            "Назначение: техническое обслуживание сети бухгалтерии.",
+            None,
+        ),
+        (
+            "Код статьи: 0400\nНазначение: пусконаладка новой производственной линии.",
+            "production_setup",
+        ),
         (
             "Техническое обслуживание административной сети и подготовка и освоение производства.",
             None,
@@ -123,6 +135,52 @@ def test_xlsx_code_and_total_require_the_same_sheet(tmp_path):
     article = next(item for item in grounded.assertions if item.kind == "article")
     assert article.normalized_value == "0600"
     assert (article.locator.sheet, article.locator.range) == ("Акт", "B6")
+
+
+@pytest.mark.parametrize("format_", ["xlsx", "docx"])
+@pytest.mark.parametrize(
+    ("code_value", "expected_category"),
+    [
+        ("0400\n0700", None),
+        ("0700\n0400", None),
+        ("0400 / 0700\n0600", None),
+        ("0400 и 0700", None),
+        ("0400", "production_setup"),
+        ("0400\n0400", "production_setup"),
+    ],
+)
+def test_adjacent_article_field_requires_one_code(tmp_path, format_, code_value, expected_category):
+    path = tmp_path / f"act.{format_}"
+    paragraphs = ["Договор № 74/22/26-47", "Дата: 12.02.2026", "Итого: 150,08 руб."]
+    if format_ == "xlsx":
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "Акт"
+        for paragraph in paragraphs:
+            sheet.append([paragraph])
+        sheet.append(["Код статьи", code_value])
+        workbook.save(path)
+        expected_locator = {"kind": "sheet", "sheet": "Акт", "range": "B4"}
+    else:
+        document = Document()
+        for paragraph in paragraphs:
+            document.add_paragraph(paragraph)
+        label, value = document.add_table(rows=1, cols=2).rows[0].cells
+        label.text, value.text = "Код статьи", code_value
+        document.save(path)
+        expected_locator = {"kind": "table_cell", "table": 1, "row": 1, "cell": 2}
+
+    grounded = ground_document(uuid4(), "doc", path, format_, "a" * 64)
+    assert grounded.category == expected_category
+    assert grounded.amount == "150.08"
+    articles = [item for item in grounded.assertions if item.kind == "article"]
+    if expected_category is None:
+        assert not articles
+    else:
+        assert articles
+        for article in articles:
+            assert article.raw_value == article.normalized_value == "0400"
+            assert article.locator.model_dump(exclude_none=True) == expected_locator
 
 
 def test_unrelated_numeric_identifier_and_currency_heading_do_not_apply(tmp_path):

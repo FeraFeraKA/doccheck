@@ -297,14 +297,14 @@ def supported_backward_prefix(prefix):
     return BACKWARD_COMPLEMENT.fullmatch(value)
 
 
-def allocation_polarity(text, *, new_purpose=False, explicit_article=False):
+def allocation_polarity(text, *, new_purpose=False):
     """Recognize only bounded literal positive/negative role assertions.
 
     A supported negation applies to its role phrase, including coordinated roles,
     until an explicit contrasting/affirmative clause. A sole denial cannot imply
     the opposite article. Unsupported syntax remains guarded.
     """
-    if new_purpose or explicit_article:
+    if new_purpose:
         patterns = {**_EXPLICIT_OVERHEAD, **_NEW_PURPOSE}
     else:
         patterns = {"general_admin": ADMIN, "production_overhead": PRODUCTION}
@@ -380,10 +380,12 @@ def purpose_excerpts(text, analysis_text=None):
             continue
         block = [lines[index]]
         analysis_block = [line]
+        article_declaration = ARTICLE_FIELD.match(content_text(line))
         for next_index in range(index + 1, min(index + 3, len(lines))):
             following = analyzed[next_index]
             if (not following.strip() or is_metadata(following)
                     or ARTICLE_FIELD.match(content_text(following))
+                    or (article_declaration and PURPOSE_LABEL.match(content_text(following)))
                     or re.search(r"наименование|сумма,?\s*руб", following, re.I)):
                 break
             # Another sentence starts its own observation; retain only natural
@@ -540,9 +542,7 @@ def assertion(statement):
     code = direct["code"] if direct else None
     category = ARTICLE_CODES.get(code)
     new_purpose = any(rule.search(value) for rule in _NEW_PURPOSE.values())
-    roles, unsupported = allocation_polarity(
-        value, new_purpose=new_purpose, explicit_article=bool(direct)
-    )
+    roles, unsupported = allocation_polarity(value, new_purpose=new_purpose)
     if category is not None:
         start, end = (position + len(value) - len(content) for position in direct.span("code"))
         roles.append({"category": category, "start": start, "end": end,

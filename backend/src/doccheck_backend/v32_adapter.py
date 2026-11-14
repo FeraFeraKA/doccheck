@@ -293,6 +293,15 @@ def _period_candidate(text: str) -> bool:
     )
 
 
+def _period_slots(
+    observations: tuple[Observation, ...], *, allow_document_date: bool
+) -> list[Observation]:
+    periods = [item for item in observations if _period_candidate(item.raw_text)]
+    if periods or not allow_document_date:
+        return periods
+    return [item for item in observations if _DAY_FIELD.fullmatch(item.raw_text)]
+
+
 def _component_period(
     text: str, parse_date: Callable[[str], date | None]
 ) -> tuple[date, date] | None:
@@ -401,9 +410,7 @@ def _bind_component(
             if cash:
                 located_amount = decision_rules.parse_amount(cash[1])
     contract_slots = [item for item in observations if _contract(item.raw_text) is not None]
-    period_slots = [item for item in observations if _period_candidate(item.raw_text)]
-    if not period_slots and category in ADDITIONAL_ARTICLES:
-        period_slots = [item for item in observations if _DAY_FIELD.fullmatch(item.raw_text)]
+    period_slots = _period_slots(observations, allow_document_date=category in ADDITIONAL_ARTICLES)
     groups = (amount_slots, contract_slots, period_slots, article_slots)
     if (
         len(amount_slots) != 1
@@ -521,6 +528,7 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
         ):
             return _failure(run, "v32_scope_mismatch", "Параметры задания не совпадают с КФЗ.")
 
+        has_additional_articles = bool(ADDITIONAL_ARTICLES.keys() & report_evidence.keys())
         documents, extractions, hashes = {}, [], {report.digest: report.id}
         previous = {}
         observations_by_id = {}
@@ -573,7 +581,7 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
                             extracted["prediction"].pop("counterparty", None)
                             source = extracted.get("source_native_text")
                             if (
-                                ADDITIONAL_ARTICLES.keys() & report_evidence.keys()
+                                has_additional_articles
                                 and not native.issues
                                 and isinstance(source, str)
                             ):
@@ -609,6 +617,8 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
         # Check all non-byte-duplicate candidates before v3.2 can collapse them
         # using model totals. The identity number and both scope fields come from
         # the submitted file, and no issuer distinction is assumed for this slice.
+        # With additional report articles, either version may use a document date,
+        # even when extraction failed and supplied no category for that version.
         identity_groups = defaultdict(list)
         for file_id, observations in observations_by_id.items():
             native_text = "\n".join(item.raw_text for item in observations)
@@ -618,9 +628,8 @@ def process(run: StoredRun, upload_folder: Path) -> CheckJob:
                 value for item in observations if (value := _contract(item.raw_text)) is not None
             }
             periods = {
-                _period(item.raw_text, decision_rules.parse_date)
-                for item in observations
-                if _period_candidate(item.raw_text)
+                _component_period(item.raw_text, decision_rules.parse_date)
+                for item in _period_slots(observations, allow_document_date=has_additional_articles)
             }
             if number and len(contracts) == len(periods) == 1 and None not in periods:
                 identity_groups[number, next(iter(contracts)), next(iter(periods))].append(file_id)

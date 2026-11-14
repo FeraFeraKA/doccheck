@@ -392,13 +392,28 @@ def test_xlsx_currency_style_preserves_money(uploaded_files, tmp_path, monkeypat
 
 
 @pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize("date_only", [False, True])
 def test_native_collision_survives_one_model_timeout(
-    uploaded_files, tmp_path, monkeypatch, reverse
+    uploaded_files, tmp_path, monkeypatch, reverse, date_only
 ):
-    original = uploaded_files[1]
+    report, original = uploaded_files
+    original_path = tmp_path / original["id"]
+    act = Document(original_path)
+    if date_only:
+        report_path = tmp_path / report["id"]
+        with report_path.open("rb") as stream:
+            book = load_workbook(stream)
+        book.active["B7"] = "Специальная технологическая оснастка"
+        book.save(report_path)
+        report["sha256"] = sha256(report_path.read_bytes()).hexdigest()
+
+        act.paragraphs[1].text = "Код статьи: 0500"
+        act.paragraphs[2].text = "Дата документа: 28.02.2027"
+        act.save(original_path)
+        original["sha256"] = sha256(original_path.read_bytes()).hexdigest()
+
     clone_id = uuid4().hex
     path = tmp_path / clone_id
-    act = Document(tmp_path / original["id"])
     act.paragraphs[4].text = "Итого стоимость услуг: 1 050,70 руб."
     act.save(path)
     uploaded_files.append(
@@ -419,14 +434,22 @@ def test_native_collision_survives_one_model_timeout(
     def timeout_on_conflicting_act(path, body=None, timeout=600):
         if path == "/api/chat" and "1 050,70" in body["messages"][0]["content"]:
             raise TimeoutError("synthetic model timeout")
-        return request(path, body, timeout)
+        response = request(path, body, timeout)
+        if path == "/api/chat" and date_only:
+            payload = json.loads(response["message"]["content"])
+            payload.update(period_start=None, period_end=None)
+            response["message"]["content"] = json.dumps(payload)
+        return response
 
     monkeypatch.setattr(v32.runtime, "api", timeout_on_conflicting_act)
 
     job = process(StoredRun(uuid4(), None, uploaded_files), tmp_path)
     assert job.status == "completed_with_issues"
-    assert job.result.rows[0].observed_evidence_sum is None
+    (row,) = job.result.rows
+    assert row.observed_evidence_sum is None
+    assert not row.calculation.components
     by_id = {document.id: document for document in job.result.documents}
+    assert by_id[clone_id].decision.state == "parse_error"
     assert by_id[clone_id].errors
     assert by_id[original["id"]].decision.reason_code == "source_identity_conflict"
 

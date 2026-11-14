@@ -366,52 +366,73 @@ def _money(
 
 def _article_field_lines(observations: tuple[Observation, ...]) -> dict[int, str]:
     """Label numeric XLSX/DOCX cells only when an addressed article field covers them."""
-    positions = {}
+    positions: dict[tuple[str | int, int, int], list[int]] = {}
     for index, item in enumerate(observations):
         address = item.locator
         if isinstance(address, SheetLocator):
             row, column = coordinate_to_tuple(address.range)
-            positions[(address.sheet, row, column)] = (index, item.raw_text)
+            key = address.sheet, row, column
         elif isinstance(address, TableCellLocator):
-            positions[(address.table, address.row, address.cell)] = (index, item.raw_text)
+            key = address.table, address.row, address.cell
+        else:
+            continue
+        positions.setdefault(key, []).append(index)
+
+    cell_text = {
+        key: " ".join(observations[index].raw_text for index in indices)
+        for key, indices in positions.items()
+    }
     lines = {}
-    for (group, row, column), (_, text) in positions.items():
+
+    def add_codes(indices: list[int]) -> bool:
+        # Keep codes at their original line indices so conflicting codes reach
+        # the classifier and accepted codes retain their source addresses.
+        found = False
+        for index in indices:
+            raw = observations[index].raw_text
+            if re.fullmatch(r"[0-9]{3,4}", raw):
+                lines[index] = f"Код статьи: {raw.zfill(4)}"
+                found = True
+            elif re.fullmatch(r"[0-9]{3,4}(?:\s*(?:[,;/–—-]|и|или|либо)\s*[0-9]{3,4})+", raw, re.I):
+                codes = dict.fromkeys(code.zfill(4) for code in re.findall(r"[0-9]{3,4}", raw))
+                lines[index] = "Код статьи: " + " и ".join(codes)
+                found = True
+        return found
+
+    for (group, row, column), text in cell_text.items():
         if not _ARTICLE_CELL_HEADER.fullmatch(_norm(text)):
             continue
-        right = positions.get((group, row, column + 1))
         amount_columns = {
             c
-            for (block, r, c), (_, raw) in positions.items()
+            for (block, r, c), raw in cell_text.items()
             if block == group and r == row and _AMOUNT_CELL_HEADER.fullmatch(raw)
         }
         if not amount_columns:
-            if right and re.fullmatch(r"[0-9]{3,4}", right[1]):
-                lines[right[0]] = f"Код статьи: {right[1].zfill(4)}"
+            add_codes(positions.get((group, row, column + 1), []))
             continue
         rows = {}
-        for (block, r, c), entry in positions.items():
-            if block == group and r > row and entry[1].strip():
-                rows.setdefault(r, {})[c] = entry
-        for _, values in sorted(rows.items()):
-            if any(_FINAL_CELL.fullmatch(raw) for _, raw in values.values()):
+        for (block, r, c), indices in positions.items():
+            if block == group and r > row:
+                rows.setdefault(r, {})[c] = indices
+        for row_number, values in sorted(rows.items()):
+            if any(_FINAL_CELL.fullmatch(cell_text[group, row_number, c]) for c in values):
                 break
             amounts = [
                 index
-                for c, (index, raw) in values.items()
+                for c, indices in values.items()
                 if c in amount_columns
-                and (
+                for index in indices
+                if (
                     observations[index].amount is not None
-                    or _text_amount(raw, rub_column=True)[0] is not None
+                    or _text_amount(observations[index].raw_text, rub_column=True)[0] is not None
                 )
             ]
             if not amounts:
                 continue
-            index, raw = values.get(column, (amounts[0], ""))
-            if re.fullmatch(r"[0-9]{3,4}", raw):
-                lines[index] = f"Код статьи: {raw.zfill(4)}"
-            else:
+            indices = values.get(column, [])
+            if not add_codes(indices):
                 # An unlabelled monetary row prevents assigning the document total.
-                lines[index] = "Код статьи: 0000"
+                lines[(indices or amounts)[0]] = "Код статьи: 0000"
     return lines
 
 
@@ -446,7 +467,7 @@ def _classify_observations(
         # Payroll and contribution forms have their own internal subaccount codes.
         # Their addressed form title supplies the aggregate article.
         for index, line in tuple(lines.items()):
-            if line[-4:] not in ARTICLE_CODES:
+            if re.fullmatch(r"Код статьи: [0-9]{4}", line) and line[-4:] not in ARTICLE_CODES:
                 lines[index] = " "
     for index, item in enumerate(observations):
         if re.fullmatch(
