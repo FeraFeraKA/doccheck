@@ -201,9 +201,13 @@ it('показывает абзац и ячейку таблицы DOCX в сп�
   </MemoryRouter>);
 
   fireEvent.click(await screen.findByRole('button', { name: 'Синтетическая статья A' }));
-  const links = screen.getByRole('list', { name: 'Источники проверки' });
-  for (const location of ['Абзац 3', 'Таблица 1, строка 2, ячейка 4']) {
-    fireEvent.click(within(links).getByRole('button', { name: 'synthetic.docx · ' + location }));
+  const sources = [
+    { label: 'Источники причины: Основание из синтетического DOCX', location: 'Абзац 3' },
+    { label: 'Источники основания полноты', location: 'Таблица 1, строка 2, ячейка 4' },
+  ];
+  for (const { label, location } of sources) {
+    const links = screen.getByRole('list', { name: label });
+    fireEvent.click(within(links).getByRole('button', { name: (name) => name.includes('synthetic.docx · ' + location) }));
     const panel = screen.getByRole('region', { name: 'Источник документа' });
     expect(within(panel).getByLabelText('Документы комплекта')).toHaveValue('synthetic-docx');
     expect(within(panel).getByText(location, { exact: true })).toBeVisible();

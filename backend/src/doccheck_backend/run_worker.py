@@ -48,9 +48,23 @@ _SCAN_SCOPE_REQUIRED = Issue(
     code="scan_scope_required",
     message="Не удалось однозначно выбрать строку КФЗ по скану и первичным документам.",
 )
+_ENCRYPTED_PDF = Issue(
+    code="encrypted_pdf",
+    message="Файл КФЗ защищён паролем. Загрузите доступную копию.",
+)
+_PDF_UNREADABLE = Issue(
+    code="pdf_unreadable",
+    message="Не удалось прочитать PDF КФЗ. Проверьте файл и загрузите доступную копию.",
+)
 _PUBLIC_RUN_FAILURES = {
     error.code: error
-    for error in (_PDF_SCAN_UNREADABLE, _PDF_SCAN_SCOPE_UNCONFIRMED, _SCAN_SCOPE_REQUIRED)
+    for error in (
+        _PDF_SCAN_UNREADABLE,
+        _PDF_SCAN_SCOPE_UNCONFIRMED,
+        _SCAN_SCOPE_REQUIRED,
+        _ENCRYPTED_PDF,
+        _PDF_UNREADABLE,
+    )
 }
 
 
