@@ -124,7 +124,7 @@ def create_processor() -> Callable[[StoredRun, Path], CheckJob]:
 
     processor = V32Processor(reader.read_document, reader.read)
     lock_path = os.environ.get("DOCCHECK_GPU_LOCK")
-    if not lock_path:
+    if not lock_path or lock_path == "off":
         return processor
 
     from fcntl import LOCK_EX, flock
