@@ -2,10 +2,21 @@ import { useLayoutEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import './source-drawer.css';
 
+function visibleFragment(viewport: HTMLElement) {
+  const fragment = viewport.querySelector('.source-viewer-highlight');
+  if (!fragment) return null;
+  const mark = fragment.getBoundingClientRect();
+  const { top, left } = viewport.getBoundingClientRect();
+  return mark.width > 0 && mark.height > 0
+    && mark.left >= left - 1 && mark.right <= left + viewport.clientWidth + 1
+    && mark.top >= top - 1 && mark.bottom <= top + viewport.clientHeight + 1
+    ? fragment : null;
+}
+
 export function SourceDrawer({ children, onClose }: { children: ReactNode; onClose: () => void }) {
   const drawer = useRef<HTMLDialogElement>(null);
   const [fullscreen, setFullscreen] = useState(false);
-  const pendingScroll = useRef<{ viewport: HTMLElement; x: number | null; y: number | null } | null>(null);
+  const pendingScroll = useRef<{ viewport: HTMLElement; x: number; y: number; fragment: Element | null } | null>(null);
   const fullscreenLabel = fullscreen
     ? 'Свернуть источник в боковую панель'
     : 'Развернуть источник на весь экран';
@@ -31,8 +42,9 @@ export function SourceDrawer({ children, onClose }: { children: ReactNode; onClo
       const maxY = viewport.scrollHeight - viewport.clientHeight;
       pendingScroll.current = {
         viewport,
-        x: maxX > 0 ? viewport.scrollLeft / maxX : null,
-        y: maxY > 0 ? viewport.scrollTop / maxY : null,
+        x: viewport.scrollLeft / Math.max(1, maxX),
+        y: viewport.scrollTop / Math.max(1, maxY),
+        fragment: visibleFragment(viewport),
       };
     }
     setFullscreen((value) => !value);
@@ -42,23 +54,17 @@ export function SourceDrawer({ children, onClose }: { children: ReactNode; onClo
     const position = pendingScroll.current;
     pendingScroll.current = null;
     if (!position?.viewport.isConnected) return;
-    const { viewport, x, y } = position;
-    const maxX = viewport.scrollWidth - viewport.clientWidth;
-    const maxY = viewport.scrollHeight - viewport.clientHeight;
-    if (x !== null) viewport.scrollLeft = x * maxX;
-    if (y !== null) viewport.scrollTop = y * maxY;
-    if ((x !== null || maxX <= 0) && (y !== null || maxY <= 0)) return;
-
-    // When an axis did not scroll before the resize, there is no scroll ratio
-    // to restore. Keep the selected fragment visible if that axis now scrolls.
-    const fragment = viewport.querySelector('.source-viewer-highlight');
-    if (!fragment) return;
+    const { viewport, x, y, fragment } = position;
+    viewport.scrollLeft = x * (viewport.scrollWidth - viewport.clientWidth);
+    viewport.scrollTop = y * (viewport.scrollHeight - viewport.clientHeight);
+    // Preserve a visible selection without overriding a deliberate scroll away.
+    if (!fragment?.isConnected || visibleFragment(viewport)) return;
     const bounds = viewport.getBoundingClientRect();
     const mark = fragment.getBoundingClientRect();
-    if (x === null && maxX > 0) {
+    if (mark.left < bounds.left - 1 || mark.right > bounds.left + viewport.clientWidth + 1) {
       viewport.scrollLeft += mark.left + (mark.width - viewport.clientWidth) / 2 - bounds.left;
     }
-    if (y === null && maxY > 0) {
+    if (mark.top < bounds.top - 1 || mark.bottom > bounds.top + viewport.clientHeight + 1) {
       viewport.scrollTop += mark.top + (mark.height - viewport.clientHeight) / 2 - bounds.top;
     }
   }, [fullscreen]);
