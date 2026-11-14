@@ -90,6 +90,7 @@ _CODES = {
     "different_stage": "В первичном документе указан другой этап работ.",
     "source_unreadable": "Оригинал недоступен, изменён или не читается.",
     "encrypted_pdf": "PDF защищён паролем. Загрузите доступную копию файла.",
+    "pdf_unreadable": "Не удалось прочитать PDF. Проверьте файл и загрузите доступную копию.",
     "source_incomplete": "Часть оригинала не прочитана. Итог требует проверки.",
     "report_incomplete": "Не удалось прочитать все обязательные показатели строки КФЗ.",
     "qwen_prediction_failed": "Локальная модель не смогла прочитать документ.",
@@ -163,6 +164,39 @@ def _copy_original(run: StoredRun, directory: Path, item: dict, scratch: Path) -
     if _digest(path) != item["sha256"]:
         raise ValueError("Source changed while being copied")
     return path
+
+
+def _pdf_issue(path: Path) -> Literal["encrypted_pdf", "pdf_unreadable"] | None:
+    import pypdfium2 as pdfium
+    import pypdfium2.raw as pdfium_raw
+    from pypdf import PdfReader
+    from pypdf.errors import FileNotDecryptedError, PdfReadError
+
+    if any(issue.code == "encrypted_pdf" for issue in read_pdf(path, page_number=1).issues):
+        return "encrypted_pdf"
+    try:
+        with PdfReader(path) as reader:
+            pages = len(reader.pages)
+        with pdfium.PdfDocument(path) as document:
+            if pages == 0 or len(document) != pages:
+                return "pdf_unreadable"
+    except FileNotDecryptedError:
+        return "encrypted_pdf"
+    except PdfReadError:
+        return "pdf_unreadable"
+    except pdfium.PdfiumError as error:
+        if error.err_code == pdfium_raw.FPDF_ERR_PASSWORD:
+            return "encrypted_pdf"
+        if error.err_code in {
+            pdfium_raw.FPDF_ERR_SUCCESS,
+            pdfium_raw.FPDF_ERR_FILE,
+            pdfium_raw.FPDF_ERR_FORMAT,
+            pdfium_raw.FPDF_ERR_SECURITY,
+            pdfium_raw.FPDF_ERR_PAGE,
+        }:
+            return "pdf_unreadable"
+        raise
+    return None
 
 
 def _images(path: Path) -> list[Path]:
@@ -775,6 +809,20 @@ class V32Processor:
             for item, document in zip(run.documents, documents, strict=True):
                 try:
                     path = _copy_original(run, directory, item, scratch)
+                except (OSError, RunReadError, ValueError):
+                    _file_error(document, "source_unreadable")
+                    continue
+                if document.format == "pdf" and (issue := _pdf_issue(path)):
+                    if document is report:
+                        return CheckJob(
+                            run_id=run_id,
+                            status="failed",
+                            result=None,
+                            error=Issue(code=issue, message=_CODES[issue]),
+                        )
+                    _file_error(document, issue)
+                    continue
+                try:
                     if document.id in copies:
                         document.parse_status = "parsed"
                         continue
@@ -782,21 +830,6 @@ class V32Processor:
                         if document.format == "xlsx":
                             native = read_native_report(path)
                         elif document.format in {"pdf", "png"}:
-                            if document.format == "pdf" and any(
-                                issue.code == "encrypted_pdf"
-                                for issue in read_pdf(path, page_number=1).issues
-                            ):
-                                return CheckJob(
-                                    run_id=run_id,
-                                    status="failed",
-                                    result=None,
-                                    error=Issue(
-                                        code="encrypted_pdf",
-                                        message=(
-                                            "Файл КФЗ защищён паролем. Загрузите доступную копию."
-                                        ),
-                                    ),
-                                )
                             report_copy = path
                             if run.scope is None:
                                 matches = set()
