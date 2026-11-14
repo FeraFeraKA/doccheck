@@ -186,6 +186,42 @@ def test_docx_paragraph_table_and_nonamount_numbers_keep_real_addresses(tmp_path
     assert table_cell.locator == TableCellLocator(kind="table_cell", table=1, row=2, cell=2)
 
 
+def test_docx_reader_keeps_merged_cell_span_and_original_addresses(tmp_path):
+    path = tmp_path / "synthetic.docx"
+    doc = Document()
+    table = doc.add_table(rows=1, cols=4)
+    merged = table.cell(0, 0).merge(table.cell(0, 1))
+    merged.text = "Период: 01.02.2031 — 28.02.2031"
+    table.cell(0, 2).text = "и с 01.04.2031 по 30.04.2031"
+    table.cell(0, 3).text = "Примечание"
+    doc.save(path)
+
+    result = read_native_document(path, "docx")
+    assert result.issues == ()
+    first, second, third = result.observations
+    assert (first.locator.cell, first.column_span) == (1, 2)
+    assert (second.locator.cell, second.column_span) == (3, 1)
+    assert (third.locator.cell, third.column_span) == (4, 1)
+
+
+def test_docx_reader_keeps_vertical_span_at_original_cell(tmp_path):
+    path = tmp_path / "synthetic.docx"
+    doc = Document()
+    table = doc.add_table(rows=2, cols=2)
+    merged = table.cell(0, 0).merge(table.cell(1, 0))
+    merged.text = "Период: 01.02.2031 — 28.02.2031"
+    table.cell(0, 1).text = "Примечание"
+    table.cell(1, 1).text = "и с 01.04.2031 по 30.04.2031"
+    doc.save(path)
+
+    result = read_native_document(path, "docx")
+    assert result.issues == ()
+    first, _, continuation = result.observations
+    assert first.locator == TableCellLocator(kind="table_cell", table=1, row=1, cell=1)
+    assert (first.column_span, first.row_span) == (1, 2)
+    assert continuation.locator == TableCellLocator(kind="table_cell", table=1, row=2, cell=2)
+
+
 def test_docx_monetary_tokens_preserve_sign_and_kopecks_or_report_ambiguity(tmp_path):
     path = tmp_path / "upload"
     doc = Document()

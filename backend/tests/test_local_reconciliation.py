@@ -168,6 +168,871 @@ def test_calculates_status_and_total_from_admitted_sources(database_url, tmp_pat
 
 
 @pytest.mark.parametrize(
+    ("period", "amount", "decision", "reason"),
+    [
+        (
+            "Период: с 01.02.2031 по 28.02.2031 и с 01.04.2031 по 30.04.2031",
+            "399,12",
+            "needs_review",
+            "period_ambiguous",
+        ),
+        (
+            "Период: с 01.04.2031 по 30.04.2031 и с 01.02.2031 по 28.02.2031",
+            "1 905,73",
+            "needs_review",
+            "period_ambiguous",
+        ),
+        ("Период: с 01.04.2031 по 30.04.2031", "399,12", "exclude", "outside_period"),
+        ("Период: с 01.02.2031 по 28.02.2031", "399,12", "include", "addressed_amount"),
+    ],
+)
+def test_worker_does_not_admit_total_for_multiple_periods(
+    database_url, tmp_path, period, amount, decision, reason
+):
+    report, files = write_reconciliation_case(tmp_path)
+    primary = next(path for path in files if path.name == "ADM-72.docx")
+    document = Document(primary)
+    document.paragraphs[2].text = period
+    document.paragraphs[4].text = f"Итого: {amount} руб."
+    document.save(primary)
+    settings = Settings(database_url, upload_root=tmp_path / "uploads")
+    with TestClient(create_app(settings)) as client:
+        run_id = _prepare_and_start(
+            client,
+            [
+                ("report", (report.name, report.read_bytes())),
+                *(("documents", (path.name, path.read_bytes())) for path in reversed(files)),
+            ],
+        )
+        assert run_document_worker(
+            client.app.state.engine,
+            settings.upload_root,
+            V32Processor(no_model, no_model),
+            once=True,
+        )
+        response = client.get(f"/api/v0/runs/{run_id}/findings")
+        assert response.status_code == 200, client.get(f"/api/v0/runs/{run_id}").json()
+        result = response.json()
+    source = next(item for item in result["documents"] if item["name"] == primary.name)
+    row = next(item for item in result["rows"] if item["id"] == "general_admin")
+    assert (source["decision"]["state"], source["decision"]["reason_code"]) == (decision, reason)
+    if decision == "needs_review":
+        assert row["status"] == "unverified"
+        assert row["expected_value"] is None and row["delta"] is None
+        assert row["observed_evidence_sum"] is None
+        assert reason in {item["code"] for item in row["reasons"]}
+        assert not any(
+            item["document_id"] == source["id"] and item["kind"] == "period"
+            for item in result["evidence"]
+        )
+    elif decision == "include":
+        assert row["status"] == "verified"
+        assert row["expected_value"] == "399.12" and row["delta"] == "0.00"
+    else:
+        assert row["calculation"]["components"] == []
+
+
+@pytest.mark.parametrize(
+    ("document_date", "operation_date", "amount", "reverse"),
+    [
+        ("15.02.2031", "20.01.2031", "399,12", False),
+        ("05.03.2031", "20.02.2031", "1 905,73", True),
+    ],
+)
+def test_worker_does_not_use_conflicting_document_date_as_operation_period(
+    database_url, tmp_path, document_date, operation_date, amount, reverse
+):
+    report, files = write_reconciliation_case(tmp_path)
+    primary = next(path for path in files if path.name == "ADM-72.docx")
+    document = Document(primary)
+    document.paragraphs[2].text = f"Дата документа: {document_date}"
+    document.paragraphs[4].text = f"Итого: {amount} руб."
+    document.add_paragraph(f"Услуги оказаны {operation_date}")
+    document.save(primary)
+    settings = Settings(database_url, upload_root=tmp_path / "uploads")
+    with TestClient(create_app(settings)) as client:
+        run_id = _prepare_and_start(
+            client,
+            [
+                ("report", (report.name, report.read_bytes())),
+                *(
+                    ("documents", (path.name, path.read_bytes()))
+                    for path in (reversed(files) if reverse else files)
+                ),
+            ],
+        )
+        assert run_document_worker(
+            client.app.state.engine,
+            settings.upload_root,
+            V32Processor(no_model, no_model),
+            once=True,
+        )
+        response = client.get(f"/api/v0/runs/{run_id}/findings")
+        assert response.status_code == 200, client.get(f"/api/v0/runs/{run_id}").json()
+        result = response.json()
+    source = next(item for item in result["documents"] if item["name"] == primary.name)
+    row = next(item for item in result["rows"] if item["id"] == "general_admin")
+    assert source["decision"]["state"] == "needs_review"
+    assert source["decision"]["reason_code"] == "period_date_conflict"
+    assert row["status"] == "unverified"
+    assert row["expected_value"] is None and row["delta"] is None
+    assert row["observed_evidence_sum"] is None
+    assert "period_date_conflict" in {item["code"] for item in row["reasons"]}
+    assert not any(
+        item["document_id"] == source["id"] and item["kind"] == "period"
+        for item in result["evidence"]
+    )
+    assert any(
+        item["document_id"] == source["id"] and item["kind"] == "amount"
+        for item in result["evidence"]
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "extra", "amount", "other_amount", "reverse", "reason"),
+    [
+        (
+            "Период: 01.02.2031 — 28.02.2031 | 01.04.2031 — 30.04.2031",
+            None,
+            "299,12",
+            "100,00",
+            False,
+            "period_ambiguous",
+        ),
+        (
+            "Период: 01.04.2031 — 30.04.2031 | 01.02.2031 — 28.02.2031",
+            None,
+            "397,62",
+            "1,50",
+            True,
+            "period_ambiguous",
+        ),
+        (
+            "Период: Февраль 2031 — апр. 2031",
+            None,
+            "299,12",
+            "100,00",
+            False,
+            "period_ambiguous",
+        ),
+        (
+            "Период: Апрель 2031 — июн. 2031",
+            None,
+            "397,62",
+            "1,50",
+            True,
+            "period_ambiguous",
+        ),
+        (
+            "Период: Февраль 2031 — настоящее время",
+            None,
+            "299,12",
+            "100,00",
+            False,
+            "period_ambiguous",
+        ),
+        (
+            "Период: Февраль 2031 до конца апреля 2031",
+            None,
+            "397,62",
+            "1,50",
+            True,
+            "period_ambiguous",
+        ),
+        (
+            "Период: Февраль 2031 до 15-го апреля 2031",
+            None,
+            "299,12",
+            "100,00",
+            False,
+            "period_ambiguous",
+        ),
+        (
+            "Период: Февраль 2031 — «15» апреля 2031",
+            None,
+            "299,12",
+            "100,00",
+            False,
+            "period_ambiguous",
+        ),
+        (
+            'Период: Январь 2031 — "15" апреля 2031',
+            None,
+            "397,62",
+            "1,50",
+            True,
+            "period_ambiguous",
+        ),
+        (
+            "Период: Январь 2031 до 15-го апреля 2031",
+            None,
+            "397,62",
+            "1,50",
+            True,
+            "period_ambiguous",
+        ),
+        (
+            "Период: Апрель 2031 — настоящее время",
+            None,
+            "299,12",
+            "100,00",
+            True,
+            "period_ambiguous",
+        ),
+        (
+            "Период: Февраль 2031 — на два месяца",
+            None,
+            "299,12",
+            "100,00",
+            False,
+            "period_ambiguous",
+        ),
+        (
+            "Период: Январь 2031 — на 2 месяца",
+            None,
+            "397,62",
+            "1,50",
+            True,
+            "period_ambiguous",
+        ),
+        (
+            "Период: Февраль 2031 — в течение двух недель",
+            None,
+            "299,12",
+            "100,00",
+            True,
+            "period_ambiguous",
+        ),
+        (
+            "Период: Февраль 2031 — на 2,5 месяца",
+            None,
+            "397,62",
+            "1,50",
+            False,
+            "period_ambiguous",
+        ),
+        (
+            "Период: 01.02.2031 — 28.02.2031",
+            "и с 01.04.2031 по 30.04.2031",
+            "299,12",
+            "100,00",
+            False,
+            "period_ambiguous",
+        ),
+        (
+            "Период: 01.04.2031 — 30.04.2031",
+            "и с 01.02.2031 по 28.02.2031",
+            "397,62",
+            "1,50",
+            True,
+            "period_ambiguous",
+        ),
+        (
+            "Дата документа: 15.02.2031",
+            "Дата оказания услуги: 31.01.2031",
+            "299,12",
+            "100,00",
+            False,
+            "period_date_conflict",
+        ),
+        (
+            "Дата документа: 05.03.2031",
+            "Дата оказания услуг: 20.02.2031",
+            "397,62",
+            "1,50",
+            True,
+            "period_date_conflict",
+        ),
+        (
+            "Период: 01.02.2031 — 28.02.2031 по договору № A-12",
+            None,
+            "299,12",
+            "100,00",
+            False,
+            None,
+        ),
+        (
+            "Период: 01.02.2031 — 28.02.2031 — услуги связи",
+            None,
+            "397,62",
+            "1,50",
+            True,
+            None,
+        ),
+        (
+            "Период: Февраль 2031 — услуги связи",
+            None,
+            "299,12",
+            "100,00",
+            False,
+            None,
+        ),
+        (
+            "Период: Февраль 2031 — на обслуживание",
+            None,
+            "299,12",
+            "100,00",
+            True,
+            None,
+        ),
+        (
+            "Период: 01.02.2031 — 28.02.2031; 99.00 руб.",
+            None,
+            "299,12",
+            "100,00",
+            False,
+            None,
+        ),
+        (
+            "Период: Февраль 2031; 99.00 руб.",
+            None,
+            "397,62",
+            "1,50",
+            True,
+            None,
+        ),
+        (
+            "Дата документа: 15.02.2031",
+            None,
+            "299,12",
+            "100,00",
+            False,
+            None,
+        ),
+    ],
+)
+def test_worker_period_boundaries_preserve_other_admitted_amounts(
+    database_url, tmp_path, field, extra, amount, other_amount, reverse, reason
+):
+    report, files = write_reconciliation_case(tmp_path)
+    primary = next(path for path in files if path.name == "ADM-72.docx")
+    document = Document(primary)
+    document.paragraphs[2].text = field
+    document.paragraphs[4].text = f"Итого: {amount} руб."
+    if extra and reason == "period_ambiguous":
+        document.paragraphs[3].insert_paragraph_before(extra)
+    elif extra:
+        document.add_paragraph(extra)
+    document.save(primary)
+
+    supporting = Document()
+    for line in (
+        "УПД № ADM-73",
+        f"Договор № {CONTRACT}",
+        f"Период: {START} — {END}",
+        "Общехозяйственные расходы.",
+        f"Итого: {other_amount} руб.",
+    ):
+        supporting.add_paragraph(line)
+    second = tmp_path / "ADM-73.docx"
+    supporting.save(second)
+    files.append(second)
+    settings = Settings(database_url, upload_root=tmp_path / "uploads")
+    with TestClient(create_app(settings)) as client:
+        run_id = _prepare_and_start(
+            client,
+            [
+                ("report", (report.name, report.read_bytes())),
+                *(
+                    ("documents", (path.name, path.read_bytes()))
+                    for path in (reversed(files) if reverse else files)
+                ),
+            ],
+        )
+        assert run_document_worker(
+            client.app.state.engine,
+            settings.upload_root,
+            V32Processor(no_model, no_model),
+            once=True,
+        )
+        response = client.get(f"/api/v0/runs/{run_id}/findings")
+        assert response.status_code == 200, client.get(f"/api/v0/runs/{run_id}").json()
+        result = response.json()
+
+    source = next(item for item in result["documents"] if item["name"] == primary.name)
+    row = next(item for item in result["rows"] if item["id"] == "general_admin")
+    if reason:
+        assert (source["decision"]["state"], source["decision"]["reason_code"]) == (
+            "needs_review",
+            reason,
+        )
+        assert row["status"] == "unverified"
+        assert row["expected_value"] is None and row["delta"] is None
+        assert row["observed_evidence_sum"] == other_amount.replace(",", ".")
+        assert reason in {item["code"] for item in row["reasons"]}
+        assert not any(
+            item["document_id"] == source["id"] and item["kind"] == "period"
+            for item in result["evidence"]
+        )
+    else:
+        assert source["decision"]["state"] == "include"
+        assert row["status"] == "verified"
+        assert row["expected_value"] == "399.12" and row["delta"] == "0.00"
+
+
+@pytest.mark.parametrize(
+    ("layout", "period", "continuation", "amount", "other_amount", "reverse", "ambiguous"),
+    [
+        (
+            "same_row",
+            "Период: 01.02.2031 — 28.02.2031",
+            "и с 01.04.2031 по 30.04.2031",
+            "299,12",
+            "100,00",
+            False,
+            True,
+        ),
+        (
+            "same_row",
+            "Период: 01.04.2031 — 30.04.2031",
+            "и с 01.02.2031 по 28.02.2031",
+            "397,62",
+            "1,50",
+            True,
+            True,
+        ),
+        (
+            "next_row",
+            "Период: 01.02.2031 — 28.02.2031",
+            "и с 01.04.2031 по 30.04.2031",
+            "299,12",
+            "100,00",
+            True,
+            True,
+        ),
+        (
+            "multi_column",
+            "Период: 01.04.2031 — 30.04.2031",
+            "и с 01.02.2031 по 28.02.2031",
+            "397,62",
+            "1,50",
+            False,
+            True,
+        ),
+        (
+            "same_row",
+            "Период: 01.02.2031 — 28.02.2031",
+            f"по договору № {CONTRACT}",
+            "299,12",
+            "100,00",
+            True,
+            False,
+        ),
+        (
+            "multi_column",
+            "Период: 01.02.2031 — 28.02.2031",
+            "— услуги связи",
+            "397,62",
+            "1,50",
+            False,
+            False,
+        ),
+        (
+            "merged",
+            "Период: 01.02.2031 — 28.02.2031",
+            "и с 01.04.2031 по 30.04.2031",
+            "299,12",
+            "100,00",
+            False,
+            True,
+        ),
+        (
+            "merged",
+            "Период: 01.04.2031 — 30.04.2031",
+            "и с 01.02.2031 по 28.02.2031",
+            "397,62",
+            "1,50",
+            True,
+            True,
+        ),
+        (
+            "merged",
+            "Период: 01.02.2031 — 28.02.2031",
+            "— услуги связи",
+            "299,12",
+            "100,00",
+            False,
+            False,
+        ),
+        (
+            "same_row",
+            "Период: 01.02.2031 — 28.02.2031",
+            "- 100.00 руб.",
+            "397,62",
+            "1,50",
+            True,
+            False,
+        ),
+        (
+            "next_row",
+            "Период: Февраль 2031",
+            "— апр. 2031",
+            "299,12",
+            "100,00",
+            False,
+            True,
+        ),
+        (
+            "next_row",
+            "Период: 01.02.2031 — 28.02.2031",
+            "— 01.04.2031",
+            "397,62",
+            "1,50",
+            True,
+            True,
+        ),
+        (
+            "unmerged_gap",
+            "Период: 01.02.2031 — 28.02.2031",
+            "и с 01.04.2031 по 30.04.2031",
+            "299,12",
+            "100,00",
+            False,
+            False,
+        ),
+        (
+            "vertical",
+            "Период: 01.02.2031 — 28.02.2031",
+            "и с 01.04.2031 по 30.04.2031",
+            "299,12",
+            "100,00",
+            False,
+            True,
+        ),
+        (
+            "vertical",
+            "Период: 01.04.2031 — 30.04.2031",
+            "и с 01.02.2031 по 28.02.2031",
+            "397,62",
+            "1,50",
+            True,
+            True,
+        ),
+        (
+            "vertical",
+            "Период: 01.02.2031 — 28.02.2031",
+            "— услуги связи",
+            "299,12",
+            "100,00",
+            False,
+            False,
+        ),
+        (
+            "vertical_below",
+            "Период: 01.02.2031 — 28.02.2031",
+            "и с 01.04.2031 по 30.04.2031",
+            "397,62",
+            "1,50",
+            True,
+            True,
+        ),
+        (
+            "rectangle",
+            "Период: 01.02.2031 — 28.02.2031",
+            "и с 01.04.2031 по 30.04.2031",
+            "299,12",
+            "100,00",
+            False,
+            True,
+        ),
+        (
+            "neighbor_vertical",
+            "Период: 01.02.2031 — 28.02.2031",
+            "и с 01.04.2031 по 30.04.2031",
+            "397,62",
+            "1,50",
+            True,
+            True,
+        ),
+        (
+            "vertical_gap",
+            "Период: 01.02.2031 — 28.02.2031",
+            "и с 01.04.2031 по 30.04.2031",
+            "299,12",
+            "100,00",
+            False,
+            False,
+        ),
+    ],
+)
+def test_worker_docx_adjacent_cells_do_not_truncate_period(
+    database_url, tmp_path, layout, period, continuation, amount, other_amount, reverse, ambiguous
+):
+    report, files = write_reconciliation_case(tmp_path)
+    primary = next(path for path in files if path.name == "ADM-72.docx")
+    document = Document(primary)
+    document.paragraphs[2].text = ""
+    document.paragraphs[4].text = f"Итого: {amount} руб."
+    if layout == "same_row":
+        table = document.add_table(rows=1, cols=2)
+        table.cell(0, 0).text, table.cell(0, 1).text = period, continuation
+    elif layout == "next_row":
+        table = document.add_table(rows=2, cols=1)
+        table.cell(0, 0).text, table.cell(1, 0).text = period, continuation
+    elif layout in {"merged", "unmerged_gap"}:
+        table = document.add_table(rows=1, cols=3)
+        first = table.cell(0, 0)
+        if layout == "merged":
+            first = first.merge(table.cell(0, 1))
+        first.text, table.cell(0, 2).text = period, continuation
+    elif layout in {"vertical", "vertical_below", "vertical_gap"}:
+        table = document.add_table(rows=2 if layout == "vertical" else 3, cols=2)
+        first = table.cell(0, 0).merge(table.cell(1, 0))
+        first.text = period
+        table.cell(0, 1).text = "Примечание"
+        if layout == "vertical":
+            table.cell(1, 1).text = continuation
+        elif layout == "vertical_below":
+            table.cell(2, 0).text = continuation
+        else:
+            table.cell(2, 1).text = continuation
+    elif layout == "rectangle":
+        table = document.add_table(rows=2, cols=3)
+        table.cell(0, 0).merge(table.cell(1, 1)).text = period
+        table.cell(0, 2).text, table.cell(1, 2).text = "Примечание", continuation
+    elif layout == "neighbor_vertical":
+        table = document.add_table(rows=2, cols=2)
+        table.cell(0, 1).merge(table.cell(1, 1)).text = continuation
+        table.cell(0, 0).text, table.cell(1, 0).text = "Примечание", period
+    else:
+        table = document.add_table(rows=2, cols=2)
+        table.cell(0, 0).text, table.cell(1, 0).text = period, continuation
+        table.cell(0, 1).text = "Примечание"
+    document.save(primary)
+
+    supporting = Document()
+    for line in (
+        "УПД № ADM-73",
+        f"Договор № {CONTRACT}",
+        f"Период: {START} — {END}",
+        "Общехозяйственные расходы.",
+        f"Итого: {other_amount} руб.",
+    ):
+        supporting.add_paragraph(line)
+    second = tmp_path / "ADM-73.docx"
+    supporting.save(second)
+    files.append(second)
+    settings = Settings(database_url, upload_root=tmp_path / "uploads")
+    with TestClient(create_app(settings)) as client:
+        run_id = _prepare_and_start(
+            client,
+            [
+                ("report", (report.name, report.read_bytes())),
+                *(
+                    ("documents", (path.name, path.read_bytes()))
+                    for path in (reversed(files) if reverse else files)
+                ),
+            ],
+        )
+        assert run_document_worker(
+            client.app.state.engine,
+            settings.upload_root,
+            V32Processor(no_model, no_model),
+            once=True,
+        )
+        response = client.get(f"/api/v0/runs/{run_id}/findings")
+        assert response.status_code == 200, client.get(f"/api/v0/runs/{run_id}").json()
+        result = response.json()
+    source = next(item for item in result["documents"] if item["name"] == primary.name)
+    row = next(item for item in result["rows"] if item["id"] == "general_admin")
+    if ambiguous:
+        assert (source["decision"]["state"], source["decision"]["reason_code"]) == (
+            "needs_review",
+            "period_ambiguous",
+        )
+        assert row["status"] == "unverified"
+        assert row["expected_value"] is None and row["delta"] is None
+        assert row["observed_evidence_sum"] == other_amount.replace(",", ".")
+        assert not any(
+            item["document_id"] == source["id"] and item["kind"] == "period"
+            for item in result["evidence"]
+        )
+    else:
+        assert source["decision"]["state"] == "include"
+        assert row["status"] == "verified"
+        assert row["expected_value"] == "399.12" and row["delta"] == "0.00"
+        if layout in {"vertical", "vertical_gap"}:
+            evidence = next(
+                item
+                for item in result["evidence"]
+                if item["document_id"] == source["id"] and item["kind"] == "period"
+            )
+            assert evidence["locator"] == {"kind": "table_cell", "table": 1, "row": 1, "cell": 1}
+
+
+@pytest.mark.parametrize(
+    ("layout", "period_header", "other_header", "value", "reverse", "ambiguous"),
+    [
+        ("standard", "Учётный интервал", "Трудозатраты исполнителя", "2 часа", False, False),
+        (
+            "standard",
+            "Учётный интервал",
+            "Трудозатраты исполнителя",
+            "2 рабочих дня отпуска",
+            True,
+            False,
+        ),
+        ("offset", "Отчётный период", "Количество рабочих часов", "три часа", False, False),
+        ("target_merged", "Период", "Объём трудозатрат, ч", "2,5 часа", True, False),
+        ("period_bottom", "Период сверки", "Время работы", "2 часа", False, False),
+        ("vertical_target", "Период", "Дней отпуска", "2 дня", True, False),
+        ("standard", "Период", "Затрачено времени", "2 часа", False, False),
+        ("standard", "Период", "Рабочее время", "два часа", True, False),
+        ("standard", "Период", "Длительность периода", "2 месяца", False, True),
+        ("standard", "Период", "Примечание", "2 часа", True, True),
+        ("shared_header", "Период", "Трудозатраты", "2 часа", False, True),
+        ("same_body", "Период", "Трудозатраты", "2 часа", True, True),
+        ("standard", "Период", "Трудозатраты", "на два месяца", False, True),
+        ("standard", "Период", "Трудозатраты", "— два месяца", True, True),
+        ("standard", "Период", "Трудозатраты", "и с 01.04.2031 по 30.04.2031", False, True),
+        (
+            "standard",
+            "Период",
+            "Трудозатраты",
+            "2 часа и с 01.04.2031 по 30.04.2031",
+            False,
+            True,
+        ),
+        ("standard", "Период", "Трудозатраты", "2 часа — на два месяца", True, True),
+        ("standard", "Период", "Трудозатраты", "2 часа и до конца апреля 2031", False, True),
+        ("standard", "Период", "Трудозатраты", "2 часа и на два месяца", True, True),
+        (
+            "standard",
+            "Период",
+            "Трудозатраты",
+            "2 часа (и с 01.04.2031 по 30.04.2031)",
+            False,
+            True,
+        ),
+        (
+            "standard",
+            "Период",
+            "Трудозатраты",
+            "2 часа (в течение двух недель)",
+            True,
+            True,
+        ),
+        (
+            "standard",
+            "Период",
+            "Трудозатраты",
+            "2 часа\nи с 01.04.2031 по 30.04.2031",
+            True,
+            True,
+        ),
+        ("standard", "Период", "Трудозатраты", "2 услуги", False, False),
+        ("two_periods", "Период", "Трудозатраты", "2 часа", False, True),
+        ("two_periods_reverse", "Период", "Трудозатраты", "2 часа", True, True),
+        ("unknown_period", "Период", "Трудозатраты", "2 часа", False, True),
+    ],
+)
+def test_worker_respects_independent_table_quantity_headers(
+    database_url, tmp_path, layout, period_header, other_header, value, reverse, ambiguous
+):
+    report, files = write_reconciliation_case(tmp_path)
+    primary = next(path for path in files if path.name == "ADM-72.docx")
+    amount, other_amount = ("397,62", "1,50") if reverse else ("299,12", "100,00")
+    document = Document(primary)
+    document.paragraphs[2].text = ""
+    document.paragraphs[4].text = f"Итого: {amount} руб."
+    period = "Период: 01.02.2031 — 28.02.2031"
+    if layout == "offset":
+        table = document.add_table(rows=2, cols=3)
+        table.cell(0, 0).text, table.cell(1, 0).text = "Код", "SYN-1"
+        table.cell(0, 1).text, table.cell(0, 2).text = period_header, other_header
+        table.cell(1, 1).text, table.cell(1, 2).text = period, value
+    elif layout == "target_merged":
+        table = document.add_table(rows=2, cols=3)
+        table.cell(0, 0).text, table.cell(1, 0).text = period_header, period
+        table.cell(0, 1).merge(table.cell(0, 2)).text = other_header
+        table.cell(1, 1).merge(table.cell(1, 2)).text = value
+    elif layout == "shared_header":
+        table = document.add_table(rows=2, cols=2)
+        table.cell(0, 0).merge(table.cell(0, 1)).text = "Трудозатраты и период"
+        table.cell(1, 0).text, table.cell(1, 1).text = period, value
+    elif layout == "same_body":
+        table = document.add_table(rows=2, cols=2)
+        table.cell(0, 0).text, table.cell(0, 1).text = period_header, other_header
+        table.cell(1, 0).merge(table.cell(1, 1)).text = f"{period}\n{value}"
+    elif layout == "period_bottom":
+        table = document.add_table(rows=3, cols=2)
+        table.cell(0, 0).text, table.cell(0, 1).text = period_header, other_header
+        table.cell(1, 0).text, table.cell(1, 1).text = "Примечание", "1 услуга"
+        table.cell(2, 0).text, table.cell(2, 1).text = period, value
+    elif layout == "vertical_target":
+        table = document.add_table(rows=3, cols=2)
+        table.cell(0, 0).text, table.cell(0, 1).text = period_header, other_header
+        table.cell(1, 0).text, table.cell(2, 0).text = "Примечание", period
+        table.cell(1, 1).merge(table.cell(2, 1)).text = value
+    elif layout in {"two_periods", "two_periods_reverse", "unknown_period"}:
+        table = document.add_table(rows=3, cols=2)
+        table.cell(0, 0).text, table.cell(0, 1).text = period_header, other_header
+        second_period = "неразборчиво" if layout == "unknown_period" else "01.04.2031 — 30.04.2031"
+        values = ["Период: Февраль 2031", second_period]
+        if layout == "two_periods_reverse":
+            values.reverse()
+        table.cell(1, 0).text, table.cell(2, 0).text = values
+        table.cell(1, 1).text, table.cell(2, 1).text = value, "2 услуги"
+    else:
+        table = document.add_table(rows=2, cols=2)
+        table.cell(0, 0).text, table.cell(0, 1).text = period_header, other_header
+        table.cell(1, 0).text, table.cell(1, 1).text = period, value
+    document.save(primary)
+
+    supporting = Document()
+    for line in (
+        "УПД № ADM-73",
+        f"Договор № {CONTRACT}",
+        f"Период: {START} — {END}",
+        "Общехозяйственные расходы.",
+        f"Итого: {other_amount} руб.",
+    ):
+        supporting.add_paragraph(line)
+    second = tmp_path / "ADM-73.docx"
+    supporting.save(second)
+    files.append(second)
+    settings = Settings(database_url, upload_root=tmp_path / "uploads")
+    with TestClient(create_app(settings)) as client:
+        run_id = _prepare_and_start(
+            client,
+            [
+                ("report", (report.name, report.read_bytes())),
+                *(
+                    ("documents", (path.name, path.read_bytes()))
+                    for path in (reversed(files) if reverse else files)
+                ),
+            ],
+        )
+        assert run_document_worker(
+            client.app.state.engine,
+            settings.upload_root,
+            V32Processor(no_model, no_model),
+            once=True,
+        )
+        response = client.get(f"/api/v0/runs/{run_id}/findings")
+        assert response.status_code == 200, client.get(f"/api/v0/runs/{run_id}").json()
+        result = response.json()
+    source = next(item for item in result["documents"] if item["name"] == primary.name)
+    row = next(item for item in result["rows"] if item["id"] == "general_admin")
+    if ambiguous:
+        assert (source["decision"]["state"], source["decision"]["reason_code"]) == (
+            "needs_review",
+            "period_ambiguous",
+        )
+        assert row["status"] == "unverified"
+        assert row["expected_value"] is None and row["delta"] is None
+        assert row["observed_evidence_sum"] == other_amount.replace(",", ".")
+    else:
+        assert source["decision"]["state"] == "include"
+        assert row["status"] == "verified"
+        assert row["expected_value"] == "399.12" and row["delta"] == "0.00"
+        assert any(
+            item["document_id"] == source["id"] and item["kind"] == "period"
+            for item in result["evidence"]
+        )
+
+
+@pytest.mark.parametrize(
     ("filename", "code"),
     [
         ("truncated.pdf", "pdf_unreadable"),

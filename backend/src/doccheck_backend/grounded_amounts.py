@@ -8,7 +8,13 @@ from math import ulp
 from pathlib import Path
 from uuid import UUID
 
-from doccheck_backend.contracts.locators import Locator, PageLocator, SheetLocator, TableCellLocator
+from doccheck_backend.contracts.locators import (
+    Locator,
+    PageLocator,
+    ParagraphLocator,
+    SheetLocator,
+    TableCellLocator,
+)
 from doccheck_backend.contracts.result import EvidenceKind, FileFormat, Period
 from doccheck_backend.evidence_binding import ObservationAssertion
 from doccheck_backend.native_observations import NativeDocument, NativeIssue, Observation
@@ -54,7 +60,96 @@ _MONTH_PERIOD = re.compile(rf"(?:(?:{_PERIOD_LABEL})(?:с\s+)?|\bза\s+|\bв\s+
 _MONTH_RANGE_END = re.compile(rf"\s*(?:[—–\-/]|\bпо\b|\bдо\b)\s*{_MONTH_YEAR}", re.I)
 _PERIOD_CONTINUATION = re.compile(r"^\s*(?:[—–\-/]|\bпо\b|\bдо\b)", re.I)
 _PERIOD_FIELD = re.compile(_PERIOD_TITLE, re.I)
+_PERIOD_COLUMN_HEADING = re.compile(
+    r"^(?:(?:отч[её]тный|уч[её]тный)\s+)?период"
+    r"(?:\s+(?:сверки|работ|услуг|документа|оказания\s+услуг|выполнения\s+работ))?\s*[:.]?$",
+    re.I,
+)
+_PERIOD_COLUMN_NONDATA = re.compile(r"^(?:примечани[ея]|пояснени[ея]|описание)\s*[:.]?$", re.I)
 _DAY = r"(?:[0-9]{2}\.[0-9]{2}\.[0-9]{4}|[0-9]{4}-[0-9]{2}-[0-9]{2})"
+_ADDITIONAL_PERIOD = re.compile(
+    rf"^\s*(?:г(?:ода?)?\.?\s*)?(?:[.,;+/&]\s*)?"
+    rf"(?:(?:и|или|а\s+также)\s+)?(?:с\s+|за\s+|в\s+)?"
+    rf"(?:{_DAY}|[0-9]{{1,2}}[./][0-9]{{1,2}}|(?:{'|'.join(_MONTH)})\b|период\b)",
+    re.I,
+)
+_ADDITIONAL_PERIOD_PREFIX = re.compile(r"^\s*(?:и|или|а\s+также)\s+с(?:\s+|$)", re.I)
+_ONLY_RUBLE_VALUE = re.compile(
+    r"^[+−-]?\s*[0-9][0-9 ,.\u00a0\u2009\u202f]*\s*"
+    r"(?:руб(?:\.|лей|ля|ль)?|р\.|₽|RUB)\.?$",
+    re.I,
+)
+_DURATION_QUANTITY = (
+    r"(?:[0-9]+(?:[.,][0-9]+)?|од(?:ин|на|но|ну|ного|ной)|два|две|двух|двест\w*|"
+    r"три|тр[её]х|трист\w*|четыр\w*|пят\w*|шест\w*|сем\w*|восем\w*|восьм\w*|"
+    r"девят\w*|девяност\w*|десят\w*|одиннадцат\w*|двенадцат\w*|тринадцат\w*|"
+    r"двадцат\w*|тридцат\w*|сорок\w*|сто|ста|сот\w*|тысяч\w*|полтор\w*|"
+    r"нескольк\w*|пару|пара)"
+)
+_UNLINKED_DURATION = re.compile(
+    rf"^\s*(?:{_DURATION_QUANTITY}\b|пол(?:года|месяца|суток|недели)\b)", re.I
+)
+_INDEPENDENT_TIME_HEADING = re.compile(
+    r"^(?:(?:общ\w*|суммарн\w*|фактическ\w*|объ[её]м)\s+)?"
+    r"(?:трудозатрат\w*|трудо[её]мк\w*|отработан\w*|"
+    r"(?:количество|число|кол-во)\s+(?:(?:рабоч|отработан|календарн)\w*\s+)?"
+    r"(?:час\w*|дн\w*|дней|день|смен\w*)|"
+    r"(?:рабоч\w*|затрачен\w*)\s+(?:время|времени|час\w*|дней|дн\w*)|"
+    r"(?:час\w*|время)\s+(?:работ\w*|труд\w*|исполнител\w*|специалист\w*|сотрудник\w*)|"
+    r"(?:дни|дней|дн\w*)\s+отпуск\w*)(?=$|[\s,.:;(])",
+    re.I,
+)
+_DURATION_UNIT = (
+    r"(?:(?:день|дня|дней|сутки|суток|недел\w*|месяц\w*|квартал\w*|"
+    r"полугоди\w*|год(?:а|ов|у|ом)?|лет|час(?:а|ов|у|ом)?|минут\w*)\b|"
+    r"(?:дн|сут|нед|мес|кв|г|ч|мин)(?:\.(?=\s|$|[,;])|(?=\s|$|[,;])))"
+)
+_DURATION = re.compile(
+    rf"^\s*(?:(?:на|за|в\s+течени[еи]|на\s+протяжении|(?:на\s+)?срок(?:ом)?(?:\s+на)?|"
+    rf"(?:продолжительност(?:ь|ью)|длительност(?:ь|ью))(?:\s+в)?)\s*[:：]?\s+)?"
+    rf"(?:(?:около|примерно|порядка|свыше|более|менее|не\s+менее|не\s+более)\s+)?"
+    rf"(?:(?:от\s+)?{_DURATION_QUANTITY}"
+    rf"(?:\s*(?:[–—-]|\bдо\b)\s*{_DURATION_QUANTITY})?"
+    rf"(?:\s+{_DURATION_QUANTITY}){{0,3}}\s+"
+    rf"(?:[а-яё]{{2,32}}\s+){{0,3}}{_DURATION_UNIT}"
+    rf"|пол(?:года|месяца|суток|недели)\b"
+    rf"|(?:неопредел[её]нн\w*|неизвестн\w*|неограниченн\w*)\s+(?:срок|период)\b"
+    rf"|(?:время|период)\s+(?:оказания|обслуживания|работы|действия|эксплуатации)\b"
+    rf"|бессрочно\b)",
+    re.I,
+)
+_SINGLE_DURATION = re.compile(
+    rf"^\s*(?:на|за|в\s+течени[еи])\s+(?:(?:весь|всю|целый|целую|целое)\s+)?"
+    rf"{_DURATION_UNIT}",
+    re.I,
+)
+_ADJECTIVAL_DURATION = re.compile(
+    r"^\s*(?:на|сроком\s+на|продолжительностью\s+в)\s+"
+    r"(?:[0-9]+[-‑]|одно|двух|тр[её]х|четыр[её]х|полу)"
+    r"(?:летн\w*|месячн\w*|дневн\w*|недельн\w*)\s+(?:срок|период)\b",
+    re.I,
+)
+_MONTH_ABBREVIATION = r"(?:янв|фев|мар|апр|июн|июл|авг|сен|сент|окт|ноя|дек)"
+_PERIOD_BOUND_START = re.compile(
+    rf"^(?:\?|[0-9]{{1,4}}(?=$|[./-][0-9?]|\s+(?:{'|'.join(_MONTH)}|г(?:ода?)?)\b"
+    rf"|\s+{_MONTH_ABBREVIATION}(?:\.|\s|$))"
+    rf"|[0-9]{{1,2}}[-‑](?:го|е|й|му|я|ое)(?=$|\s+(?:{'|'.join(_MONTH)}|{_MONTH_ABBREVIATION})\b)"
+    rf"|(?:{'|'.join(_MONTH)})\b|{_MONTH_ABBREVIATION}(?:\.(?=\s|$)|(?=\s+[0-9]{{4}}\b))"
+    rf"|[а-яё]{{2,10}}\.\s+[0-9]{{4}}\b|с\b|неразборчив\w*|неизвест\w*"
+    rf"|настоящ(?:ее\s+время|его\s+времени|ий\s+момент|его\s+момента)\b"
+    rf"|текущ(?:ая\s+дата|ую\s+дату|ий\s+момент|его\s+(?:дня|месяца|года|момента))\b"
+    rf"|сегодня(?:шний\s+день)?\b|(?:конец|конца|начало|начала|середина|середины"
+    rf"|окончание|окончания|завершение|завершения)\b)",
+    re.I,
+)
+_QUOTED_PERIOD_BOUND = re.compile(
+    rf"""^[«„“"'‘]\s*(?:{_DAY}\s*[»“”"'’]|"""
+    rf"""[0-9]{{1,2}}(?:[-‑](?:го|е|й|му|я|ое))?\s*[»“”"'’]"""
+    rf"""(?=$|\s+(?:{"|".join(_MONTH)}|{_MONTH_ABBREVIATION})\b))""",
+    re.I,
+)
+_BARE_DATE_RANGE = re.compile(rf"^\s*(?:с\s+)?{_DAY}(?:\s+г\.?)?\s*(?:по\b|до\b|[–—-])", re.I)
+_BARE_MONTH_PERIOD = re.compile(rf"^\s*(?:(?:с|за|в)\s+)?{_MONTH_YEAR}", re.I)
 _DATE_RANGE = re.compile(
     rf"(?:{_PERIOD_LABEL})(?:с\s+)?({_DAY})(?:\s+г\.?)?\s*(?:по|до|[–—-])\s*({_DAY})\b",
     re.I,
@@ -62,6 +157,12 @@ _DATE_RANGE = re.compile(
 _DATE = re.compile(rf"^дата(?:\s+документа)?\s*[:№]?\s*({_DAY})(?:\s*г\.?)?$", re.I)
 _HEADER_DATE = re.compile(
     rf"^(?:акт|счет-акт|счёт-акт|упд)\b[^\n]{{0,72}}?\bот\s+({_DAY})(?:\s*г\.?)?$", re.I
+)
+_OPERATION_DATE = re.compile(
+    rf"^(?:услуги\s+оказаны|услуга\s+оказана|работы\s+выполнены|"
+    rf"дата\s+оказания\s+услуг(?:и)?|дата\s+выполнения\s+работ(?:ы)?)\s*"
+    rf"(?:[:—–-]\s*)?({_DAY})(?:\s*г\.?)?\.?$",
+    re.I,
 )
 _CONTRACT_ID = r"[\w]+(?:[/-][\w]+)*"
 _STAGE_FIELD = re.compile(
@@ -134,6 +235,8 @@ class GroundedDocument:
     issuer_key: str | None
     issuer_tax_id: str | None
     stage_uncertain: bool
+    period_ambiguous: bool
+    period_date_conflict: bool
 
 
 def _norm(text: str) -> str:
@@ -193,6 +296,189 @@ def _following(label: Observation, value: Observation) -> bool:
     )
 
 
+def _duration_continuation(text: str) -> bool:
+    # Duration is only a veto: it does not establish a computed end date.
+    return bool(
+        _DURATION.match(text) or _SINGLE_DURATION.match(text) or _ADJECTIVAL_DURATION.match(text)
+    )
+
+
+def _possible_period_bound(text: str) -> bool:
+    return bool(_PERIOD_BOUND_START.match(text) or _QUOTED_PERIOD_BOUND.match(text))
+
+
+def _period_continuation(text: str) -> bool:
+    match = _PERIOD_CONTINUATION.match(text)
+    if not match:
+        return False
+    rest = text[match.end() :].strip()
+    if _ONLY_RUBLE_VALUE.fullmatch(rest) and _text_amount(rest)[0] is not None:
+        return False
+    if _duration_continuation(rest):
+        return True
+    rest = re.sub(r"^(?:по|до|на)(?:\s+|$)", "", rest, flags=re.I).strip()
+    # A delimiter followed by unrelated prose (e.g. "по договору") is not
+    # another period; a missing or period-shaped bound remains uncertain.
+    return not rest or _possible_period_bound(rest)
+
+
+def _additional_period_prefix(text: str) -> bool:
+    match = _ADDITIONAL_PERIOD_PREFIX.match(text)
+    if not match:
+        return False
+    rest = text[match.end() :].strip()
+    return not rest or _possible_period_bound(rest)
+
+
+def _period_following(first: Observation, second: Observation) -> bool:
+    left, right = first.locator, second.locator
+    return (
+        left == right
+        or _following(first, second)
+        or (
+            isinstance(left, ParagraphLocator)
+            and isinstance(right, ParagraphLocator)
+            and right.paragraph == left.paragraph + 1
+        )
+        or (
+            isinstance(left, TableCellLocator)
+            and isinstance(right, TableCellLocator)
+            and left.table == right.table
+            and (
+                (
+                    right.cell == left.cell + first.column_span
+                    and right.row < left.row + first.row_span
+                    and left.row < right.row + second.row_span
+                )
+                or (
+                    right.row == left.row + first.row_span
+                    and right.cell < left.cell + first.column_span
+                    and left.cell < right.cell + second.column_span
+                )
+            )
+        )
+    )
+
+
+def _independent_duration_column(
+    first: Observation,
+    second: Observation,
+    cells: dict[tuple[int, int, int], list[Observation]],
+) -> bool:
+    """Separate an unlinked quantity only when a distinct column names its role."""
+    left, right = first.locator, second.locator
+    if not (
+        isinstance(left, TableCellLocator)
+        and isinstance(right, TableCellLocator)
+        and left.table == right.table
+        and left.row > 1
+        and right.row > 1
+        and right.cell == left.cell + first.column_span
+    ):
+        return False
+    headers = []
+    for column in range(right.cell, right.cell + second.column_span):
+        readings = cells.get((right.table, 1, column), ())
+        if not readings:
+            return False
+        headers.extend(readings)
+    addresses = {
+        (header.locator.row, header.locator.cell, header.column_span, header.row_span)
+        for header in headers
+        if isinstance(header.locator, TableCellLocator)
+    }
+    if len(addresses) != 1:
+        return False
+    row, column, width, height = next(iter(addresses))
+    if row + height > min(left.row, right.row):
+        return False
+    if column < left.cell + first.column_span and left.cell < column + width:
+        return False
+    return any(_INDEPENDENT_TIME_HEADING.match(header.raw_text.strip()) for header in headers)
+
+
+def _period_column_heading(
+    observation: Observation,
+    cells: dict[tuple[int, int, int], list[Observation]],
+) -> tuple[bool, bool] | None:
+    """Return unresolved/ambiguous when a period column heading has data."""
+    header = observation.locator
+    if not (
+        isinstance(header, TableCellLocator)
+        and header.row == 1
+        and _PERIOD_COLUMN_HEADING.fullmatch(observation.raw_text.strip())
+    ):
+        return None
+    values = []
+    for (table, row, column), readings in cells.items():
+        if (
+            table != header.table
+            or row < header.row + observation.row_span
+            or not header.cell <= column < header.cell + observation.column_span
+        ):
+            continue
+        values.extend(
+            item
+            for item in readings
+            if isinstance(item.locator, TableCellLocator)
+            and item.locator.row >= header.row + observation.row_span
+            and not _PERIOD_COLUMN_NONDATA.fullmatch(item.raw_text.strip())
+        )
+    if not values:
+        return True, False
+    ambiguous = any(
+        not (_DATE_RANGE.search(item.raw_text) or _MONTH_PERIOD.search(item.raw_text))
+        for item in values
+    )
+    return ambiguous, ambiguous
+
+
+def _additional_period(text: str) -> bool:
+    candidate = re.sub(r"^\s*[,;:]\s*", "", text)
+    if _ONLY_RUBLE_VALUE.fullmatch(candidate.strip()) and _text_amount(candidate)[0] is not None:
+        return False
+    return bool(_ADDITIONAL_PERIOD.match(text))
+
+
+def _additional_pipe_period(tail: str) -> bool:
+    for part in tail.split("|")[1:]:
+        if _BARE_MONTH_PERIOD.match(part) or _duration_continuation(part):
+            return True
+        if match := _BARE_DATE_RANGE.match(part):
+            rest = part[match.end() :].strip()
+            if not rest or _possible_period_bound(rest):
+                return True
+    return False
+
+
+def _conjoined_period(text: str) -> bool:
+    match = re.match(r"^\s*(?:и|или|а\s+также)\s+", text, re.I)
+    if not match:
+        return False
+    rest = text[match.end() :]
+    return bool(
+        _period_continuation(rest)
+        or _additional_period(rest)
+        or _duration_continuation(rest)
+        or _additional_pipe_period(rest)
+    )
+
+
+def _unlinked_duration(text: str) -> bool:
+    if not _UNLINKED_DURATION.match(text) or not (match := _DURATION.match(text)):
+        return False
+    tail = text[match.end() :]
+    return not any(
+        _period_continuation(suffix)
+        or _additional_period_prefix(suffix)
+        or _additional_period(suffix)
+        or _additional_pipe_period(suffix)
+        or _duration_continuation(suffix)
+        or _conjoined_period(suffix)
+        for suffix in (tail, tail.lstrip(" \t,;:(["))
+    )
+
+
 def _stages(
     observations: tuple[Observation, ...],
 ) -> tuple[list[tuple[str, Observation]], bool]:
@@ -247,22 +533,103 @@ def _contracts(
     return results
 
 
-def _periods(observations: tuple[Observation, ...]) -> list[tuple[Period, Observation]]:
+def _period_readings(
+    observations: tuple[Observation, ...],
+) -> tuple[list[tuple[Period, Observation]], bool, bool]:
     periods, dates = [], []
+    operation_dates = set()
     unresolved_period = False
+    ambiguous_period = False
+    cells = {}
+    for observation in observations:
+        locator = observation.locator
+        if isinstance(locator, TableCellLocator):
+            for row_offset in range(observation.row_span):
+                for col_offset in range(observation.column_span):
+                    key = (locator.table, locator.row + row_offset, locator.cell + col_offset)
+                    cells.setdefault(key, []).append(observation)
     for i, observation in enumerate(observations):
         raw = observation.raw_text.strip()
-        # Separate OCR lines do not share a single exact address for both bounds.
-        following = observations[i + 1] if i + 1 < len(observations) else None
-        if (
-            following
-            and _following(observation, following)
-            and _PERIOD_CONTINUATION.match(following.raw_text.strip())
-            and (_PERIOD_FIELD.search(raw) or _MONTH_PERIOD.search(raw))
-        ):
-            unresolved_period = True
+        heading = _period_column_heading(observation, cells)
+        if heading is not None:
+            unresolved_period |= heading[0]
+            ambiguous_period |= heading[1]
+            continue
+        # A second labelled field at the same address is not evidence that the
+        # document total belongs to only the first one.
+        if len(list(_PERIOD_FIELD.finditer(raw))) > 1:
+            unresolved_period = ambiguous_period = True
+            continue
+        # Look at adjacent table cells even if row-major traversal visits other
+        # columns before reaching the next row of the same column.
+        candidates = list(observations[i + 1 : i + 2])
+        locator = observation.locator
+        if isinstance(locator, TableCellLocator):
+            for row_offset in range(observation.row_span):
+                candidates.extend(
+                    cells.get(
+                        (
+                            locator.table,
+                            locator.row + row_offset,
+                            locator.cell + observation.column_span,
+                        ),
+                        (),
+                    )
+                )
+            for col_offset in range(observation.column_span):
+                candidates.extend(
+                    cells.get(
+                        (
+                            locator.table,
+                            locator.row + observation.row_span,
+                            locator.cell + col_offset,
+                        ),
+                        (),
+                    )
+                )
+        has_continuation = False
+        if _PERIOD_FIELD.search(raw) or _MONTH_PERIOD.search(raw):
+            for following in candidates:
+                if not _period_following(observation, following):
+                    continue
+                next_text = following.raw_text.strip()
+                duration = _duration_continuation(next_text)
+                if (
+                    duration
+                    and _unlinked_duration(next_text)
+                    and _independent_duration_column(observation, following, cells)
+                ):
+                    duration = False
+                additional_line = bool(
+                    _additional_pipe_period(next_text)
+                    or _additional_period_prefix(next_text)
+                    or _conjoined_period(next_text)
+                    or duration
+                    or (
+                        re.match(r"^(?:(?:и|или|а\s+также)\b|[,;+/&])", next_text, re.I)
+                        and _additional_period(next_text)
+                    )
+                )
+                if _period_continuation(next_text) or additional_line:
+                    unresolved_period = True
+                    ambiguous_period = True
+                    has_continuation = True
+                    break
+        if has_continuation:
             continue
         if match := _DATE_RANGE.search(raw):
+            full_tail = raw[match.end() :]
+            tail = full_tail.split("|", 1)[0]
+            if (
+                _period_continuation(tail)
+                or _additional_period(tail)
+                or _additional_period_prefix(tail)
+                or _conjoined_period(tail)
+                or _duration_continuation(tail)
+                or _additional_pipe_period(full_tail)
+            ):
+                unresolved_period = ambiguous_period = True
+                continue
             low, high = (normalize_document_date(value).value for value in match.groups())
             if low and high and low <= high:
                 periods.append((Period(start=low, end=high), observation))
@@ -275,9 +642,20 @@ def _periods(observations: tuple[Observation, ...]) -> list[tuple[Period, Observ
             if end_month := _MONTH_RANGE_END.match(tail):
                 last_month, last_year = _MONTH[end_month[1].casefold()], int(end_month[2])
                 tail = tail[end_month.end() :]
+            full_tail, tail = tail, tail.split("|", 1)[0]
             if (
-                _PERIOD_CONTINUATION.match(tail)
-                or not first_year
+                _additional_period(tail)
+                or _additional_period_prefix(tail)
+                or _conjoined_period(tail)
+                or _duration_continuation(tail)
+                or _additional_pipe_period(full_tail)
+            ):
+                unresolved_period = ambiguous_period = True
+                continue
+            if _period_continuation(tail):
+                unresolved_period = ambiguous_period = True
+            elif (
+                not first_year
                 or not last_year
                 or (first_year, first_month) > (last_year, last_month)
             ):
@@ -290,6 +668,9 @@ def _periods(observations: tuple[Observation, ...]) -> list[tuple[Period, Observ
                 periods.append((period, observation))
         elif _PERIOD_FIELD.search(raw.translate(_OCR_LABEL_MAP)):
             unresolved_period = True
+        if match := _OPERATION_DATE.fullmatch(raw):
+            if value := normalize_document_date(match[1]).value:
+                operation_dates.add(value)
         if match := _DATE.fullmatch(raw) or _HEADER_DATE.fullmatch(raw):
             if value := normalize_document_date(match[1]).value:
                 dates.append((Period(start=value, end=value), observation))
@@ -298,7 +679,23 @@ def _periods(observations: tuple[Observation, ...]) -> list[tuple[Period, Observ
             if _following(observation, candidate):
                 if value := normalize_document_date(candidate.raw_text.strip()).value:
                     dates.append((Period(start=value, end=value), candidate))
-    return [] if unresolved_period else periods or dates
+    # This guard does not promote a date of service to a period. It only vetoes
+    # the legacy document-date fallback when an explicit operation date differs.
+    date_conflict = bool(
+        not periods
+        and dates
+        and operation_dates
+        and any(day != period.start for period, _ in dates for day in operation_dates)
+    )
+    return (
+        ([] if unresolved_period or date_conflict else periods or dates),
+        ambiguous_period,
+        date_conflict,
+    )
+
+
+def _periods(observations: tuple[Observation, ...]) -> list[tuple[Period, Observation]]:
+    return _period_readings(observations)[0]
 
 
 def format_rubles(amount: Decimal | None, *, xlsx: bool = False) -> str | None:
@@ -524,6 +921,8 @@ def ground_document(
             obs.amount_role,
             obs.cached_value,
             obs.component_locators,
+            obs.column_span,
+            obs.row_span,
         )
         for obs in native.observations
         for line in obs.raw_text.splitlines()
@@ -584,7 +983,7 @@ def ground_document(
         for raw, o in _contracts(observations, template=template)
         if (value := normalize_contract_number(raw).value)
     ]
-    period_hits = _periods(observations)
+    period_hits, period_ambiguous, period_date_conflict = _period_readings(observations)
     stage_hits, stage_uncertain = _stages(observations)
     if has_weak_ocr:
         possible_stages, unresolved_stage = _stages(potential)
@@ -592,8 +991,12 @@ def ground_document(
             stage for stage, _ in stage_hits
         }
     periods = {(p.start, p.end) for p, _ in period_hits}
-    if has_weak_ocr and {(p.start, p.end) for p, _ in _periods(potential)} != periods:
-        periods.clear()
+    if has_weak_ocr:
+        possible_periods, possible_ambiguity, possible_conflict = _period_readings(potential)
+        period_ambiguous |= possible_ambiguity
+        period_date_conflict |= possible_conflict
+        if {(p.start, p.end) for p, _ in possible_periods} != periods:
+            periods.clear()
     contracts = {value for value, _ in contract_hits}
     if has_weak_ocr:
         possible_contracts = {
@@ -705,4 +1108,6 @@ def ground_document(
         issuer or None,
         issuer_tax_id,
         stage_uncertain,
+        period_ambiguous,
+        period_date_conflict,
     )
