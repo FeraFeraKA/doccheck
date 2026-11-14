@@ -238,7 +238,7 @@ def _row_band(
         label = recognize_crop(image, (xs[0] + 4, top + 3, xs[2] - 4, bottom - 3))
         match = _ROW.fullmatch(" ".join(label.casefold().split()))
         if match and (selector is None or match.groups() == selector.groups()):
-            candidates.append((top, bottom, label))
+            candidates.append((top, bottom, match[2]))
     return candidates[0] if len(candidates) == 1 else None
 
 
@@ -275,15 +275,27 @@ def read_report_row(
     if len(xs) < 6 or xs[-1] - xs[0] < width * 0.55:
         return _simple_table(image, page, selected, contract_number, period) if period else []
     header = image.crop((0, 0, width, ys[0]))
-    contracts = {
-        match[1] for line in recognize_lines(header) for match in _CONTRACT.finditer(line.text)
-    }
+    if period is None:
+        return []
+    from doccheck_backend.normalization import normalize_document_date
+
+    lines = recognize_lines(header)
+    contracts = {match[1] for line in lines for match in _CONTRACT.finditer(line.text)}
     if contracts != {contract_number}:
+        return []
+    bounds = {
+        tuple(normalize_document_date(value).value for value in match.groups())
+        for line in lines
+        if (match := _EXPLICIT_PERIOD.fullmatch(line.text))
+    }
+    if (bounds and bounds != {period}) or (not bounds and selected is None):
         return []
     band = _row_band(image, selected, xs, ys)
     if band is None:
         return []
-    top, bottom, _ = band
+    top, bottom, year = band
+    if period[0][:4] != year or period[1][:4] != year:
+        return []
     cols = _headers(image, ink, xs, ys)
     cells = []
     for code, col in cols.items():
